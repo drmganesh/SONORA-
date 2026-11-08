@@ -1,0 +1,79 @@
+package com.example.model
+
+enum class RepeatMode {
+    OFF,
+    ALL,
+    ONE
+}
+
+enum class ShuffleMode {
+    OFF,
+    ON
+}
+
+enum class VisualizerStyle {
+    SPECTRUM_BARS,
+    WAVEFORM,
+    CIRCULAR_SPECTRUM,
+    AUDIO_RADAR,
+    NEBULA_PARTICLES
+}
+
+enum class SpatialMode {
+    HEADPHONES,
+    SPEAKERS,
+    CINEMA_360
+}
+
+enum class ThemeMode {
+    AMOLED_BLACK,
+    DARK,
+    LIGHT,
+    DYNAMIC_YOU
+}
+
+data class EqualizerBand(
+    val bandIndex: Short,
+    val centerFreqHz: Int,
+    val minLevelMb: Short,
+    val maxLevelMb: Short,
+    var currentLevelMb: Short
+) {
+    val centerFreqFormatted: String
+        get() = if (centerFreqHz >= 1000) "${centerFreqHz / 1000}k" else "${centerFreqHz}Hz"
+
+    val currentGainDb: Float
+        get() = currentLevelMb / 100f
+}
+
+data class EqPreset(
+    val name: String,
+    val gainsDb: List<Float>,
+    val bassBoost: Int = 0,
+    val virtualizer: Int = 0,
+    val reverbPreset: Short = 0,
+    val isCustom: Boolean = false
+)
+
+data class SpatialAudioConfig(
+    val isEnabled: Boolean = true,
+    val mode: SpatialMode = SpatialMode.HEADPHONES,
+    val intensity: Float = 0.75f, // 0.0 to 1.0
+    val soundstageWidth: Float = 0.85f, // 0.0 to 1.0 (narrow to wide 360)
+    val listenerX: Float = 0f, // -1.0 to 1.0
+    val listenerY: Float = 0f, // -1.0 to 1.0
+    val virtualSurround: Boolean = true,
+    val stereoWidening: Float = 0.80f,
+    val channelBalance: Float = 0.0f // -1.0 (Left) to +1.0 (Right)
+)
+
+data class PlaybackInfo(
+    val isPlaying: Boolean = false,
+    val currentPositionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val shuffleMode: ShuffleMode = ShuffleMode.OFF,
+    val repeatMode: RepeatMode = RepeatMode.OFF,
+    val playbackSpeed: Float = 1.0f,
+    val playbackPitch: Float = 1.0f,
+    val sleepTimerMinutesRemaining: Int? = null
+)

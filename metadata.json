@@ -1,0 +1,6 @@
+{
+  "name": "SONORA",
+  "description": "Premium Hi-Fi Offline Music Player with 360° Spatial Audio, 10-Band EQ, and Studio Effects",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
