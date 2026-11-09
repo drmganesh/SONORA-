@@ -1,14 +1,19 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import ui.player.PlayerScreen
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,10 +28,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Equalizer
@@ -79,12 +86,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.runtime.LaunchedEffect
 import com.example.model.RepeatMode
 import com.example.model.ShuffleMode
 import com.example.model.Song
-import com.example.model.VisualizerStyle
 import com.example.ui.components.ArtworkAlbumView
-import com.example.ui.components.AudioVisualizerView
 import com.example.ui.theme.SonoraCardBorder
 import com.example.ui.theme.SonoraCyan
 import com.example.ui.theme.SonoraGold
@@ -96,12 +104,30 @@ import com.example.ui.theme.SonoraSurfaceElevated
 import com.example.ui.theme.SonoraTextMuted
 import com.example.ui.theme.SonoraTextPrimary
 import com.example.ui.theme.SonoraTextSecondary
+import com.example.util.LyricLine
+import com.example.util.LyricsExtractor
 import com.example.viewmodel.SonoraViewModel
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingScreen(
+    viewModel: SonoraViewModel,
+    onClose: () -> Unit,
+    onNavigateToEqualizer: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    PlayerScreen(
+        viewModel = viewModel,
+        onClose = onClose,
+        onNavigateToEqualizer = onNavigateToEqualizer,
+        modifier = modifier.testTag("now_playing_screen")
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Suppress("UNUSED_PARAMETER")
+@Composable
+private fun LegacyNowPlayingScreen(
     viewModel: SonoraViewModel,
     onClose: () -> Unit,
     onNavigateToEqualizer: () -> Unit,
@@ -111,20 +137,32 @@ fun NowPlayingScreen(
     val playbackInfo by viewModel.playbackInfo.collectAsState()
     val queue by viewModel.queue.collectAsState()
     val queueIndex by viewModel.queueIndex.collectAsState()
-    val visualizerFrequencies by viewModel.visualizerFrequencies.collectAsState()
-    val waveformSamples by viewModel.waveformSamples.collectAsState()
-    val visualizerStyle by viewModel.visualizerStyle.collectAsState()
     val spatialConfig by viewModel.spatialConfig.collectAsState()
+    val isTwsConnected by viewModel.isTwsConnected.collectAsState()
+    val currentTrackLyrics by viewModel.currentTrackLyrics.collectAsState()
+
+    val gesturesEnabled by viewModel.gesturesEnabled.collectAsState()
+    val swipeArtworkToSkip by viewModel.swipeArtworkToSkip.collectAsState()
+    val doubleTapToSeek by viewModel.doubleTapToSeek.collectAsState()
+    val swipeDownToCollapse by viewModel.swipeDownToCollapse.collectAsState()
+
+    var gestureFeedbackText by remember { mutableStateOf<String?>(null) }
 
     var showQueueSheet by remember { mutableStateOf(false) }
     var showLyricsSheet by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
-    var showVisualizerPicker by remember { mutableStateOf(false) }
     var isUserSeeking by remember { mutableStateOf(false) }
     var userSeekPos by remember { mutableFloatStateOf(0f) }
+    var isLyricsMode by remember { mutableStateOf(false) }
 
     val currentPosition = if (isUserSeeking) userSeekPos.toLong() else playbackInfo.currentPositionMs
     val duration = (playbackInfo.durationMs).coerceAtLeast(currentSong?.durationMs ?: 0L)
+
+    val effectiveLyrics = currentTrackLyrics ?: currentSong?.lyrics
+    val parsedLrcLines = remember(effectiveLyrics) { LyricsExtractor.parseLrcLines(effectiveLyrics) }
+    val activeLineIdx = remember(parsedLrcLines, currentPosition) {
+        LyricsExtractor.findActiveLineIndex(parsedLrcLines, currentPosition)
+    }
 
     Box(
         modifier = modifier
@@ -202,54 +240,231 @@ fun NowPlayingScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Large Hero Album Artwork Card (Glass-like aesthetic)
-            ArtworkAlbumView(
-                song = currentSong,
+            // Switcher: Cover Art / Embedded Lyrics
+            Row(
                 modifier = Modifier
-                    .size(280.dp)
-                    .clip(RoundedCornerShape(28.dp)),
-                cornerRadius = 28.dp,
-                isPlaying = playbackInfo.isPlaying,
-                isVinylRotating = false
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Real-Time Audio Visualizer Strip (Tappable to cycle modes)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(SonoraSurfaceElevated.copy(alpha = 0.6f))
-                    .border(1.dp, SonoraCardBorder, RoundedCornerShape(16.dp))
-                    .clickable { showVisualizerPicker = true }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .testTag("live_visualizer_strip"),
-                contentAlignment = Alignment.Center
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(SonoraSurfaceElevated.copy(alpha = 0.7f))
+                    .border(1.dp, SonoraCardBorder, RoundedCornerShape(20.dp))
+                    .padding(3.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                AudioVisualizerView(
-                    frequencies = visualizerFrequencies,
-                    waveform = waveformSamples,
-                    style = visualizerStyle,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // Subtitle indicating visualizer mode
-                Text(
-                    text = "VISUALIZER: ${visualizerStyle.name.replace("_", " ")} (TAP TO CHANGE)",
-                    color = SonoraGold.copy(alpha = 0.5f),
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
+                Row(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(2.dp)
-                )
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (!isLyricsMode) SonoraGold else Color.Transparent)
+                        .clickable { isLyricsMode = false }
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Image,
+                        contentDescription = null,
+                        tint = if (!isLyricsMode) SonoraOnGold else SonoraTextMuted,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "ALBUM ART",
+                        color = if (!isLyricsMode) SonoraOnGold else SonoraTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isLyricsMode) SonoraGold else Color.Transparent)
+                        .clickable { isLyricsMode = true }
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lyrics,
+                        contentDescription = null,
+                        tint = if (isLyricsMode) SonoraOnGold else SonoraTextMuted,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "EMBEDDED LYRICS",
+                        color = if (isLyricsMode) SonoraOnGold else SonoraTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Hero Main Presentation: Album Artwork or Synced Embedded Lyrics
+            if (!isLyricsMode) {
+                var totalDragX by remember { mutableFloatStateOf(0f) }
+                var totalDragY by remember { mutableFloatStateOf(0f) }
+
+                Box(
+                    modifier = Modifier
+                        .size(290.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .pointerInput(gesturesEnabled, swipeArtworkToSkip, doubleTapToSeek, swipeDownToCollapse) {
+                            if (!gesturesEnabled) return@pointerInput
+
+                            detectTapGestures(
+                                onDoubleTap = { offset ->
+                                    if (doubleTapToSeek) {
+                                        val width = size.width
+                                        if (offset.x < width * 0.45f) {
+                                            // Double tap left -> -10 seconds
+                                            val newPos = (currentPosition - 10000L).coerceAtLeast(0L)
+                                            viewModel.seekTo(newPos)
+                                            gestureFeedbackText = "« -10s"
+                                        } else if (offset.x > width * 0.55f) {
+                                            // Double tap right -> +10 seconds
+                                            val newPos = (currentPosition + 10000L).coerceAtMost(duration)
+                                            viewModel.seekTo(newPos)
+                                            gestureFeedbackText = "+10s »"
+                                        } else {
+                                            // Center double tap -> toggle play/pause
+                                            viewModel.togglePlayPause()
+                                            gestureFeedbackText = if (playbackInfo.isPlaying) "PAUSED" else "PLAYING"
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(gesturesEnabled, swipeArtworkToSkip, swipeDownToCollapse) {
+                            if (!gesturesEnabled) return@pointerInput
+
+                            detectHorizontalDragGestures(
+                                onDragStart = { totalDragX = 0f },
+                                onDragEnd = {
+                                    if (swipeArtworkToSkip) {
+                                        if (totalDragX < -70f) {
+                                            // Swiped left -> Next track
+                                            viewModel.playNext()
+                                            gestureFeedbackText = "NEXT TRACK »"
+                                        } else if (totalDragX > 70f) {
+                                            // Swiped right -> Previous track
+                                            viewModel.playPrevious()
+                                            gestureFeedbackText = "« PREVIOUS TRACK"
+                                        }
+                                    }
+                                    totalDragX = 0f
+                                },
+                                onDragCancel = { totalDragX = 0f },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    totalDragX += dragAmount
+                                }
+                            )
+                        }
+                        .pointerInput(gesturesEnabled, swipeDownToCollapse) {
+                            if (!gesturesEnabled || !swipeDownToCollapse) return@pointerInput
+
+                            detectVerticalDragGestures(
+                                onDragStart = { totalDragY = 0f },
+                                onDragEnd = {
+                                    if (totalDragY > 100f) {
+                                        // Swiped down -> Collapse Now Playing
+                                        onClose()
+                                    }
+                                    totalDragY = 0f
+                                },
+                                onDragCancel = { totalDragY = 0f },
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    totalDragY += dragAmount
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    ArtworkAlbumView(
+                        song = currentSong,
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadius = 28.dp,
+                        isPlaying = playbackInfo.isPlaying,
+                        isVinylRotating = false
+                    )
+
+                    // Overlay feedback pill when a gesture is triggered
+                    LaunchedEffect(gestureFeedbackText) {
+                        if (gestureFeedbackText != null) {
+                            kotlinx.coroutines.delay(1200)
+                            gestureFeedbackText = null
+                        }
+                    }
+
+                    if (gestureFeedbackText != null) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(SonoraObsidian.copy(alpha = 0.85f))
+                                .border(1.5.dp, SonoraGold, RoundedCornerShape(16.dp))
+                                .padding(horizontal = 18.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = gestureFeedbackText ?: "",
+                                color = SonoraGold,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Sleek active lyric preview bar if lyrics are available
+                if (parsedLrcLines.isNotEmpty() && activeLineIdx in parsedLrcLines.indices) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(SonoraSurfaceElevated.copy(alpha = 0.7f))
+                            .border(1.dp, SonoraGold.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                            .clickable { isLyricsMode = true }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lyrics,
+                            contentDescription = null,
+                            tint = SonoraGold,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = parsedLrcLines[activeLineIdx].text,
+                            color = SonoraGold,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+            } else {
+                // Interactive Embedded Lyrics View in Hero Area
+                HeroEmbeddedLyricsCard(
+                    song = currentSong,
+                    parsedLines = parsedLrcLines,
+                    activeLineIndex = activeLineIdx,
+                    rawLyrics = effectiveLyrics,
+                    onSeekTo = { viewModel.seekTo(it) },
+                    onExpandSheet = { showLyricsSheet = true },
+                    onCloseLyrics = { isLyricsMode = false },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(310.dp)
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+            }
 
             // Track Title, Artist, and Favorite Button
             Row(
@@ -333,6 +548,27 @@ fun NowPlayingScreen(
                             color = SonoraGold,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                val automixOn by viewModel.automixEnabled.collectAsState()
+                val nextMatched by viewModel.nextMatchedSong.collectAsState()
+                if (automixOn) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(SonoraCyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                            .border(1.dp, SonoraCyan.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = if (nextMatched != null) "AUTOMIX: ${nextMatched?.title}" else "AUTOMIX ON",
+                            color = SonoraCyan,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -510,6 +746,34 @@ fun NowPlayingScreen(
                     )
                 }
 
+                // TWS Wide Stereo Toggle (Shows when TWS earbuds are connected)
+                if (isTwsConnected) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (spatialConfig.twsWideStereoEnabled) SonoraCyan.copy(alpha = 0.18f) else Color.Transparent)
+                            .clickable {
+                                viewModel.toggleTwsWideStereo(!spatialConfig.twsWideStereoEnabled)
+                            }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.BluetoothConnected,
+                            contentDescription = null,
+                            tint = if (spatialConfig.twsWideStereoEnabled) SonoraCyan else SonoraTextMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (spatialConfig.twsWideStereoEnabled) "TWS WIDE" else "TWS",
+                            color = if (spatialConfig.twsWideStereoEnabled) SonoraCyan else SonoraTextMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
                 // Lyrics Sheet Toggle
                 Row(
                     modifier = Modifier
@@ -558,6 +822,9 @@ fun NowPlayingScreen(
             ) {
                 LyricsSheetContent(
                     song = currentSong,
+                    lyrics = effectiveLyrics,
+                    currentPositionMs = currentPosition,
+                    onSeekTo = { viewModel.seekTo(it) },
                     onClose = { showLyricsSheet = false }
                 )
             }
@@ -571,18 +838,6 @@ fun NowPlayingScreen(
                 onSetTimer = { minutes ->
                     viewModel.setSleepTimer(minutes)
                     showSleepTimerDialog = false
-                }
-            )
-        }
-
-        // Visualizer Picker Dialog
-        if (showVisualizerPicker) {
-            VisualizerPickerDialog(
-                currentStyle = visualizerStyle,
-                onDismiss = { showVisualizerPicker = false },
-                onSelectStyle = {
-                    viewModel.setVisualizerStyle(it)
-                    showVisualizerPicker = false
                 }
             )
         }
@@ -720,45 +975,234 @@ fun QueueSheetContent(
 }
 
 @Composable
+fun HeroEmbeddedLyricsCard(
+    song: Song?,
+    parsedLines: List<LyricLine>,
+    activeLineIndex: Int,
+    rawLyrics: String?,
+    onSeekTo: (Long) -> Unit,
+    onExpandSheet: () -> Unit,
+    onCloseLyrics: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(activeLineIndex) {
+        if (activeLineIndex >= 0 && parsedLines.isNotEmpty()) {
+            listState.animateScrollToItem((activeLineIndex - 1).coerceAtLeast(0))
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(28.dp))
+            .background(SonoraSurfaceElevated.copy(alpha = 0.85f))
+            .border(1.dp, SonoraGold.copy(alpha = 0.4f), RoundedCornerShape(28.dp))
+            .padding(16.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Lyrics,
+                        contentDescription = null,
+                        tint = SonoraGold,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (parsedLines.isNotEmpty()) "SYNCED LYRICS" else "EMBEDDED LYRICS",
+                        color = SonoraGold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onExpandSheet) {
+                        Text("Expand", color = SonoraCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    IconButton(onClick = onCloseLyrics, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close lyrics view",
+                            tint = SonoraTextMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (parsedLines.isNotEmpty()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 16.dp)
+                ) {
+                    itemsIndexed(parsedLines) { index, item ->
+                        val isActive = index == activeLineIndex
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isActive) SonoraGold.copy(alpha = 0.15f) else Color.Transparent)
+                                .clickable { onSeekTo(item.timestampMs) }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = item.text,
+                                color = if (isActive) SonoraGold else SonoraTextSecondary.copy(alpha = 0.7f),
+                                fontSize = if (isActive) 17.sp else 14.sp,
+                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                lineHeight = if (isActive) 22.sp else 18.sp
+                            )
+                        }
+                    }
+                }
+            } else if (!rawLyrics.isNullOrBlank()) {
+                val plainLines = rawLyrics.lines()
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 12.dp)
+                ) {
+                    itemsIndexed(plainLines) { _, line ->
+                        Text(
+                            text = line,
+                            color = SonoraTextPrimary,
+                            fontSize = 14.sp,
+                            lineHeight = 22.sp,
+                            modifier = Modifier.padding(vertical = 3.dp)
+                        )
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lyrics,
+                            contentDescription = null,
+                            tint = SonoraTextMuted,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "No Embedded Lyrics Detected",
+                            color = SonoraTextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "SONORA automatically reads embedded ID3v2 USLT frames, FLAC Vorbis comments, or .lrc sidecars.",
+                            color = SonoraTextMuted,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun LyricsSheetContent(
     song: Song?,
+    lyrics: String?,
+    currentPositionMs: Long,
+    onSeekTo: (Long) -> Unit,
     onClose: () -> Unit
 ) {
+    val parsedLines = remember(lyrics) { LyricsExtractor.parseLrcLines(lyrics) }
+    val activeLineIdx = remember(parsedLines, currentPositionMs) {
+        LyricsExtractor.findActiveLineIndex(parsedLines, currentPositionMs)
+    }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(activeLineIdx) {
+        if (activeLineIdx >= 0 && parsedLines.isNotEmpty()) {
+            listState.animateScrollToItem((activeLineIdx - 2).coerceAtLeast(0))
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(500.dp)
-            .padding(20.dp)
+            .height(550.dp)
+            .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
-                Text("Lyrics", color = SonoraTextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("${song?.title} - ${song?.artist}", color = SonoraTextSecondary, fontSize = 12.sp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (parsedLines.isNotEmpty()) "Synchronized Lyrics" else "Embedded Lyrics",
+                    color = SonoraTextPrimary,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "${song?.title} • ${song?.artist}",
+                    color = SonoraTextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
             IconButton(onClick = onClose) {
                 Icon(Icons.Default.Close, contentDescription = "Close", tint = SonoraTextPrimary)
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
-        val lyricsText = song?.lyrics
-        if (lyricsText.isNullOrBlank()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No lyrics found for this track.\nYou can add lyrics via 'Edit Metadata' in Library.",
-                    color = SonoraTextMuted,
-                    textAlign = TextAlign.Center,
-                    fontSize = 14.sp
-                )
+        if (parsedLines.isNotEmpty()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 16.dp)
+            ) {
+                itemsIndexed(parsedLines) { index, item ->
+                    val isActive = index == activeLineIdx
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isActive) SonoraGold.copy(alpha = 0.18f) else Color.Transparent)
+                            .clickable { onSeekTo(item.timestampMs) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = item.text,
+                            color = if (isActive) SonoraGold else SonoraTextPrimary.copy(alpha = 0.65f),
+                            fontSize = if (isActive) 18.sp else 15.sp,
+                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                            lineHeight = if (isActive) 24.sp else 20.sp
+                        )
+                    }
+                }
             }
-        } else {
+        } else if (!lyrics.isNullOrBlank()) {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                val lines = lyricsText.lines()
+                val lines = lyrics.lines()
                 itemsIndexed(lines) { _, line ->
                     Text(
                         text = line,
@@ -767,6 +1211,32 @@ fun LyricsSheetContent(
                         lineHeight = 24.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+            }
+        } else {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.Lyrics,
+                        contentDescription = null,
+                        tint = SonoraTextMuted,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "No Embedded Lyrics Found",
+                        color = SonoraTextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "SONORA extracts ID3v2 USLT frames, Vorbis tags, and sidecar .lrc files automatically.",
+                        color = SonoraTextMuted,
+                        textAlign = TextAlign.Center,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(horizontal = 24.dp)
                     )
                 }
             }
@@ -815,50 +1285,6 @@ fun SleepTimerDialog(
                         )
                         if (isSel) {
                             Icon(Icons.Default.Bedtime, contentDescription = null, tint = SonoraGold, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = SonoraTextSecondary) }
-        }
-    )
-}
-
-@Composable
-fun VisualizerPickerDialog(
-    currentStyle: VisualizerStyle,
-    onDismiss: () -> Unit,
-    onSelectStyle: (VisualizerStyle) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = SonoraSurfaceDark,
-        title = {
-            Text("Choose Visualizer Style", color = SonoraTextPrimary, fontWeight = FontWeight.Bold)
-        },
-        text = {
-            Column {
-                VisualizerStyle.values().forEach { style ->
-                    val isSel = currentStyle == style
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelectStyle(style) }
-                            .padding(vertical = 12.dp, horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = style.name.replace("_", " "),
-                            color = if (isSel) SonoraGold else SonoraTextPrimary,
-                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                            fontSize = 14.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (isSel) {
-                            Icon(Icons.Default.Equalizer, contentDescription = null, tint = SonoraGold, modifier = Modifier.size(18.dp))
                         }
                     }
                 }

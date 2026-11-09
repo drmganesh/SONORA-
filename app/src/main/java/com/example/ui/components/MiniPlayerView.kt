@@ -48,13 +48,23 @@ import com.example.ui.theme.SonoraTextMuted
 import com.example.ui.theme.SonoraTextPrimary
 import com.example.ui.theme.SonoraTextSecondary
 
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+
 @Composable
 fun MiniPlayerView(
     song: Song?,
     playbackInfo: PlaybackInfo,
     onTogglePlayPause: () -> Unit,
     onPlayNext: () -> Unit,
+    onPlayPrevious: () -> Unit = {},
     onClick: () -> Unit,
+    gesturesEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
@@ -63,12 +73,54 @@ fun MiniPlayerView(
         (playbackInfo.currentPositionMs.toFloat() / playbackInfo.durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
+    var totalDragX by remember { mutableFloatStateOf(0f) }
+    var totalDragY by remember { mutableFloatStateOf(0f) }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = SonoraGold.copy(alpha = 0.25f))
             .clip(RoundedCornerShape(20.dp))
+            .pointerInput(gesturesEnabled) {
+                if (!gesturesEnabled) return@pointerInput
+
+                detectHorizontalDragGestures(
+                    onDragStart = { totalDragX = 0f },
+                    onDragEnd = {
+                        if (totalDragX < -60f) {
+                            onPlayNext()
+                        } else if (totalDragX > 60f) {
+                            onPlayPrevious()
+                        }
+                        totalDragX = 0f
+                    },
+                    onDragCancel = { totalDragX = 0f },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragX += dragAmount
+                    }
+                )
+            }
+            .pointerInput(gesturesEnabled) {
+                if (!gesturesEnabled) return@pointerInput
+
+                detectVerticalDragGestures(
+                    onDragStart = { totalDragY = 0f },
+                    onDragEnd = {
+                        if (totalDragY < -60f) {
+                            // Swiped UP on mini player -> Expand Now Playing
+                            onClick()
+                        }
+                        totalDragY = 0f
+                    },
+                    onDragCancel = { totalDragY = 0f },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragY += dragAmount
+                    }
+                )
+            }
             .clickable { onClick() }
             .testTag("mini_player"),
         color = SonoraSurfaceElevated,

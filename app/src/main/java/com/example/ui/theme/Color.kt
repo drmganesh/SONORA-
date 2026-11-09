@@ -30,3 +30,13 @@ val SonoraEmerald = Color(0xFF00E676)
 val SonoraTextPrimary = Color(0xFFF2F4F8)
 val SonoraTextSecondary = Color(0xFFA1A8B8)
 val SonoraTextMuted = Color(0xFF656D7E)
+
+// Player Style System: Premium Dusty Rose & Charcoal Palette
+val SonoraDustyRose = Color(0xFFB9827B)
+val SonoraDustyRoseLight = Color(0xFFD4A59F)
+val SonoraDustyRoseDark = Color(0xFF8C5C55)
+val SonoraWarmBrown = Color(0xFF6E4D47)
+val SonoraCharcoal = Color(0xFF121418)
+val SonoraCharcoalElevated = Color(0xFF1A1D24)
+val SonoraCharcoalBorder = Color(0xFF2C303B)
+

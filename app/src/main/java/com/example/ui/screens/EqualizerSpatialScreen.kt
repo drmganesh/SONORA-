@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.media.audiofx.PresetReverb
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,8 +22,14 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Balance
+import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
@@ -83,7 +90,7 @@ fun EqualizerSpatialScreen(
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("10-Band Equalizer", "360° Spatial Audio")
+    val tabs = listOf("15-Band Equalizer", "360° Spatial Audio")
 
     Column(
         modifier = modifier
@@ -234,7 +241,7 @@ fun EqualizerContent(viewModel: SonoraViewModel) {
             }
         }
 
-        // 10-Band Equalizer Sliders
+        // 15-Band Studio Equalizer Sliders
         item {
             Surface(
                 modifier = Modifier
@@ -255,13 +262,20 @@ fun EqualizerContent(viewModel: SonoraViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "10 FREQUENCY BANDS",
-                            color = SonoraCyan,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
+                        Column {
+                            Text(
+                                text = "15 FREQUENCY BANDS (25Hz - 16kHz)",
+                                color = SonoraCyan,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "ISO 1/3-octave studio grade precision",
+                                color = SonoraTextMuted,
+                                fontSize = 10.sp
+                            )
+                        }
                         IconButton(
                             onClick = { viewModel.selectPreset(0) },
                             modifier = Modifier.size(32.dp)
@@ -272,7 +286,15 @@ fun EqualizerContent(viewModel: SonoraViewModel) {
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Horizontal scrollable band sliders or grid
+                    // Real-time Frequency Response Curve Canvas
+                    EqualizerCurveCanvas(
+                        bands = bands,
+                        isEnabled = isEnabled
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // 15 Frequency Band Gain Sliders
                     bands.forEach { band ->
                         BandSliderRow(
                             band = band,
@@ -443,6 +465,113 @@ fun BandSliderRow(
 }
 
 @Composable
+fun EqualizerCurveCanvas(
+    bands: List<EqualizerBand>,
+    isEnabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(96.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(SonoraSurfaceDark)
+            .border(1.dp, SonoraCardBorder, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val width = size.width
+            val height = size.height
+            val midY = height / 2f
+
+            // Reference grid lines (-12dB, 0dB, +12dB)
+            drawLine(
+                color = SonoraTextMuted.copy(alpha = 0.2f),
+                start = Offset(0f, height * 0.15f),
+                end = Offset(width, height * 0.15f),
+                strokeWidth = 1f
+            )
+            drawLine(
+                color = SonoraCyan.copy(alpha = 0.35f),
+                start = Offset(0f, midY),
+                end = Offset(width, midY),
+                strokeWidth = 1.5f
+            )
+            drawLine(
+                color = SonoraTextMuted.copy(alpha = 0.2f),
+                start = Offset(0f, height * 0.85f),
+                end = Offset(width, height * 0.85f),
+                strokeWidth = 1f
+            )
+
+            if (bands.isEmpty()) return@Canvas
+
+            val numBands = bands.size
+            val stepX = if (numBands > 1) width / (numBands - 1) else width
+
+            val points = bands.mapIndexed { index, band ->
+                val x = index * stepX
+                val normalizedGain = if (isEnabled && band.maxLevelMb > band.minLevelMb) {
+                    val range = (band.maxLevelMb - band.minLevelMb).toFloat()
+                    val cur = (band.currentLevelMb - band.minLevelMb).toFloat()
+                    (cur / range).coerceIn(0f, 1f)
+                } else {
+                    0.5f
+                }
+                val y = height * 0.85f - (normalizedGain * (height * 0.7f))
+                Offset(x, y)
+            }
+
+            // Build smooth curved path through points
+            val path = Path().apply {
+                moveTo(points.first().x, points.first().y)
+                for (i in 0 until points.size - 1) {
+                    val p0 = points[i]
+                    val p1 = points[i + 1]
+                    val cx = (p0.x + p1.x) / 2f
+                    cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
+                }
+            }
+
+            // Gradient fill path
+            val fillPath = Path().apply {
+                addPath(path)
+                lineTo(width, height)
+                lineTo(0f, height)
+                close()
+            }
+
+            drawPath(
+                path = fillPath,
+                brush = Brush.verticalGradient(
+                    colors = if (isEnabled) {
+                        listOf(SonoraGold.copy(alpha = 0.35f), SonoraCyan.copy(alpha = 0.05f), Color.Transparent)
+                    } else {
+                        listOf(Color.White.copy(alpha = 0.05f), Color.Transparent)
+                    }
+                )
+            )
+
+            // Draw curve stroke
+            drawPath(
+                path = path,
+                color = if (isEnabled) SonoraGold else SonoraTextMuted,
+                style = Stroke(width = 3.dp.toPx())
+            )
+
+            // Draw band points
+            points.forEach { pt ->
+                drawCircle(
+                    color = if (isEnabled) SonoraCyan else SonoraTextMuted,
+                    radius = 3.5.dp.toPx(),
+                    center = pt
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun DspEffectCard(
     title: String,
     valueText: String,
@@ -488,6 +617,9 @@ fun DspEffectCard(
 @Composable
 fun SpatialAudioContent(viewModel: SonoraViewModel) {
     val spatialConfig by viewModel.spatialConfig.collectAsState()
+    val isTwsConnected by viewModel.isTwsConnected.collectAsState()
+    val connectedAudioDeviceName by viewModel.connectedAudioDeviceName.collectAsState()
+    var balanceFixedToast by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -530,6 +662,199 @@ fun SpatialAudioContent(viewModel: SonoraViewModel) {
             }
         }
 
+        // Dedicated TWS & Bluetooth Ultra-Wide Audio & Balance Card
+        item {
+            Spacer(modifier = Modifier.height(10.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp)),
+                color = SonoraSurfaceElevated
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(
+                            1.dp,
+                            if (isTwsConnected) SonoraCyan else SonoraCardBorder,
+                            RoundedCornerShape(20.dp)
+                        )
+                        .padding(16.dp)
+                ) {
+                    // Header with device detection status
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = if (isTwsConnected) Icons.Default.BluetoothConnected else Icons.Default.Headphones,
+                                contentDescription = null,
+                                tint = if (isTwsConnected) SonoraCyan else SonoraGold,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = if (isTwsConnected) "TWS EARBUDS CONNECTED" else "TWS DUAL-STEREO ENGINE",
+                                    color = if (isTwsConnected) SonoraCyan else SonoraTextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = connectedAudioDeviceName,
+                                    color = SonoraTextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = spatialConfig.twsWideStereoEnabled,
+                            onCheckedChange = { viewModel.toggleTwsWideStereo(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.Black,
+                                checkedTrackColor = SonoraCyan,
+                                uncheckedThumbColor = SonoraTextMuted,
+                                uncheckedTrackColor = SonoraSurfaceDark
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "Wider Stereo Audio on TWS: Expands soundstage width using binaural crossfeed. Prevents single-sided audio drops & guarantees 100% balanced stereo output to both earbuds.",
+                        color = SonoraTextSecondary,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // TWS Stereo Widening Boost Slider
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "TWS Stereo Widening Width",
+                            color = SonoraTextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${(spatialConfig.twsStereoBoost * 100).toInt()}%",
+                            color = SonoraCyan,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Slider(
+                        value = spatialConfig.twsStereoBoost.coerceIn(0.5f, 1.5f),
+                        onValueChange = { viewModel.setTwsStereoBoost(it) },
+                        valueRange = 0.5f..1.5f,
+                        enabled = spatialConfig.twsWideStereoEnabled,
+                        colors = SliderDefaults.colors(
+                            thumbColor = SonoraCyan,
+                            activeTrackColor = SonoraCyan,
+                            inactiveTrackColor = SonoraSurfaceDark
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Quick-Fix Button: Force Balance Left & Right Audio
+                    ElevatedButton(
+                        onClick = {
+                            viewModel.forceBalanceDualEarbuds()
+                            balanceFixedToast = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.elevatedButtonColors(
+                            containerColor = if (balanceFixedToast) SonoraCyan else SonoraGold.copy(alpha = 0.15f),
+                            contentColor = if (balanceFixedToast) Color.Black else SonoraGold
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (balanceFixedToast) Icons.Default.CheckCircle else Icons.Default.Balance,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (balanceFixedToast) "Both Earbuds Balanced & Synchronized!" else "Fix Audio: Force Balanced Left & Right (100%)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // Spatial Audio Presets Carousel (11 Audiophile Soundstage Profiles)
+        item {
+            Text(
+                text = "SPATIAL ACOUSTIC PRESETS",
+                color = SonoraTextMuted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)
+            )
+
+            val spatialPresets = viewModel.spatialPresets
+            val selectedSpatialIdx by viewModel.selectedSpatialPresetIndex.collectAsState()
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(vertical = 4.dp)
+            ) {
+                itemsIndexed(spatialPresets) { index, preset ->
+                    val isSelected = index == selectedSpatialIdx
+                    Surface(
+                        modifier = Modifier
+                            .width(180.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { viewModel.selectSpatialPreset(index) },
+                        color = if (isSelected) SonoraCyan else SonoraSurfaceElevated,
+                        tonalElevation = 2.dp
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .border(1.dp, if (isSelected) SonoraCyan else SonoraCardBorder, RoundedCornerShape(14.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = preset.name,
+                                color = if (isSelected) Color.Black else SonoraTextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = preset.description,
+                                color = if (isSelected) Color.Black.copy(alpha = 0.8f) else SonoraTextSecondary,
+                                fontSize = 10.sp,
+                                lineHeight = 14.sp,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Listening Mode Selector Chips
         item {
             Text(
@@ -538,7 +863,7 @@ fun SpatialAudioContent(viewModel: SonoraViewModel) {
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,
-                modifier = Modifier.padding(top = 10.dp, bottom = 8.dp)
+                modifier = Modifier.padding(top = 14.dp, bottom = 8.dp)
             )
 
             Row(

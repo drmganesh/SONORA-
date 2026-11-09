@@ -86,3 +86,12 @@ data class Playlist(
     val coverArtUri: String? = null,
     val isSmart: Boolean = false
 )
+
+enum class SortOption {
+    TITLE_ASC,
+    TITLE_DESC,
+    ARTIST_ASC,
+    ALBUM_ASC,
+    DURATION_DESC,
+    DATE_ADDED_DESC
+}

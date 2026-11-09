@@ -133,12 +133,17 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                 ) {
                     // Floating Mini-Player (visible when a song exists and full screen is not open)
                     if (currentSong != null && !isNowPlayingExpanded) {
+                        val gesturesEnabled by viewModel.gesturesEnabled.collectAsState()
+                        val miniPlayerGestures by viewModel.miniPlayerGestures.collectAsState()
+
                         MiniPlayerView(
                             song = currentSong,
                             playbackInfo = playbackInfo,
                             onTogglePlayPause = { viewModel.togglePlayPause() },
                             onPlayNext = { viewModel.playNext() },
-                            onClick = { isNowPlayingExpanded = true }
+                            onPlayPrevious = { viewModel.playPrevious() },
+                            onClick = { isNowPlayingExpanded = true },
+                            gesturesEnabled = gesturesEnabled && miniPlayerGestures
                         )
                     }
 
@@ -205,7 +210,8 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                     )
                     4 -> SettingsScreen(
                         viewModel = viewModel,
-                        onNavigateToEqualizer = { currentTab = 3 }
+                        onNavigateToEqualizer = { currentTab = 3 },
+                        onOpenNowPlaying = { isNowPlayingExpanded = true }
                     )
                 }
             }

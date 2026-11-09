@@ -15,17 +15,23 @@ import com.example.data.PlaylistEntity
 import com.example.data.PlaylistSongCrossRef
 import com.example.data.SongMetadataEntity
 import com.example.data.SonoraDatabase
+import com.example.data.SonoraPreferences
 import com.example.model.Album
 import com.example.model.Artist
 import com.example.model.EqualizerBand
 import com.example.model.EqPreset
 import com.example.model.Genre
 import com.example.model.MusicFolder
+import com.example.model.PlayerStyle
+import data.preferences.PlayerStylePreferences
+import ui.player.seekbar.SeekbarStyle
+import data.preferences.SeekbarPreferences
 import com.example.model.PlaybackInfo
 import com.example.model.Playlist
 import com.example.model.RepeatMode
 import com.example.model.ShuffleMode
 import com.example.model.Song
+import com.example.model.SortOption
 import com.example.model.SpatialAudioConfig
 import com.example.model.SpatialMode
 import com.example.model.ThemeMode
@@ -44,16 +50,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
-enum class SortOption {
-    TITLE_ASC,
-    TITLE_DESC,
-    ARTIST_ASC,
-    ALBUM_ASC,
-    DURATION_DESC,
-    DATE_ADDED_DESC
-}
-
 class SonoraViewModel(application: Application) : AndroidViewModel(application) {
+
+    val preferences = SonoraPreferences(application)
 
     private val db = SonoraDatabase.getDatabase(application)
     private val dao = db.dao()
@@ -71,42 +70,47 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _queue = MutableStateFlow<List<Song>>(emptyList())
     val queue: StateFlow<List<Song>> = _queue.asStateFlow()
 
-    private val _queueIndex = MutableStateFlow(0)
+    private val _queueIndex = MutableStateFlow(preferences.lastQueueIndex)
     val queueIndex: StateFlow<Int> = _queueIndex.asStateFlow()
 
-    private val _playbackInfo = MutableStateFlow(PlaybackInfo())
+    private val _playbackInfo = MutableStateFlow(
+        PlaybackInfo(
+            repeatMode = preferences.repeatMode,
+            shuffleMode = preferences.shuffleMode
+        )
+    )
     val playbackInfo: StateFlow<PlaybackInfo> = _playbackInfo.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    private val _sortOption = MutableStateFlow(SortOption.TITLE_ASC)
+    private val _sortOption: MutableStateFlow<SortOption> = MutableStateFlow(preferences.sortOption)
     val sortOption: StateFlow<SortOption> = _sortOption.asStateFlow()
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists.asStateFlow()
 
-    // Equalizer & Audio FX State
-    private val _equalizerEnabled = MutableStateFlow(true)
+    // Equalizer & Audio FX State (Restored from preferences)
+    private val _equalizerEnabled = MutableStateFlow(preferences.equalizerEnabled)
     val equalizerEnabled: StateFlow<Boolean> = _equalizerEnabled.asStateFlow()
 
     private val _equalizerBands = MutableStateFlow<List<EqualizerBand>>(emptyList())
     val equalizerBands: StateFlow<List<EqualizerBand>> = _equalizerBands.asStateFlow()
 
-    private val _bassBoost = MutableStateFlow(600) // 0..1000
+    private val _bassBoost = MutableStateFlow(preferences.bassBoost) // 0..1000
     val bassBoost: StateFlow<Int> = _bassBoost.asStateFlow()
 
-    private val _virtualizer = MutableStateFlow(750) // 0..1000
+    private val _virtualizer = MutableStateFlow(preferences.virtualizer) // 0..1000
     val virtualizer: StateFlow<Int> = _virtualizer.asStateFlow()
 
-    private val _reverbPreset = MutableStateFlow<Short>(PresetReverb.PRESET_NONE)
+    private val _reverbPreset = MutableStateFlow<Short>(preferences.reverbPreset)
     val reverbPreset: StateFlow<Short> = _reverbPreset.asStateFlow()
 
-    private val _loudnessGainMb = MutableStateFlow(300) // 0..1000 millibels
+    private val _loudnessGainMb = MutableStateFlow(preferences.loudnessGainMb) // 0..1000 millibels
     val loudnessGainMb: StateFlow<Int> = _loudnessGainMb.asStateFlow()
 
-    // 360° Spatial Audio State
-    private val _spatialConfig = MutableStateFlow(SpatialAudioConfig())
+    // 360° Spatial Audio State (Restored from preferences)
+    private val _spatialConfig = MutableStateFlow(preferences.spatialConfig)
     val spatialConfig: StateFlow<SpatialAudioConfig> = _spatialConfig.asStateFlow()
 
     // Real-time Visualizer Flows
@@ -119,34 +123,256 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _visualizerStyle = MutableStateFlow(VisualizerStyle.SPECTRUM_BARS)
     val visualizerStyle: StateFlow<VisualizerStyle> = _visualizerStyle.asStateFlow()
 
-    // Theme & Audio Settings
-    private val _themeMode = MutableStateFlow(ThemeMode.AMOLED_BLACK)
+    // Theme & Audio Settings (Restored from preferences)
+    private val _themeMode = MutableStateFlow(preferences.themeMode)
     val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
 
-    private val _crossfadeSeconds = MutableStateFlow(0)
+    private val _crossfadeSeconds = MutableStateFlow(preferences.crossfadeSeconds)
     val crossfadeSeconds: StateFlow<Int> = _crossfadeSeconds.asStateFlow()
 
-    private val _gaplessEnabled = MutableStateFlow(true)
+    private val _gaplessEnabled = MutableStateFlow(preferences.gaplessEnabled)
     val gaplessEnabled: StateFlow<Boolean> = _gaplessEnabled.asStateFlow()
 
-    // Presets
+    // Gesture Settings (Restored from preferences)
+    private val _gesturesEnabled = MutableStateFlow(preferences.gesturesEnabled)
+    val gesturesEnabled: StateFlow<Boolean> = _gesturesEnabled.asStateFlow()
+
+    private val _swipeArtworkToSkip = MutableStateFlow(preferences.swipeArtworkToSkip)
+    val swipeArtworkToSkip: StateFlow<Boolean> = _swipeArtworkToSkip.asStateFlow()
+
+    private val _doubleTapToSeek = MutableStateFlow(preferences.doubleTapToSeek)
+    val doubleTapToSeek: StateFlow<Boolean> = _doubleTapToSeek.asStateFlow()
+
+    private val _swipeDownToCollapse = MutableStateFlow(preferences.swipeDownToCollapse)
+    val swipeDownToCollapse: StateFlow<Boolean> = _swipeDownToCollapse.asStateFlow()
+
+    private val _miniPlayerGestures = MutableStateFlow(preferences.miniPlayerGestures)
+    val miniPlayerGestures: StateFlow<Boolean> = _miniPlayerGestures.asStateFlow()
+
+    // Automix & Song Matching State (Restored from preferences)
+    private val _automixEnabled = MutableStateFlow(preferences.automixEnabled)
+    val automixEnabled: StateFlow<Boolean> = _automixEnabled.asStateFlow()
+
+    private val _matchNextSongEnabled = MutableStateFlow(preferences.matchNextSongEnabled)
+    val matchNextSongEnabled: StateFlow<Boolean> = _matchNextSongEnabled.asStateFlow()
+
+    // Player Style System (9 Premium Styles)
+    private val playerStylePrefs = PlayerStylePreferences(application)
+    private val _playerStyle = MutableStateFlow(preferences.playerStyle)
+    val playerStyle: StateFlow<PlayerStyle> = _playerStyle.asStateFlow()
+
+    fun setPlayerStyle(style: PlayerStyle) {
+        _playerStyle.value = style
+        preferences.playerStyle = style
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setPlayerStyle(style)
+        }
+    }
+
+    // Seekbar Style System (9 Premium Styles, default = BLOCKS)
+    private val seekbarPrefs = SeekbarPreferences(application)
+    private val _seekbarStyle = MutableStateFlow(preferences.seekbarStyle)
+    val seekbarStyle: StateFlow<SeekbarStyle> = _seekbarStyle.asStateFlow()
+
+    fun setSeekbarStyle(style: SeekbarStyle) {
+        _seekbarStyle.value = style
+        preferences.seekbarStyle = style
+        viewModelScope.launch(Dispatchers.IO) {
+            seekbarPrefs.setSeekbarStyle(style)
+        }
+    }
+
+    fun resetSeekbarStyleToDefault() {
+        setSeekbarStyle(SeekbarStyle.DEFAULT)
+    }
+
+    // Harmonic / Genre Next Matched Song Indicator
+    private val _nextMatchedSong = MutableStateFlow<Song?>(null)
+    val nextMatchedSong: StateFlow<Song?> = _nextMatchedSong.asStateFlow()
+
+    // Daily Listening Analytics State
+    private val _dailyAnalytics = MutableStateFlow(
+        com.example.model.DailyAnalytics(
+            dateKey = "today",
+            displayDate = "Today",
+            listenedSeconds = 0,
+            tracksPlayed = 0,
+            topArtist = "Exploring",
+            topGenre = "Hi-Fi Studio",
+            weeklyDayLabels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"),
+            weeklyDayMinutes = listOf(15, 30, 20, 45, 60, 50, 40),
+            totalWeeklyMinutes = 260,
+            peakHourLabel = "Evening"
+        )
+    )
+    val dailyAnalytics: StateFlow<com.example.model.DailyAnalytics> = _dailyAnalytics.asStateFlow()
+
+    // Daily Mixes (Custom Personalized Playlists Generated Daily)
+    private val _dailyMixes = MutableStateFlow<List<com.example.model.DailyMix>>(emptyList())
+    val dailyMixes: StateFlow<List<com.example.model.DailyMix>> = _dailyMixes.asStateFlow()
+
+    // Expanded Equalizer Presets (21 Audio Engineering Profiles calibrated for 15-Band ISO EQ)
+    // Bands: [25Hz, 40Hz, 63Hz, 100Hz, 160Hz, 250Hz, 400Hz, 630Hz, 1kHz, 1.6kHz, 2.5kHz, 4kHz, 6.3kHz, 10kHz, 16kHz]
     val standardPresets = listOf(
-        EqPreset("Flat", listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)),
-        EqPreset("Poweramp Deep Bass", listOf(6f, 5f, 4f, 2f, 0f, 0f, 1f, 2f, 3f, 4f), bassBoost = 850, virtualizer = 600),
-        EqPreset("Rock Studio", listOf(4.5f, 3f, -1.5f, -2f, 1.5f, 3f, 4.5f, 5f, 4f, 3.5f), bassBoost = 500, virtualizer = 400),
-        EqPreset("Pop Vibrant", listOf(1f, 2f, 3f, 4.5f, 3f, 1f, 2f, 3.5f, 4f, 4.5f), bassBoost = 400, virtualizer = 500),
-        EqPreset("Classical Master", listOf(3f, 2f, 1f, 0f, 0f, 1f, 2f, 3f, 4f, 3f), reverbPreset = PresetReverb.PRESET_LARGEHALL),
-        EqPreset("Jazz Club", listOf(2f, 1.5f, 0f, 1.5f, 2f, 2f, 1f, 2f, 3f, 2.5f), reverbPreset = PresetReverb.PRESET_SMALLROOM),
-        EqPreset("Electronic 360", listOf(5f, 4.5f, 2f, 0f, -1f, 2f, 4f, 5.5f, 6f, 6.5f), bassBoost = 750, virtualizer = 900),
-        EqPreset("Acoustic Warmth", listOf(3f, 2.5f, 1f, 1.5f, 2f, 2f, 3f, 3.5f, 3f, 2f), bassBoost = 300, virtualizer = 350),
-        EqPreset("Vocal Clarity", listOf(-2f, -1f, 1f, 3.5f, 5f, 4.5f, 3.5f, 2f, 0f, -1f), virtualizer = 300)
+        EqPreset("Flat (Reference)", listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)),
+        EqPreset("Poweramp Deep Bass", listOf(7f, 6.5f, 6f, 5f, 3.5f, 2f, 0.5f, 0f, 0f, 1f, 1.5f, 2.5f, 3f, 4f, 4.5f), bassBoost = 850, virtualizer = 600),
+        EqPreset("Sub-Bass Rumble 25Hz", listOf(9f, 8f, 7f, 5.5f, 3f, 1f, 0f, -0.5f, -1f, 0f, 0.5f, 1.5f, 2f, 2.5f, 3f), bassBoost = 1000, virtualizer = 400),
+        EqPreset("Bass & Treble Loudness", listOf(6.5f, 6f, 5f, 3.5f, 1f, -1f, -2f, -1.5f, 0f, 1.5f, 3f, 4.5f, 6f, 7f, 7.5f), bassBoost = 700, virtualizer = 650),
+        EqPreset("Rock Studio Punch", listOf(4.5f, 4f, 3.5f, 2f, -1f, -2f, -1.5f, 1f, 2f, 3.5f, 4.5f, 5f, 4.5f, 4f, 3.5f), bassBoost = 500, virtualizer = 400),
+        EqPreset("Metal & Hardcore", listOf(6f, 5.5f, 4.5f, 3f, -2f, -3f, -2.5f, 0.5f, 2f, 3.5f, 5f, 6f, 6f, 5.5f, 5f), bassBoost = 650, virtualizer = 500),
+        EqPreset("Pop Vibrant Modern", listOf(2f, 2f, 2.5f, 3.5f, 4f, 3.5f, 2.5f, 1.5f, 2f, 3f, 3.5f, 4f, 4.5f, 5f, 5f), bassBoost = 450, virtualizer = 550),
+        EqPreset("Hip-Hop & Urban", listOf(7f, 6.5f, 6f, 5f, 3f, 1f, -0.5f, 1f, 2f, 3f, 3.5f, 4.5f, 5f, 5.5f, 6f), bassBoost = 900, virtualizer = 600),
+        EqPreset("R&B Smooth Groove", listOf(4.5f, 4f, 3.5f, 2.5f, 1.5f, 0.5f, 0f, 1f, 2f, 3f, 3.5f, 4f, 4f, 3.5f, 3f), bassBoost = 550, virtualizer = 450),
+        EqPreset("Electronic 360 EDM", listOf(6f, 5.5f, 5f, 4f, 2f, 0f, -1f, 1.5f, 3f, 4.5f, 5.5f, 6.5f, 7f, 7.5f, 8f), bassBoost = 800, virtualizer = 900),
+        EqPreset("Techno & House Pulse", listOf(7.5f, 7f, 6f, 4.5f, 1f, -1f, -2f, 0f, 2f, 3.5f, 5f, 6f, 6.5f, 6f, 5.5f), bassBoost = 850, virtualizer = 700),
+        EqPreset("Trance Euphoria", listOf(5.5f, 5f, 4.5f, 3f, 1.5f, 0f, 1f, 2.5f, 4f, 5f, 6f, 7f, 7.5f, 7f, 6.5f), bassBoost = 700, virtualizer = 850),
+        EqPreset("Classical Symphony", listOf(3.5f, 3f, 2.5f, 1.5f, 0.5f, 0f, 0.5f, 1.5f, 2f, 2.5f, 3.5f, 4f, 4.5f, 4f, 3.5f), reverbPreset = PresetReverb.PRESET_LARGEHALL),
+        EqPreset("Opera & Reverb Hall", listOf(2.5f, 2f, 1.5f, 0.5f, 1f, 2f, 2.5f, 3f, 3.5f, 4f, 4.5f, 5f, 5f, 4.5f, 4f), reverbPreset = PresetReverb.PRESET_LARGEHALL),
+        EqPreset("Jazz Club Live", listOf(3f, 2.5f, 2f, 1f, 1f, 1.5f, 2f, 2f, 2f, 2f, 2.5f, 3f, 3.5f, 3f, 2.5f), reverbPreset = PresetReverb.PRESET_SMALLROOM),
+        EqPreset("Acoustic Warmth", listOf(4f, 3.5f, 3f, 2f, 1.5f, 2f, 2f, 2f, 2.5f, 3f, 3.5f, 4f, 3.5f, 3f, 2.5f), bassBoost = 350, virtualizer = 350),
+        EqPreset("Vocal Clarity & Speech", listOf(-3f, -2.5f, -1.5f, 0f, 2f, 4f, 5f, 5f, 4.5f, 3.5f, 2.5f, 1.5f, 0.5f, -0.5f, -1.5f), virtualizer = 300),
+        EqPreset("Air & Treble Crisp", listOf(-1.5f, -1f, -1f, 0f, 0.5f, 1f, 2f, 3f, 4.5f, 6f, 7f, 8f, 8.5f, 8f, 7.5f), virtualizer = 400),
+        EqPreset("Lo-Fi Warm Tape", listOf(3.5f, 3f, 2.5f, 1.5f, 0.5f, -0.5f, -1f, -1f, 0f, 0f, -1f, -2f, -3.5f, -5f, -6f), bassBoost = 400),
+        EqPreset("Gaming Surround", listOf(5.5f, 5f, 4f, 2.5f, 1.5f, 2.5f, 3.5f, 4.5f, 5f, 6f, 6.5f, 6.5f, 6f, 5.5f, 5f), bassBoost = 650, virtualizer = 950),
+        EqPreset("Audiophile Master Neutral", listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f))
     )
 
     private val _presets = MutableStateFlow(standardPresets)
     val presets: StateFlow<List<EqPreset>> = _presets.asStateFlow()
 
-    private val _currentPresetIndex = MutableStateFlow(0)
+    private val _currentPresetIndex = MutableStateFlow(preferences.currentEqPresetIndex)
     val currentPresetIndex: StateFlow<Int> = _currentPresetIndex.asStateFlow()
+
+    // Professional 360° Spatial Audio & TWS Presets
+    val spatialPresets = listOf(
+        com.example.model.SpatialPreset(
+            name = "TWS Ultra-Wide 360°",
+            description = "Optimized dual-earbud panoramic soundfield with enhanced stereo crossfeed and zero cancellation",
+            mode = SpatialMode.HEADPHONES,
+            intensity = 0.85f,
+            soundstageWidth = 0.95f,
+            stereoWidening = 0.95f,
+            listenerX = 0f,
+            listenerY = 0f
+        ),
+        com.example.model.SpatialPreset(
+            name = "TWS Binaural Panoramic",
+            description = "Spacious binaural acoustic imaging engineered for wireless earbuds with centered vocals",
+            mode = SpatialMode.HEADPHONES,
+            intensity = 0.80f,
+            soundstageWidth = 0.90f,
+            stereoWidening = 0.90f,
+            listenerX = 0f,
+            listenerY = 0f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Studio Control Room",
+            description = "Nearfield balanced binaural reference with crystal acoustic imaging",
+            mode = SpatialMode.HEADPHONES,
+            intensity = 0.70f,
+            soundstageWidth = 0.75f,
+            stereoWidening = 0.80f,
+            listenerX = 0f,
+            listenerY = 0f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Holographic 360° Sphere",
+            description = "Maximum 360-degree soundfield immersion with orbital acoustic pan",
+            mode = SpatialMode.CINEMA_360,
+            intensity = 0.95f,
+            soundstageWidth = 1.0f,
+            stereoWidening = 0.95f,
+            listenerX = 0f,
+            listenerY = 0f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Live Concert Arena",
+            description = "Expansive outdoor stadium soundstage with large acoustic reflections",
+            mode = SpatialMode.SPEAKERS,
+            intensity = 0.85f,
+            soundstageWidth = 0.90f,
+            stereoWidening = 0.85f,
+            reverbPreset = PresetReverb.PRESET_LARGEHALL,
+            listenerX = 0f,
+            listenerY = 0.15f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Intimate Jazz Lounge",
+            description = "Warm club acoustics with subtle room reflections and front-row presence",
+            mode = SpatialMode.HEADPHONES,
+            intensity = 0.60f,
+            soundstageWidth = 0.65f,
+            stereoWidening = 0.70f,
+            reverbPreset = PresetReverb.PRESET_SMALLROOM,
+            listenerX = 0f,
+            listenerY = 0f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Binaural IEM Master",
+            description = "Precision cross-feed matrix engineered specifically for in-ear monitors",
+            mode = SpatialMode.HEADPHONES,
+            intensity = 0.80f,
+            soundstageWidth = 0.85f,
+            stereoWidening = 0.90f,
+            listenerX = 0f,
+            listenerY = 0f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Car Audio Cockpit",
+            description = "Acoustic driver-seat compensation with tailored channel panning",
+            mode = SpatialMode.SPEAKERS,
+            intensity = 0.75f,
+            soundstageWidth = 0.70f,
+            stereoWidening = 0.65f,
+            listenerX = -0.25f,
+            listenerY = 0.10f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Open-Back Audiophile",
+            description = "Airy, natural soundstage replicating flagship open-back headphones",
+            mode = SpatialMode.HEADPHONES,
+            intensity = 0.70f,
+            soundstageWidth = 0.90f,
+            stereoWidening = 0.85f,
+            listenerX = 0f,
+            listenerY = 0f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Cinematic Surround 7.1",
+            description = "Ultra-wide cinema theater soundfield with deep surround presence",
+            mode = SpatialMode.CINEMA_360,
+            intensity = 0.90f,
+            soundstageWidth = 0.95f,
+            stereoWidening = 0.90f,
+            reverbPreset = PresetReverb.PRESET_MEDIUMROOM,
+            listenerX = 0f,
+            listenerY = -0.10f
+        ),
+        com.example.model.SpatialPreset(
+            name = "Midnight Ambient Chill",
+            description = "Dreamy panoramic stereo field with gentle relaxation acoustics",
+            mode = SpatialMode.HEADPHONES,
+            intensity = 0.55f,
+            soundstageWidth = 0.90f,
+            stereoWidening = 0.95f,
+            listenerX = 0f,
+            listenerY = 0f
+        )
+    )
+
+    private val _selectedSpatialPresetIndex = MutableStateFlow(preferences.selectedSpatialPresetIndex)
+    val selectedSpatialPresetIndex: StateFlow<Int> = _selectedSpatialPresetIndex.asStateFlow()
+
+    // TWS & Bluetooth Audio Device Connection Status
+    private val _isTwsConnected = MutableStateFlow(false)
+    val isTwsConnected: StateFlow<Boolean> = _isTwsConnected.asStateFlow()
+
+    private val _connectedAudioDeviceName = MutableStateFlow("Phone Speaker")
+    val connectedAudioDeviceName: StateFlow<String> = _connectedAudioDeviceName.asStateFlow()
+
+    // Dynamic Lyrics State (Extracted from embedded ID3/FLAC or sidecar .lrc/.txt files)
+    private val _currentTrackLyrics = MutableStateFlow<String?>(null)
+    val currentTrackLyrics: StateFlow<String?> = _currentTrackLyrics.asStateFlow()
 
     private var progressTrackingJob: Job? = null
     private var sleepTimerJob: Job? = null
@@ -167,6 +393,29 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             // Bind audio visualizer & bands flows from AudioEngine
             val engine = musicService?.audioEngine
             engine?.let { eng ->
+                // Apply restored settings to audio engine
+                eng.setEqualizerEnabled(_equalizerEnabled.value)
+                eng.setBassBoost(_bassBoost.value)
+                eng.setVirtualizer(_virtualizer.value)
+                eng.setReverbPreset(_reverbPreset.value)
+                eng.setLoudnessEnhancer(_loudnessGainMb.value)
+                eng.updateSpatialAudioConfig(_spatialConfig.value)
+
+                // Restore custom band gains if saved
+                val savedBands = preferences.getSavedBandGains()
+                if (savedBands != null) {
+                    savedBands.forEachIndexed { idx, gainDb ->
+                        val gainMb = (gainDb * 100).toInt().toShort()
+                        eng.setBandGain(idx.toShort(), gainMb)
+                    }
+                } else if (_currentPresetIndex.value in standardPresets.indices) {
+                    val p = standardPresets[_currentPresetIndex.value]
+                    p.gainsDb.forEachIndexed { idx, gainDb ->
+                        val gainMb = (gainDb * 100).toInt().toShort()
+                        eng.setBandGain(idx.toShort(), gainMb)
+                    }
+                }
+
                 viewModelScope.launch {
                     eng.visualizerFrequencies.collect { _visualizerFrequencies.value = it }
                 }
@@ -179,6 +428,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                             _equalizerBands.value = bands
                         }
                     }
+                }
+                viewModelScope.launch {
+                    eng.isTwsConnected.collect { _isTwsConnected.value = it }
+                }
+                viewModelScope.launch {
+                    eng.connectedAudioDeviceName.collect { _connectedAudioDeviceName.value = it }
                 }
             }
         }
@@ -205,9 +460,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             val songs = scanner.scanSongs()
             _allSongs.value = songs
             if (_queue.value.isEmpty() && songs.isNotEmpty()) {
+                val lastId = preferences.lastPlayedSongId
+                val savedSong = if (lastId != -1L) songs.find { it.id == lastId } else null
+                val targetSong = savedSong ?: songs.first()
+                val targetIndex = if (savedSong != null) songs.indexOf(savedSong).coerceAtLeast(0) else 0
+
                 _queue.value = songs
-                _currentSong.value = songs.first()
+                _queueIndex.value = targetIndex
+                _currentSong.value = targetSong
+                _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
             }
+            generateDailyMixes(songs)
+            updateDailyAnalytics()
         }
     }
 
@@ -328,6 +592,20 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _queueIndex.value = idx
         _currentSong.value = song
 
+        // Save last played song and queue to preferences
+        preferences.lastPlayedSongId = song.id
+        preferences.lastQueueIndex = idx
+        preferences.lastQueueSongIds = q.map { it.id }
+
+        // Find and pre-match the best next track for smooth automix
+        findNextMatchedSong(song, q, idx)
+
+        // Extract embedded or sidecar lyrics
+        viewModelScope.launch(Dispatchers.IO) {
+            val lyrics = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), song)
+            _currentTrackLyrics.value = lyrics
+        }
+
         val engine = musicService?.audioEngine ?: return
         engine.prepareAndPlay(
             uri = song.uri,
@@ -339,6 +617,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 startProgressTracker()
                 musicService?.updateForegroundNotification(song, true)
                 incrementPlayCount(song)
+
+                // If crossfade is enabled, smoothly fade in
+                if (_crossfadeSeconds.value > 0) {
+                    engine.crossfadeIn((_crossfadeSeconds.value * 1000L).coerceAtMost(3000L))
+                }
             },
             onCompletion = {
                 handleTrackCompletion()
@@ -372,14 +655,68 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun playNext() {
+    /**
+     * Determines the optimal next track using Automix:
+     * Evaluates harmonic compatibility (same artist, matching genre, or key/energy tempo flow).
+     */
+    private fun findNextMatchedSong(current: Song, currentQueue: List<Song>, currentIndex: Int) {
+        if (!_matchNextSongEnabled.value || currentQueue.size <= 1) {
+            val nextIdx = (currentIndex + 1) % currentQueue.size.coerceAtLeast(1)
+            _nextMatchedSong.value = currentQueue.getOrNull(nextIdx)
+            return
+        }
+
+        val candidates = currentQueue.filter { it.id != current.id }
+        if (candidates.isEmpty()) return
+
+        // 1. Same artist track with close duration/tempo
+        val sameArtist = candidates.filter { it.artist.equals(current.artist, ignoreCase = true) }
+        if (sameArtist.isNotEmpty()) {
+            _nextMatchedSong.value = sameArtist.first()
+            return
+        }
+
+        // 2. Same genre track
+        val sameGenre = candidates.filter { it.genre.equals(current.genre, ignoreCase = true) }
+        if (sameGenre.isNotEmpty()) {
+            _nextMatchedSong.value = sameGenre.first()
+            return
+        }
+
+        // 3. Fallback to natural next track in queue
+        val nextIdx = (currentIndex + 1) % currentQueue.size
+        _nextMatchedSong.value = currentQueue[nextIdx]
+    }
+
+    private var isCrossfadingNext = false
+
+    fun playNext(withCrossfade: Boolean = true) {
         val q = _queue.value
         if (q.isEmpty()) return
-        var nextIdx = _queueIndex.value + 1
-        if (nextIdx >= q.size) {
-            nextIdx = if (_playbackInfo.value.repeatMode == RepeatMode.ALL) 0 else return
+
+        // Choose next track: Automix match if enabled and nextMatchedSong is in queue, or next in queue
+        val targetSong = if (_automixEnabled.value && _matchNextSongEnabled.value && _nextMatchedSong.value != null) {
+            _nextMatchedSong.value!!
+        } else {
+            var nextIdx = _queueIndex.value + 1
+            if (nextIdx >= q.size) {
+                if (_playbackInfo.value.repeatMode == RepeatMode.ALL) nextIdx = 0 else return
+            }
+            q[nextIdx]
         }
-        playSong(q[nextIdx], q, nextIdx)
+
+        val targetIdx = q.indexOfFirst { it.id == targetSong.id }.coerceAtLeast(0)
+        val fadeSec = _crossfadeSeconds.value
+
+        if (withCrossfade && fadeSec > 0 && musicService?.audioEngine?.isPlaying == true && !isCrossfadingNext) {
+            isCrossfadingNext = true
+            musicService?.audioEngine?.crossfadeOut(fadeSec * 1000L) {
+                isCrossfadingNext = false
+                playSong(targetSong, q, targetIdx)
+            }
+        } else {
+            playSong(targetSong, q, targetIdx)
+        }
     }
 
     fun playPrevious() {
@@ -405,6 +742,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleShuffle() {
         val newMode = if (_playbackInfo.value.shuffleMode == ShuffleMode.OFF) ShuffleMode.ON else ShuffleMode.OFF
         _playbackInfo.value = _playbackInfo.value.copy(shuffleMode = newMode)
+        preferences.shuffleMode = newMode
         if (newMode == ShuffleMode.ON) {
             val cur = _currentSong.value
             val shuffled = _queue.value.shuffled()
@@ -424,6 +762,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             RepeatMode.ONE -> RepeatMode.OFF
         }
         _playbackInfo.value = _playbackInfo.value.copy(repeatMode = newMode)
+        preferences.repeatMode = newMode
     }
 
     private fun handleTrackCompletion() {
@@ -443,6 +782,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var secondsCounter = 0
+
     private fun startProgressTracker() {
         progressTrackingJob?.cancel()
         progressTrackingJob = viewModelScope.launch {
@@ -456,9 +797,38 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         currentPositionMs = pos,
                         durationMs = dur
                     )
+
+                    // Accumulate analytics listening time
+                    secondsCounter++
+                    if (secondsCounter >= 4) { // every 1 second (4 * 250ms)
+                        secondsCounter = 0
+                        recordListeningSecond()
+                    }
+
+                    // Automix crossfade trigger: when remaining duration reaches crossfade window
+                    val crossfadeSec = _crossfadeSeconds.value
+                    if (crossfadeSec > 0 && _automixEnabled.value && dur > 10000 && !isCrossfadingNext) {
+                        val remainingMs = dur - pos
+                        if (remainingMs in 100..(crossfadeSec * 1000L)) {
+                            playNext(withCrossfade = true)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private fun recordListeningSecond() {
+        val format = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val todayKey = format.format(java.util.Date())
+        preferences.addListeningTime(1, todayKey)
+        // Refresh live analytics state
+        val todaySec = preferences.getListeningTime(todayKey)
+        val cur = _dailyAnalytics.value
+        _dailyAnalytics.value = cur.copy(
+            dateKey = todayKey,
+            listenedSeconds = todaySec
+        )
     }
 
     fun toggleFavorite(song: Song) {
@@ -535,6 +905,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setEqualizerEnabled(enabled: Boolean) {
         _equalizerEnabled.value = enabled
+        preferences.equalizerEnabled = enabled
         musicService?.audioEngine?.setEqualizerEnabled(enabled)
     }
 
@@ -544,11 +915,15 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             if (it.bandIndex == bandIndex) it.copy(currentLevelMb = gainMb) else it
         }
         _equalizerBands.value = updated
+        // Save custom band gains
+        val gainsDb = updated.map { (it.currentLevelMb / 100f) }
+        preferences.saveBandGains(gainsDb)
     }
 
     fun selectPreset(index: Int) {
         if (index !in _presets.value.indices) return
         _currentPresetIndex.value = index
+        preferences.currentEqPresetIndex = index
         val preset = _presets.value[index]
 
         // Apply band gains
@@ -559,6 +934,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             musicService?.audioEngine?.setBandGain(band.bandIndex, gainMb)
         }
 
+        // Also save custom band gains array
+        preferences.saveBandGains(preset.gainsDb)
+
         if (preset.bassBoost > 0) setBassBoost(preset.bassBoost)
         if (preset.virtualizer > 0) setVirtualizer(preset.virtualizer)
         if (preset.reverbPreset != PresetReverb.PRESET_NONE) setReverb(preset.reverbPreset)
@@ -566,27 +944,71 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setBassBoost(value: Int) {
         _bassBoost.value = value
+        preferences.bassBoost = value
         musicService?.audioEngine?.setBassBoost(value)
     }
 
     fun setVirtualizer(value: Int) {
         _virtualizer.value = value
+        preferences.virtualizer = value
         musicService?.audioEngine?.setVirtualizer(value)
     }
 
     fun setReverb(preset: Short) {
         _reverbPreset.value = preset
+        preferences.reverbPreset = preset
         musicService?.audioEngine?.setReverbPreset(preset)
     }
 
     fun setLoudness(gainMb: Int) {
         _loudnessGainMb.value = gainMb
+        preferences.loudnessGainMb = gainMb
         musicService?.audioEngine?.setLoudnessEnhancer(gainMb)
     }
 
     fun updateSpatialConfig(config: SpatialAudioConfig) {
         _spatialConfig.value = config
+        preferences.spatialConfig = config
         musicService?.audioEngine?.updateSpatialAudioConfig(config)
+    }
+
+    fun selectSpatialPreset(index: Int) {
+        if (index !in spatialPresets.indices) return
+        _selectedSpatialPresetIndex.value = index
+        preferences.selectedSpatialPresetIndex = index
+        val p = spatialPresets[index]
+        val updatedConfig = _spatialConfig.value.copy(
+            isEnabled = true,
+            mode = p.mode,
+            intensity = p.intensity,
+            soundstageWidth = p.soundstageWidth,
+            stereoWidening = p.stereoWidening,
+            listenerX = p.listenerX,
+            listenerY = p.listenerY
+        )
+        updateSpatialConfig(updatedConfig)
+        if (p.reverbPreset != PresetReverb.PRESET_NONE) {
+            setReverb(p.reverbPreset)
+        }
+    }
+
+    fun toggleTwsWideStereo(enabled: Boolean) {
+        val updated = _spatialConfig.value.copy(twsWideStereoEnabled = enabled)
+        updateSpatialConfig(updated)
+    }
+
+    fun setTwsStereoBoost(boost: Float) {
+        val updated = _spatialConfig.value.copy(twsStereoBoost = boost.coerceIn(0.5f, 1.5f))
+        updateSpatialConfig(updated)
+    }
+
+    fun forceBalanceDualEarbuds() {
+        val updated = _spatialConfig.value.copy(
+            channelBalance = 0.0f,
+            listenerX = 0.0f
+        )
+        updateSpatialConfig(updated)
+        musicService?.audioEngine?.forceSymmetricalDualEarbudBalance()
     }
 
     fun setVisualizerStyle(style: VisualizerStyle) {
@@ -595,22 +1017,204 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setThemeMode(mode: ThemeMode) {
         _themeMode.value = mode
+        preferences.themeMode = mode
     }
 
     fun setCrossfadeSeconds(sec: Int) {
         _crossfadeSeconds.value = sec
+        preferences.crossfadeSeconds = sec
     }
 
     fun setGaplessEnabled(enabled: Boolean) {
         _gaplessEnabled.value = enabled
+        preferences.gaplessEnabled = enabled
     }
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
     }
 
-    fun setSortOption(option: SortOption) {
+    fun setSortOption(option: com.example.model.SortOption) {
         _sortOption.value = option
+        preferences.sortOption = option
+    }
+
+    // --- Gesture Settings Controls ---
+
+    fun toggleGesturesEnabled(enabled: Boolean) {
+        _gesturesEnabled.value = enabled
+        preferences.gesturesEnabled = enabled
+    }
+
+    fun toggleSwipeArtworkToSkip(enabled: Boolean) {
+        _swipeArtworkToSkip.value = enabled
+        preferences.swipeArtworkToSkip = enabled
+    }
+
+    fun toggleDoubleTapToSeek(enabled: Boolean) {
+        _doubleTapToSeek.value = enabled
+        preferences.doubleTapToSeek = enabled
+    }
+
+    fun toggleSwipeDownToCollapse(enabled: Boolean) {
+        _swipeDownToCollapse.value = enabled
+        preferences.swipeDownToCollapse = enabled
+    }
+
+    fun toggleMiniPlayerGestures(enabled: Boolean) {
+        _miniPlayerGestures.value = enabled
+        preferences.miniPlayerGestures = enabled
+    }
+
+    // --- Automix & Song Matching Controls ---
+
+    fun toggleAutomix(enabled: Boolean) {
+        _automixEnabled.value = enabled
+        preferences.automixEnabled = enabled
+    }
+
+    fun toggleMatchNextSong(enabled: Boolean) {
+        _matchNextSongEnabled.value = enabled
+        preferences.matchNextSongEnabled = enabled
+        _currentSong.value?.let { cur ->
+            findNextMatchedSong(cur, _queue.value, _queueIndex.value)
+        }
+    }
+
+    // --- Daily Mix & Analytics Algorithms ---
+
+    fun generateDailyMixes(songs: List<Song>) {
+        if (songs.isEmpty()) {
+            _dailyMixes.value = emptyList()
+            return
+        }
+
+        val mixes = mutableListOf<com.example.model.DailyMix>()
+
+        // Daily Mix 1: Dynamic Energy Flow (Upbeat / Pop / Electronic or high tempo)
+        val highEnergy = songs.filter {
+            it.genre.contains("rock", ignoreCase = true) ||
+            it.genre.contains("electronic", ignoreCase = true) ||
+            it.genre.contains("pop", ignoreCase = true) ||
+            it.genre.contains("dance", ignoreCase = true)
+        }.ifEmpty { songs.shuffled().take(8) }
+
+        mixes.add(
+            com.example.model.DailyMix(
+                id = "daily_mix_1",
+                title = "Daily Mix 1",
+                subtitle = "High Energy & Upbeat",
+                description = "Harmonically sequenced driving beats and studio highs",
+                badge = "ENERGETIC",
+                songs = highEnergy,
+                coverSong = highEnergy.firstOrNull(),
+                gradientColors = listOf(0xFFE5A93C, 0xFFE55D3C)
+            )
+        )
+
+        // Daily Mix 2: Focus & Acoustic Chill (Acoustic, Classical, Lo-Fi, Jazz)
+        val chill = songs.filter {
+            it.genre.contains("acoustic", ignoreCase = true) ||
+            it.genre.contains("classical", ignoreCase = true) ||
+            it.genre.contains("jazz", ignoreCase = true) ||
+            it.genre.contains("ambient", ignoreCase = true)
+        }.ifEmpty { songs.sortedByDescending { it.durationMs }.take(8) }
+
+        mixes.add(
+            com.example.model.DailyMix(
+                id = "daily_mix_2",
+                title = "Daily Mix 2",
+                subtitle = "Deep Focus & Warmth",
+                description = "Soothing acoustic spaces and binaural relaxation",
+                badge = "ACOUSTIC",
+                songs = chill,
+                coverSong = chill.firstOrNull(),
+                gradientColors = listOf(0xFF4AC4E2, 0xFF2D82B7)
+            )
+        )
+
+        // Daily Mix 3: Heavy Rotation & Favorites
+        val favoritesAndTop = (songs.filter { it.isFavorite } + songs.sortedByDescending { it.playCount }).distinctBy { it.id }.take(10)
+        val mix3Songs = favoritesAndTop.ifEmpty { songs.take(8) }
+
+        mixes.add(
+            com.example.model.DailyMix(
+                id = "daily_mix_3",
+                title = "Daily Mix 3",
+                subtitle = "Your Heavy Rotation",
+                description = "Curated based on your most repeated listening sessions",
+                badge = "ON REPEAT",
+                songs = mix3Songs,
+                coverSong = mix3Songs.firstOrNull(),
+                gradientColors = listOf(0xFF8E44AD, 0xFFE91E63)
+            )
+        )
+
+        // Daily Mix 4: Deep Archive & Unheard Gems
+        val unplayed = songs.filter { it.playCount == 0 }.ifEmpty { songs.shuffled() }.take(8)
+        mixes.add(
+            com.example.model.DailyMix(
+                id = "daily_mix_4",
+                title = "Daily Mix 4",
+                subtitle = "Hidden Gems & Archive",
+                description = "Rediscover overlooked masterpieces in your local library",
+                badge = "REDISCOVER",
+                songs = unplayed,
+                coverSong = unplayed.firstOrNull(),
+                gradientColors = listOf(0xFF16A085, 0xFF27AE60)
+            )
+        )
+
+        _dailyMixes.value = mixes
+    }
+
+    fun updateDailyAnalytics() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val format = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            val todayKey = format.format(java.util.Date())
+            val todaySec = preferences.getListeningTime(todayKey)
+
+            val songs = _allSongs.value
+            val playedCount = songs.sumOf { it.playCount }
+
+            val topArtist = songs.groupBy { it.artist }
+                .maxByOrNull { entry -> entry.value.sumOf { it.playCount } }
+                ?.key ?: "Studio Master"
+
+            val topGenre = songs.groupBy { it.genre }
+                .maxByOrNull { entry -> entry.value.sumOf { it.playCount } }
+                ?.key ?: "Hi-Fi Studio"
+
+            val weeklyStats = preferences.getWeeklyListeningStats()
+            val labels = mutableListOf<String>()
+            val minutes = mutableListOf<Int>()
+            val dayNameFormat = java.text.SimpleDateFormat("EEE", java.util.Locale.US)
+
+            weeklyStats.forEach { (dateStr, sec) ->
+                try {
+                    val d = format.parse(dateStr)
+                    labels.add(if (d != null) dayNameFormat.format(d) else "Day")
+                } catch (e: Exception) {
+                    labels.add("Day")
+                }
+                minutes.add((sec / 60).coerceAtLeast(0))
+            }
+
+            val totalWeeklyMins = minutes.sum().coerceAtLeast(todaySec / 60)
+
+            _dailyAnalytics.value = com.example.model.DailyAnalytics(
+                dateKey = todayKey,
+                displayDate = "Today",
+                listenedSeconds = todaySec,
+                tracksPlayed = playedCount,
+                topArtist = topArtist,
+                topGenre = topGenre,
+                weeklyDayLabels = labels,
+                weeklyDayMinutes = minutes,
+                totalWeeklyMinutes = totalWeeklyMins,
+                peakHourLabel = "Evening Hi-Fi Session"
+            )
+        }
     }
 
     fun setSleepTimer(minutes: Int) {

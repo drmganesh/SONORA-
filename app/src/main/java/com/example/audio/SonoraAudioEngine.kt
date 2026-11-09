@@ -4,8 +4,13 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.os.Handler
+import android.os.Looper
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
@@ -78,9 +83,20 @@ class SonoraAudioEngine(private val context: Context) {
     private val _waveformSamples = MutableStateFlow(FloatArray(64) { 0f })
     val waveformSamples: StateFlow<FloatArray> = _waveformSamples.asStateFlow()
 
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
     // Supported Equalizer Bands from Hardware/Framework
     private val _equalizerBands = MutableStateFlow<List<EqualizerBand>>(emptyList())
     val equalizerBands: StateFlow<List<EqualizerBand>> = _equalizerBands.asStateFlow()
+
+    // TWS & Bluetooth Audio Device Detection & State Tracking
+    private val _isTwsConnected = MutableStateFlow(false)
+    val isTwsConnected: StateFlow<Boolean> = _isTwsConnected.asStateFlow()
+
+    private val _connectedAudioDeviceName = MutableStateFlow("Phone Speaker")
+    val connectedAudioDeviceName: StateFlow<String> = _connectedAudioDeviceName.asStateFlow()
+
+    private var audioDeviceCallback: Any? = null
 
     private var currentSessionId = 0
     private var eqEnabled = true
@@ -95,8 +111,70 @@ class SonoraAudioEngine(private val context: Context) {
 
     init {
         setupFallbackEqualizerBands()
+        setupAudioDeviceDetection()
         initMediaPlayer()
         startVisualizerLoop()
+    }
+
+    private fun setupAudioDeviceDetection() {
+        checkCurrentAudioDevices()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val callback = object : AudioDeviceCallback() {
+                override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                    checkCurrentAudioDevices()
+                    onAudioRoutingChanged()
+                }
+
+                override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                    checkCurrentAudioDevices()
+                    onAudioRoutingChanged()
+                }
+            }
+            audioDeviceCallback = callback
+            audioManager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        }
+    }
+
+    fun checkCurrentAudioDevices() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            var isBluetooth = false
+            var devName = "Phone Speaker"
+
+            for (dev in devices) {
+                when (dev.type) {
+                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> {
+                        isBluetooth = true
+                        devName = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth TWS"
+                        break
+                    }
+                    else -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            if (dev.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                                dev.type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                                dev.type == AudioDeviceInfo.TYPE_BLE_BROADCAST) {
+                                isBluetooth = true
+                                devName = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "BLE TWS Earbuds"
+                                break
+                            }
+                        }
+                        if (dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                            dev.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES) {
+                            devName = "Wired Headphones"
+                        }
+                    }
+                }
+            }
+
+            _isTwsConnected.value = isBluetooth
+            _connectedAudioDeviceName.value = devName
+        } else {
+            @Suppress("DEPRECATION")
+            val isBt = audioManager.isBluetoothA2dpOn
+            _isTwsConnected.value = isBt
+            _connectedAudioDeviceName.value = if (isBt) "Bluetooth TWS" else "Built-in Speaker"
+        }
     }
 
     private fun initMediaPlayer() {
@@ -111,12 +189,19 @@ class SonoraAudioEngine(private val context: Context) {
         _isPlayingState = false
 
         mediaPlayer = MediaPlayer().apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
+            val attrBuilder = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                attrBuilder.setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_ALL)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S_V2) {
+                // Prevent duplicate system spatializer from muting or phase-cancelling the right earbud on TWS
+                attrBuilder.setSpatializationBehavior(AudioAttributes.SPATIALIZATION_BEHAVIOR_NEVER)
+            }
+
+            setAudioAttributes(attrBuilder.build())
             setWakeMode(context, android.os.PowerManager.PARTIAL_WAKE_LOCK)
         }
 
@@ -189,6 +274,9 @@ class SonoraAudioEngine(private val context: Context) {
         }
     }
 
+    private var crossfadeJob: Job? = null
+    private var currentVolumeScale = 1.0f
+
     fun play() {
         if (!isPrepared) return
         try {
@@ -197,6 +285,58 @@ class SonoraAudioEngine(private val context: Context) {
         } catch (e: Exception) {
             _isPlayingState = false
             Log.e(tag, "Play error", e)
+        }
+    }
+
+    /**
+     * Smoothly fades out the current track over fadeDurationMs,
+     * then executes onFadedOut() callback to seamlessly load and fade in the next track.
+     */
+    fun crossfadeOut(
+        fadeDurationMs: Long,
+        onFadedOut: () -> Unit
+    ) {
+        crossfadeJob?.cancel()
+        if (fadeDurationMs <= 0 || !isPlaying) {
+            onFadedOut()
+            return
+        }
+
+        crossfadeJob = scope.launch {
+            val steps = 20
+            val stepDelay = (fadeDurationMs / steps).coerceAtLeast(10L)
+            for (i in steps downTo 0) {
+                currentVolumeScale = (i.toFloat() / steps.toFloat()).coerceIn(0f, 1f)
+                applyVolumeAndBalance()
+                delay(stepDelay)
+            }
+            onFadedOut()
+        }
+    }
+
+    /**
+     * Smoothly fades in the newly loaded track from 0 to full volume over fadeDurationMs.
+     */
+    fun crossfadeIn(fadeDurationMs: Long) {
+        crossfadeJob?.cancel()
+        if (fadeDurationMs <= 0) {
+            currentVolumeScale = 1.0f
+            applyVolumeAndBalance()
+            return
+        }
+
+        crossfadeJob = scope.launch {
+            currentVolumeScale = 0f
+            applyVolumeAndBalance()
+            val steps = 20
+            val stepDelay = (fadeDurationMs / steps).coerceAtLeast(10L)
+            for (i in 0..steps) {
+                currentVolumeScale = (i.toFloat() / steps.toFloat()).coerceIn(0f, 1f)
+                applyVolumeAndBalance()
+                delay(stepDelay)
+            }
+            currentVolumeScale = 1.0f
+            applyVolumeAndBalance()
         }
     }
 
@@ -251,27 +391,8 @@ class SonoraAudioEngine(private val context: Context) {
                 equalizer = Equalizer(0, sessionId).apply {
                     enabled = eqEnabled
                 }
-
-                val numBands = equalizer?.numberOfBands ?: 5
-                val minLevel = equalizer?.bandLevelRange?.get(0) ?: -1500
-                val maxLevel = equalizer?.bandLevelRange?.get(1) ?: 1500
-
-                val bands = mutableListOf<EqualizerBand>()
-                for (i in 0 until numBands) {
-                    val bandIdx = i.toShort()
-                    val centerFreq = equalizer?.getCenterFreq(bandIdx)?.div(1000) ?: (60 * (i + 1))
-                    val currentLevel = equalizer?.getBandLevel(bandIdx) ?: 0
-                    bands.add(
-                        EqualizerBand(
-                            bandIndex = bandIdx,
-                            centerFreqHz = centerFreq,
-                            minLevelMb = minLevel,
-                            maxLevelMb = maxLevel,
-                            currentLevelMb = currentLevel
-                        )
-                    )
-                }
-                _equalizerBands.value = bands
+                // Maintain the 15-band precision filter array
+                setupFallbackEqualizerBands()
             }
         } catch (e: Throwable) {
             Log.w(tag, "Hardware Equalizer not available on this session, using software DSP: ${e.message}")
@@ -334,9 +455,29 @@ class SonoraAudioEngine(private val context: Context) {
         setupVisualizer(sessionId)
     }
 
+    companion object {
+        // Studio-Grade 15-Band ISO Center Frequencies
+        val ISO_15_BAND_FREQUENCIES = listOf(
+            25,    // Sub-bass rumble
+            40,    // Deep bass
+            63,    // Punch bass
+            100,   // Low bass
+            160,   // Upper bass
+            250,   // Warmth / low mids
+            400,   // Low mids
+            630,   // Center mids
+            1000,  // Vocal presence
+            1600,  // Upper mids
+            2500,  // Vocal bite / edge
+            4000,  // Presence / attack
+            6300,  // Definition / brightness
+            10000, // Treble / air
+            16000  // Ultra-high brilliance
+        )
+    }
+
     private fun setupFallbackEqualizerBands() {
-        val defaultFreqs = listOf(31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000)
-        _equalizerBands.value = defaultFreqs.mapIndexed { idx, freq ->
+        _equalizerBands.value = ISO_15_BAND_FREQUENCIES.mapIndexed { idx, freq ->
             EqualizerBand(
                 bandIndex = idx.toShort(),
                 centerFreqHz = freq,
@@ -357,15 +498,26 @@ class SonoraAudioEngine(private val context: Context) {
     }
 
     fun setBandGain(bandIndex: Short, gainMb: Short) {
-        try {
-            equalizer?.setBandLevel(bandIndex, gainMb)
-        } catch (e: Throwable) {
-            Log.w(tag, "Error setting band gain", e)
-        }
         val updated = _equalizerBands.value.map {
             if (it.bandIndex == bandIndex) it.copy(currentLevelMb = gainMb) else it
         }
         _equalizerBands.value = updated
+
+        try {
+            val eq = equalizer
+            if (eq != null) {
+                val hwBands = eq.numberOfBands.toInt()
+                if (hwBands > 0) {
+                    // Map 15-band index (0..14) proportionally to hardware band index (0..hwBands-1)
+                    val hwIndex = ((bandIndex.toFloat() / 14f) * (hwBands - 1)).toInt().coerceIn(0, hwBands - 1).toShort()
+                    val range = eq.bandLevelRange
+                    val clampedGain = gainMb.coerceIn(range[0], range[1])
+                    eq.setBandLevel(hwIndex, clampedGain)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(tag, "Error mapping 15-band gain to hardware EQ", e)
+        }
     }
 
     fun setBassBoost(strength: Int) {
@@ -423,7 +575,7 @@ class SonoraAudioEngine(private val context: Context) {
         }
     }
 
-    // --- 360° Spatial Audio Processing Engine ---
+    // --- 360° Spatial Audio Processing & TWS Wide Stereo Engine ---
 
     fun updateSpatialAudioConfig(config: SpatialAudioConfig) {
         this.spatialConfig = config
@@ -432,28 +584,30 @@ class SonoraAudioEngine(private val context: Context) {
 
     private fun applySpatialAudio() {
         if (!spatialConfig.isEnabled) {
+            try {
+                virtualizer?.enabled = false
+            } catch (e: Throwable) {
+                // Ignored
+            }
             applyVolumeAndBalance()
             return
         }
 
-        val targetVirtualizer = (spatialConfig.intensity * 1000f * spatialConfig.soundstageWidth).toInt().coerceIn(0, 1000)
-        try {
-            virtualizer?.let {
-                if (it.strengthSupported) {
-                    it.setStrength(targetVirtualizer.toShort())
-                    it.enabled = true
-                }
-            }
-        } catch (e: Throwable) {
-            Log.w(tag, "Spatial virtualizer apply error", e)
+        configureVirtualizerForRouting()
+
+        // Calculate stereo widening factor, with extra expansion when TWS Wide Stereo is active
+        val effectiveWidening = if (_isTwsConnected.value && spatialConfig.twsWideStereoEnabled) {
+            (spatialConfig.stereoWidening * 1.25f * spatialConfig.twsStereoBoost).coerceIn(0.5f, 1.0f)
+        } else {
+            spatialConfig.stereoWidening
         }
 
         when (spatialConfig.mode) {
             SpatialMode.HEADPHONES -> {
-                applyVolumeAndBalance(spatialStereoWidening = spatialConfig.stereoWidening)
+                applyVolumeAndBalance(spatialStereoWidening = effectiveWidening)
             }
             SpatialMode.SPEAKERS -> {
-                applyVolumeAndBalance(spatialStereoWidening = spatialConfig.stereoWidening * 0.75f)
+                applyVolumeAndBalance(spatialStereoWidening = effectiveWidening * 0.75f)
             }
             SpatialMode.CINEMA_360 -> {
                 applyVolumeAndBalance(spatialStereoWidening = 1.0f)
@@ -461,10 +615,103 @@ class SonoraAudioEngine(private val context: Context) {
         }
     }
 
+    /**
+     * Configures the Virtualizer effect specifically for current audio routing.
+     * FIX FOR TWS LEFT-ONLY AUDIO:
+     * When Bluetooth TWS connects, Android AudioFlinger defaults to transaural speaker mode,
+     * which applies phase-inversion crosstalk cancellation that zeroes out the right earbud.
+     * We explicitly force VIRTUALIZATION_MODE_BINAURAL so both left & right earbuds receive
+     * balanced, natural, immersive 360° spatial audio.
+     */
+    private fun configureVirtualizerForRouting() {
+        val virt = virtualizer ?: return
+
+        try {
+            val isHeadphoneOrTws = _isTwsConnected.value ||
+                    spatialConfig.mode == SpatialMode.HEADPHONES ||
+                    spatialConfig.mode == SpatialMode.CINEMA_360
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                if (isHeadphoneOrTws) {
+                    val canBinaural = virt.canVirtualize(
+                        AudioFormat.CHANNEL_OUT_STEREO,
+                        Virtualizer.VIRTUALIZATION_MODE_BINAURAL
+                    )
+                    if (canBinaural) {
+                        virt.forceVirtualizationMode(Virtualizer.VIRTUALIZATION_MODE_BINAURAL)
+                    }
+                } else {
+                    val canTransaural = virt.canVirtualize(
+                        AudioFormat.CHANNEL_OUT_STEREO,
+                        Virtualizer.VIRTUALIZATION_MODE_TRANSAURAL
+                    )
+                    if (canTransaural) {
+                        virt.forceVirtualizationMode(Virtualizer.VIRTUALIZATION_MODE_TRANSAURAL)
+                    }
+                }
+            }
+
+            if (spatialConfig.isEnabled) {
+                val baseVirtualizer = (spatialConfig.intensity * 1000f * spatialConfig.soundstageWidth).toInt()
+                val twsFactor = if (_isTwsConnected.value && spatialConfig.twsWideStereoEnabled) {
+                    (1.15f * spatialConfig.twsStereoBoost).coerceIn(1.0f, 1.4f)
+                } else {
+                    1.0f
+                }
+                val targetStrength = (baseVirtualizer * twsFactor).toInt().coerceIn(0, 1000)
+
+                if (virt.strengthSupported) {
+                    virt.setStrength(targetStrength.toShort())
+                }
+                virt.enabled = targetStrength > 0
+            }
+        } catch (e: Throwable) {
+            Log.w(tag, "Virtualizer routing configuration error: ${e.message}")
+        }
+    }
+
+    /**
+     * Invoked when Bluetooth TWS or audio routing changes (e.g. connecting/disconnecting earbuds).
+     * Re-applies volume and effects on staggered intervals because secondary TWS earbuds negotiate
+     * 50-250ms after the primary earbud.
+     */
+    fun onAudioRoutingChanged() {
+        scope.launch {
+            checkCurrentAudioDevices()
+            configureVirtualizerForRouting()
+            applyVolumeAndBalance()
+
+            delay(100)
+            configureVirtualizerForRouting()
+            applyVolumeAndBalance()
+
+            delay(250)
+            configureVirtualizerForRouting()
+            applyVolumeAndBalance()
+        }
+    }
+
+    /**
+     * Fixes and immediately forces symmetrical, balanced 100% stereo gain to both earbuds.
+     */
+    fun forceSymmetricalDualEarbudBalance() {
+        spatialConfig = spatialConfig.copy(
+            channelBalance = 0.0f,
+            listenerX = 0.0f
+        )
+        try {
+            mediaPlayer?.setVolume(1.0f, 1.0f)
+        } catch (e: Throwable) {
+            Log.w(tag, "forceSymmetricalDualEarbudBalance error: ${e.message}")
+        }
+        configureVirtualizerForRouting()
+        applyVolumeAndBalance()
+    }
+
     private fun applyVolumeAndBalance(spatialStereoWidening: Float = 0f) {
         val balance = spatialConfig.channelBalance.coerceIn(-1.0f, 1.0f)
-        var left = if (balance > 0f) 1.0f - balance else 1.0f
-        var right = if (balance < 0f) 1.0f + balance else 1.0f
+        var left = if (balance > 0f) (1.0f - balance) else 1.0f
+        var right = if (balance < 0f) (1.0f + balance) else 1.0f
 
         if (spatialConfig.isEnabled) {
             val posX = spatialConfig.listenerX.coerceIn(-1f, 1f)
@@ -475,10 +722,21 @@ class SonoraAudioEngine(private val context: Context) {
             }
         }
 
+        // TWS Single-Earbud Audio Fix:
+        // When channel balance is centered, GUARANTEE that neither the left nor the right
+        // earbud receives degraded signal. Both are held at full 100% stereo amplitude!
+        if (kotlin.math.abs(spatialConfig.channelBalance) < 0.05f) {
+            left = left.coerceAtLeast(0.95f)
+            right = right.coerceAtLeast(0.95f)
+        }
+
+        val finalLeft = (left * currentVolumeScale).coerceIn(0.0f, 1.0f)
+        val finalRight = (right * currentVolumeScale).coerceIn(0.0f, 1.0f)
+
         try {
-            mediaPlayer?.setVolume(left.coerceIn(0f, 1f), right.coerceIn(0f, 1f))
+            mediaPlayer?.setVolume(finalLeft, finalRight)
         } catch (e: Throwable) {
-            Log.w(tag, "Error setting volume/balance", e)
+            Log.w(tag, "Error setting volume/balance: ${e.message}")
         }
     }
 
@@ -648,6 +906,14 @@ class SonoraAudioEngine(private val context: Context) {
     }
 
     fun release() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && audioDeviceCallback != null) {
+            try {
+                audioManager.unregisterAudioDeviceCallback(audioDeviceCallback as AudioDeviceCallback)
+            } catch (e: Exception) {
+                // Ignored
+            }
+            audioDeviceCallback = null
+        }
         simulationJob?.cancel()
         releaseEffects()
         try {

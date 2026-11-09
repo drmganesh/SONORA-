@@ -55,6 +55,18 @@ data class EqPreset(
     val isCustom: Boolean = false
 )
 
+data class SpatialPreset(
+    val name: String,
+    val description: String,
+    val mode: SpatialMode,
+    val intensity: Float,
+    val soundstageWidth: Float,
+    val stereoWidening: Float,
+    val reverbPreset: Short = 0,
+    val listenerX: Float = 0f,
+    val listenerY: Float = 0f
+)
+
 data class SpatialAudioConfig(
     val isEnabled: Boolean = true,
     val mode: SpatialMode = SpatialMode.HEADPHONES,
@@ -64,7 +76,9 @@ data class SpatialAudioConfig(
     val listenerY: Float = 0f, // -1.0 to 1.0
     val virtualSurround: Boolean = true,
     val stereoWidening: Float = 0.80f,
-    val channelBalance: Float = 0.0f // -1.0 (Left) to +1.0 (Right)
+    val channelBalance: Float = 0.0f, // -1.0 (Left) to +1.0 (Right)
+    val twsWideStereoEnabled: Boolean = true, // TWS ultra-wide stereo expansion
+    val twsStereoBoost: Float = 0.90f // 0.0 to 1.0 TWS widening boost factor
 )
 
 data class PlaybackInfo(

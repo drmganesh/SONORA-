@@ -9,7 +9,7 @@ import kotlin.math.sin
 
 /**
  * Synthesizes pristine 44.1kHz 16-bit stereo PCM WAV audio files
- * for out-of-the-box offline playback, testing 10-band EQ, 360° spatial audio,
+ * for out-of-the-box offline playback, testing 15-band EQ, 360° spatial audio,
  * and real-time audio visualizers.
  */
 object WavSynthesizer {

@@ -82,8 +82,8 @@ import com.example.ui.theme.SonoraSurfaceElevated
 import com.example.ui.theme.SonoraTextMuted
 import com.example.ui.theme.SonoraTextPrimary
 import com.example.ui.theme.SonoraTextSecondary
+import com.example.model.SortOption
 import com.example.viewmodel.SonoraViewModel
-import com.example.viewmodel.SortOption
 
 @Composable
 fun LibraryScreen(
