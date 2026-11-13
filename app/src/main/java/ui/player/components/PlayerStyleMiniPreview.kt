@@ -29,15 +29,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.example.model.PlayerStyle
-import com.example.ui.theme.SonoraCharcoal
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
-import com.example.ui.theme.SonoraDustyRoseLight
-import com.example.ui.theme.SonoraSurfaceDark
+import ui.theme.EditorialColors
+import ui.theme.LocalEditorialColors
 
 /**
- * High-fidelity miniature illustration preview for each of the 9 Player Styles.
- * Rendered inside PlayerStyleSelector cards and the circular PlayerStyleWheel.
+ * Miniature illustration preview for each of the 9 Player Styles.
+ * Fully adapts to the active SONORA AESTHETIC UI theme palette.
  */
 @Composable
 fun PlayerStyleMiniPreview(
@@ -45,112 +42,97 @@ fun PlayerStyleMiniPreview(
     modifier: Modifier = Modifier,
     isSelected: Boolean = false
 ) {
-    val accent = if (isSelected) SonoraDustyRose else SonoraDustyRoseLight.copy(alpha = 0.8f)
-    val cardBg = SonoraCharcoal
+    val colors = LocalEditorialColors.current
+    val accent = if (isSelected) colors.accentStrong else colors.accentStrong.copy(alpha = 0.72f)
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(cardBg)
+            .clip(RoundedCornerShape(14.dp))
+            .background(colors.background)
             .border(
                 width = if (isSelected) 1.5.dp else 1.dp,
-                color = if (isSelected) SonoraDustyRose else SonoraCharcoalBorder,
-                shape = RoundedCornerShape(12.dp)
+                color = if (isSelected) colors.accentStrong else colors.cardBorder,
+                shape = RoundedCornerShape(14.dp)
             )
             .padding(6.dp),
         contentAlignment = Alignment.Center
     ) {
         when (style) {
-            PlayerStyle.CLASSIC -> ClassicMiniPreview(accent = accent)
-            PlayerStyle.GESTURE -> GestureMiniPreview(accent = accent)
-            PlayerStyle.EDITORIAL -> EditorialMiniPreview(accent = accent)
+            PlayerStyle.CLASSIC -> ClassicMiniPreview(accent = accent, colors = colors)
+            PlayerStyle.GESTURE -> GestureMiniPreview(accent = accent, colors = colors)
+            PlayerStyle.EDITORIAL -> EditorialMiniPreview(accent = accent, colors = colors)
             PlayerStyle.CANVAS -> CanvasMiniPreview(accent = accent)
-            PlayerStyle.BENTO -> BentoMiniPreview(accent = accent)
-            PlayerStyle.STICKER -> StickerMiniPreview(accent = accent)
-            PlayerStyle.MORPH -> MorphMiniPreview(accent = accent)
-            PlayerStyle.DIAL -> DialMiniPreview(accent = accent)
-            PlayerStyle.HERO -> HeroMiniPreview(accent = accent)
+            PlayerStyle.BENTO -> BentoMiniPreview(accent = accent, colors = colors)
+            PlayerStyle.STICKER -> StickerMiniPreview(accent = accent, colors = colors)
+            PlayerStyle.MORPH -> MorphMiniPreview(accent = accent, colors = colors)
+            PlayerStyle.DIAL -> DialMiniPreview(accent = accent, colors = colors)
+            PlayerStyle.HERO -> HeroMiniPreview(accent = accent, colors = colors)
         }
     }
 }
 
 @Composable
-private fun ClassicMiniPreview(accent: Color) {
+private fun ClassicMiniPreview(accent: Color, colors: EditorialColors) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceEvenly
     ) {
-        // Square artwork
         Box(
             modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(SonoraSurfaceDark, accent.copy(alpha = 0.4f))
-                    )
-                )
+                .size(34.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(Brush.linearGradient(listOf(colors.accentPill, accent.copy(alpha = 0.55f))))
         )
-        // Two title lines
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Box(modifier = Modifier.fillMaxWidth(0.7f).height(3.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.8f)))
-            Box(modifier = Modifier.fillMaxWidth(0.45f).height(2.5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.4f)))
+            Box(modifier = Modifier.fillMaxWidth(0.7f).height(3.dp).clip(CircleShape).background(colors.textPrimary.copy(alpha = 0.8f)))
+            Box(modifier = Modifier.fillMaxWidth(0.45f).height(2.dp).clip(CircleShape).background(colors.textSecondary.copy(alpha = 0.5f)))
         }
-        // Progress line
-        Box(modifier = Modifier.fillMaxWidth().height(2.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.2f))) {
+        Box(modifier = Modifier.fillMaxWidth().height(2.dp).clip(CircleShape).background(colors.cardBorder)) {
             Box(modifier = Modifier.fillMaxWidth(0.45f).height(2.dp).background(accent))
         }
-        // Controls row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
+            Box(modifier = Modifier.size(4.5.dp).clip(CircleShape).background(colors.textSecondary.copy(alpha = 0.6f)))
             Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(accent))
-            Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
+            Box(modifier = Modifier.size(4.5.dp).clip(CircleShape).background(colors.textSecondary.copy(alpha = 0.6f)))
         }
     }
 }
 
 @Composable
-private fun GestureMiniPreview(accent: Color) {
+private fun GestureMiniPreview(accent: Color, colors: EditorialColors) {
     Box(modifier = Modifier.fillMaxSize()) {
-        // Massive artwork
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxSize(0.78f)
+                .fillMaxSize(0.76f)
                 .clip(RoundedCornerShape(8.dp))
-                .background(
-                    Brush.verticalGradient(
-                        listOf(accent.copy(alpha = 0.45f), SonoraSurfaceDark)
-                    )
-                ),
+                .background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.45f), colors.surfaceTinted))),
             contentAlignment = Alignment.Center
         ) {
-            // Horizontal swipe arrows
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.8f)))
-                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.8f)))
+                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(colors.textPrimary.copy(alpha = 0.7f)))
+                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(colors.textPrimary.copy(alpha = 0.7f)))
             }
         }
-        // Bottom floating glass pill
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth(0.9f)
+                .fillMaxWidth(0.92f)
                 .height(14.dp)
                 .clip(RoundedCornerShape(7.dp))
-                .background(SonoraSurfaceDark)
-                .border(0.5.dp, accent.copy(alpha = 0.5f), RoundedCornerShape(7.dp))
+                .background(colors.surface)
+                .border(0.6.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(7.dp))
                 .padding(horizontal = 4.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -159,7 +141,7 @@ private fun GestureMiniPreview(accent: Color) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.width(20.dp).height(2.5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.7f)))
+                Box(modifier = Modifier.width(20.dp).height(2.5.dp).clip(CircleShape).background(colors.textPrimary.copy(alpha = 0.75f)))
                 Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(accent))
             }
         }
@@ -167,37 +149,31 @@ private fun GestureMiniPreview(accent: Color) {
 }
 
 @Composable
-private fun EditorialMiniPreview(accent: Color) {
+private fun EditorialMiniPreview(accent: Color, colors: EditorialColors) {
     Column(modifier = Modifier.fillMaxSize()) {
-        // Upper framed section
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1.1f)
-                .clip(RoundedCornerShape(4.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(accent.copy(alpha = 0.5f), Color(0xFF1E1513))
-                    )
-                )
-                .border(0.5.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                .clip(RoundedCornerShape(5.dp))
+                .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.45f), colors.accentPill)))
+                .border(0.5.dp, colors.cardBorder, RoundedCornerShape(5.dp))
                 .padding(3.dp)
         ) {
             Box(modifier = Modifier.width(14.dp).height(2.dp).background(accent))
         }
         Spacer(modifier = Modifier.height(3.dp))
-        // Lower stark editorial card
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(0.9f)
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color(0xFF0A0C0E))
+                .clip(RoundedCornerShape(5.dp))
+                .background(colors.surface)
                 .padding(3.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Box(modifier = Modifier.fillMaxWidth(0.85f).height(3.5.dp).clip(CircleShape).background(Color.White))
-            Box(modifier = Modifier.fillMaxWidth(0.5f).height(2.5.dp).clip(CircleShape).background(accent.copy(alpha = 0.8f)))
+            Box(modifier = Modifier.fillMaxWidth(0.85f).height(3.dp).clip(CircleShape).background(colors.textPrimary))
+            Box(modifier = Modifier.fillMaxWidth(0.5f).height(2.dp).clip(CircleShape).background(accent))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -218,96 +194,79 @@ private fun CanvasMiniPreview(accent: Color) {
             .clip(RoundedCornerShape(8.dp))
             .background(
                 Brush.radialGradient(
-                    colors = listOf(accent.copy(alpha = 0.7f), Color(0xFF151010), Color.Black)
+                    colors = listOf(accent.copy(alpha = 0.75f), Color(0xFF1A1B24), Color.Black)
                 )
             )
     ) {
-        // Bottom scrim gradient overlay
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxSize(0.6f)
                 .align(Alignment.BottomCenter)
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
-                    )
-                )
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))))
         )
-        // Overlaid bottom info
         Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(4.dp),
+            modifier = Modifier.align(Alignment.BottomStart).padding(4.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Box(modifier = Modifier.width(28.dp).height(3.dp).clip(CircleShape).background(Color.White))
-            Box(modifier = Modifier.width(18.dp).height(2.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.5f)))
+            Box(modifier = Modifier.width(18.dp).height(2.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.55f)))
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(accent))
-                Box(modifier = Modifier.width(24.dp).height(1.5.dp).background(Color.White.copy(alpha = 0.4f)))
+                Box(modifier = Modifier.width(24.dp).height(1.5.dp).background(Color.White.copy(alpha = 0.45f)))
             }
         }
     }
 }
 
 @Composable
-private fun BentoMiniPreview(accent: Color) {
+private fun BentoMiniPreview(accent: Color, colors: EditorialColors) {
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(2.5.dp)
     ) {
-        // Top row
         Row(
             modifier = Modifier.fillMaxWidth().weight(1.2f),
             horizontalArrangement = Arrangement.spacedBy(2.5.dp)
         ) {
-            // Main Art tile
             Box(
                 modifier = Modifier
                     .weight(1.1f)
                     .fillMaxSize()
                     .clip(RoundedCornerShape(5.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(accent.copy(alpha = 0.5f), SonoraSurfaceDark)
-                        )
-                    )
+                    .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.55f), colors.accentPill)))
             )
-            // Info tile
             Column(
                 modifier = Modifier
                     .weight(0.9f)
                     .fillMaxSize()
                     .clip(RoundedCornerShape(5.dp))
-                    .background(SonoraSurfaceDark)
+                    .background(colors.surface)
                     .padding(3.dp),
                 verticalArrangement = Arrangement.SpaceEvenly
             ) {
-                Box(modifier = Modifier.fillMaxWidth(0.9f).height(2.5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.8f)))
+                Box(modifier = Modifier.fillMaxWidth(0.9f).height(2.5.dp).clip(CircleShape).background(colors.textPrimary.copy(alpha = 0.8f)))
                 Box(modifier = Modifier.fillMaxWidth(0.6f).height(2.dp).clip(CircleShape).background(accent))
-                Box(modifier = Modifier.fillMaxWidth(0.4f).height(1.5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.4f)))
+                Box(modifier = Modifier.fillMaxWidth(0.4f).height(1.5.dp).clip(CircleShape).background(colors.textSecondary.copy(alpha = 0.5f)))
             }
         }
-        // Scrubber tile
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(0.45f)
                 .clip(RoundedCornerShape(4.dp))
-                .background(SonoraSurfaceDark)
+                .background(colors.surface)
                 .padding(horizontal = 4.dp),
             contentAlignment = Alignment.Center
         ) {
-            Box(modifier = Modifier.fillMaxWidth().height(1.5.dp).background(Color.White.copy(alpha = 0.2f))) {
+            Box(modifier = Modifier.fillMaxWidth().height(1.5.dp).background(colors.cardBorder)) {
                 Box(modifier = Modifier.fillMaxWidth(0.6f).height(1.5.dp).background(accent))
             }
         }
-        // Controls tile
         Row(
             modifier = Modifier.fillMaxWidth().weight(0.55f),
             horizontalArrangement = Arrangement.spacedBy(2.5.dp)
@@ -327,42 +286,37 @@ private fun BentoMiniPreview(accent: Color) {
                     .weight(1f)
                     .fillMaxSize()
                     .clip(RoundedCornerShape(4.dp))
-                    .background(SonoraSurfaceDark),
+                    .background(colors.surface),
                 contentAlignment = Alignment.Center
             ) {
-                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.6f)))
+                Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(colors.textSecondary.copy(alpha = 0.7f)))
             }
         }
     }
 }
 
 @Composable
-private fun StickerMiniPreview(accent: Color) {
+private fun StickerMiniPreview(accent: Color, colors: EditorialColors) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        // Tilted die-cut sticker
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(38.dp)
                 .rotate(-4f)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color.White)
-                .padding(1.5.dp)
+                .background(colors.surface)
+                .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
+                .padding(2.dp)
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(accent, Color(0xFF2B1C1A))
-                        )
-                    )
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Brush.linearGradient(listOf(accent, colors.accentPill)))
             )
         }
-        // Bottom badge pill
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -370,13 +324,13 @@ private fun StickerMiniPreview(accent: Color) {
                 .background(accent)
                 .padding(horizontal = 4.dp, vertical = 2.dp)
         ) {
-            Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(Color.Black))
+            Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(colors.onAccentStrong))
         }
     }
 }
 
 @Composable
-private fun MorphMiniPreview(accent: Color) {
+private fun MorphMiniPreview(accent: Color, colors: EditorialColors) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -393,23 +347,20 @@ private fun MorphMiniPreview(accent: Color) {
             }
             drawPath(
                 path = path,
-                brush = Brush.radialGradient(
-                    colors = listOf(accent.copy(alpha = 0.6f), Color(0xFF1E1413))
-                )
+                brush = Brush.radialGradient(colors = listOf(accent.copy(alpha = 0.6f), colors.accentPill))
             )
             drawPath(
                 path = path,
                 color = accent,
-                style = Stroke(width = 1.2.dp.toPx())
+                style = Stroke(width = 1.4.dp.toPx())
             )
         }
-        // Center play dot
-        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(Color.White))
+        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(colors.textPrimary))
     }
 }
 
 @Composable
-private fun DialMiniPreview(accent: Color) {
+private fun DialMiniPreview(accent: Color, colors: EditorialColors) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -418,13 +369,11 @@ private fun DialMiniPreview(accent: Color) {
             val center = Offset(size.width / 2f, size.height / 2f)
             val radius = size.minDimension / 2f - 3.dp.toPx()
 
-            // Outer ring background track
             drawCircle(
-                color = Color.White.copy(alpha = 0.15f),
+                color = colors.cardBorder,
                 radius = radius,
                 style = Stroke(width = 3.dp.toPx())
             )
-            // Glowing progress arc
             drawArc(
                 color = accent,
                 startAngle = -90f,
@@ -434,16 +383,12 @@ private fun DialMiniPreview(accent: Color) {
                 topLeft = Offset(center.x - radius, center.y - radius),
                 size = Size(radius * 2, radius * 2)
             )
-            // Center artwork circle
             drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(accent.copy(alpha = 0.4f), SonoraSurfaceDark)
-                ),
-                radius = radius * 0.65f
+                brush = Brush.radialGradient(colors = listOf(accent.copy(alpha = 0.45f), colors.surfaceTinted)),
+                radius = radius * 0.62f
             )
-            // Center play indicator
             drawCircle(
-                color = Color.White,
+                color = colors.textPrimary,
                 radius = 2.dp.toPx(),
                 center = center
             )
@@ -452,26 +397,20 @@ private fun DialMiniPreview(accent: Color) {
 }
 
 @Composable
-private fun HeroMiniPreview(accent: Color) {
+private fun HeroMiniPreview(accent: Color, colors: EditorialColors) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Grand scale artwork
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1.2f)
                 .clip(RoundedCornerShape(6.dp))
-                .background(
-                    Brush.verticalGradient(
-                        listOf(accent.copy(alpha = 0.5f), Color.Black)
-                    )
-                ),
+                .background(Brush.verticalGradient(listOf(accent.copy(alpha = 0.45f), colors.surfaceTinted))),
             contentAlignment = Alignment.Center
         ) {
-            // Oversized glowing center play button
             Box(
                 modifier = Modifier
                     .size(16.dp)
@@ -479,17 +418,16 @@ private fun HeroMiniPreview(accent: Color) {
                     .background(accent),
                 contentAlignment = Alignment.Center
             ) {
-                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(Color.White))
+                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(colors.onAccentStrong))
             }
         }
-        // Bold title
         Column(
             modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(1.5.dp)
         ) {
-            Box(modifier = Modifier.fillMaxWidth(0.75f).height(3.dp).clip(CircleShape).background(Color.White))
-            Box(modifier = Modifier.fillMaxWidth(0.45f).height(2.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.4f)))
+            Box(modifier = Modifier.fillMaxWidth(0.75f).height(3.dp).clip(CircleShape).background(colors.textPrimary))
+            Box(modifier = Modifier.fillMaxWidth(0.45f).height(2.dp).clip(CircleShape).background(colors.textSecondary.copy(alpha = 0.5f)))
         }
     }
 }

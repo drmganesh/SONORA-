@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -58,7 +60,9 @@ fun ArtworkAlbumView(
         value = AlbumArtHelper.loadAlbumArt(context, song)
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "vinyl_rotation")
+    val palette = ui.theme.LocalDynamicColorPalette.current
+
+    val infiniteTransition = rememberInfiniteTransition(label = "artwork_anim")
     val rotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
@@ -69,23 +73,43 @@ fun ArtworkAlbumView(
         label = "rotation"
     )
 
+    val breathingScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = if (isPlaying) 1.02f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "breathingScale"
+    )
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = if (isPlaying) 0.65f else 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(3200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+
     val shape = if (isVinylRotating) CircleShape else RoundedCornerShape(cornerRadius)
 
     Box(
         modifier = modifier
+            .scale(breathingScale)
             .shadow(
-                elevation = if (isPlaying) 14.dp else 6.dp,
+                elevation = if (isPlaying) 18.dp else 8.dp,
                 shape = shape,
-                ambientColor = SonoraGold.copy(alpha = 0.3f),
-                spotColor = SonoraCyan.copy(alpha = 0.3f)
+                ambientColor = palette.glowColor.copy(alpha = glowAlpha),
+                spotColor = palette.glowColor.copy(alpha = glowAlpha)
             )
             .clip(shape)
             .background(
                 Brush.radialGradient(
-                    colors = listOf(SonoraSurfaceDark, SonoraObsidian)
+                    colors = listOf(palette.surfaceVariant, palette.surface)
                 )
             )
-            .border(1.dp, SonoraCardBorder, shape),
+            .border(1.dp, palette.cardBorder, shape),
         contentAlignment = Alignment.Center
     ) {
         if (artworkBitmap != null) {
@@ -125,14 +149,14 @@ fun ArtworkAlbumView(
                 Box(
                     modifier = Modifier
                         .size(86.dp)
-                        .border(1.dp, SonoraGold.copy(alpha = 0.35f), CircleShape)
+                        .border(1.dp, palette.primary.copy(alpha = 0.35f), CircleShape)
                 )
                 // Center spindle label
                 Box(
                     modifier = Modifier
                         .size(52.dp)
                         .background(
-                            Brush.linearGradient(listOf(SonoraGold, SonoraCyan)),
+                            Brush.linearGradient(listOf(palette.primary, palette.accent)),
                             CircleShape
                         ),
                     contentAlignment = Alignment.Center
@@ -140,7 +164,7 @@ fun ArtworkAlbumView(
                     val initial = song?.title?.firstOrNull()?.uppercase() ?: "S"
                     Text(
                         text = initial,
-                        color = SonoraObsidian,
+                        color = Color.Black,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 22.sp
                     )

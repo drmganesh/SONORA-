@@ -24,6 +24,10 @@ object LyricsExtractor {
             return@withContext song.lyrics
         }
 
+        if (song.isDemoTrack || song.id < 0) {
+            return@withContext null
+        }
+
         // 2. Try looking for accompanying .lrc or .txt sidecar file
         if (song.dataPath.isNotBlank()) {
             try {
@@ -59,25 +63,28 @@ object LyricsExtractor {
             }
         }
 
-        // 4. Try MediaMetadataRetriever
-        try {
-            val mmr = MediaMetadataRetriever()
+        // 4. Try MediaMetadataRetriever (Skip for WAV files that do not have metadata text frames)
+        val isWav = song.mimeType.contains("wav", ignoreCase = true) || song.dataPath.endsWith(".wav", ignoreCase = true)
+        if (!isWav) {
             try {
-                if (song.dataPath.isNotBlank() && File(song.dataPath).exists()) {
-                    mmr.setDataSource(song.dataPath)
-                } else {
-                    mmr.setDataSource(context, song.uri)
+                val mmr = MediaMetadataRetriever()
+                try {
+                    if (song.dataPath.isNotBlank() && File(song.dataPath).exists()) {
+                        mmr.setDataSource(song.dataPath)
+                    } else {
+                        mmr.setDataSource(context, song.uri)
+                    }
+                    // Some encoders place lyrics in commentary or writer
+                    val writer = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_WRITER)
+                    if (writer != null && writer.contains("\n")) {
+                        return@withContext writer
+                    }
+                } finally {
+                    try { mmr.release() } catch (_: Exception) {}
                 }
-                // Some encoders place lyrics in commentary or writer
-                val writer = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_WRITER)
-                if (writer != null && writer.contains("\n")) {
-                    return@withContext writer
-                }
-            } finally {
-                try { mmr.release() } catch (e: Exception) {}
+            } catch (_: Exception) {
+                // Ignored
             }
-        } catch (e: Exception) {
-            // Ignored
         }
 
         null

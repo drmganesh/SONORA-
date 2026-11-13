@@ -15,6 +15,17 @@ import org.json.JSONArray
 class SonoraPreferences(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("sonora_app_settings", Context.MODE_PRIVATE)
 
+    init {
+        // Safely remove obsolete Equalizer and 8D preferences without altering other user settings
+        if (prefs.contains("equalizer_enabled") || prefs.contains("saved_band_gains") || prefs.contains("current_eq_preset_index")) {
+            prefs.edit()
+                .remove("equalizer_enabled")
+                .remove("current_eq_preset_index")
+                .remove("saved_band_gains")
+                .apply()
+        }
+    }
+
     // Theme Mode
     var themeMode: ThemeMode
         get() {
@@ -42,6 +53,30 @@ class SonoraPreferences(context: Context) {
             return SeekbarStyle.fromId(id)
         }
         set(value) = prefs.edit().putString("seekbar_style", value.id).apply()
+
+    // Dynamic Album Colors Theme Engine
+    var dynamicColorsEnabled: Boolean
+        get() = prefs.getBoolean("dynamic_colors_enabled", true)
+        set(value) = prefs.edit().putBoolean("dynamic_colors_enabled", value).apply()
+
+    var dynamicThemeMode: com.example.model.DynamicThemeMode
+        get() {
+            val id = prefs.getString("dynamic_theme_mode", com.example.model.DynamicThemeMode.DEFAULT.id)
+            return com.example.model.DynamicThemeMode.fromId(id)
+        }
+        set(value) = prefs.edit().putString("dynamic_theme_mode", value.id).apply()
+
+    // Editorial Home Theme & Custom Accent
+    var homeThemeMode: ui.theme.HomeThemeMode
+        get() {
+            val id = prefs.getString("home_theme_mode", ui.theme.HomeThemeMode.DEFAULT.id)
+            return ui.theme.HomeThemeMode.fromId(id)
+        }
+        set(value) = prefs.edit().putString("home_theme_mode", value.id).apply()
+
+    var homeCustomAccentArgb: Long
+        get() = prefs.getLong("home_custom_accent_argb", -1L)
+        set(value) = prefs.edit().putLong("home_custom_accent_argb", value).apply()
 
     // Playback Settings
     var crossfadeSeconds: Int
@@ -78,15 +113,7 @@ class SonoraPreferences(context: Context) {
         get() = prefs.getFloat("playback_speed", 1.0f)
         set(value) = prefs.edit().putFloat("playback_speed", value).apply()
 
-    // Equalizer & Audio FX
-    var equalizerEnabled: Boolean
-        get() = prefs.getBoolean("equalizer_enabled", true)
-        set(value) = prefs.edit().putBoolean("equalizer_enabled", value).apply()
-
-    var currentEqPresetIndex: Int
-        get() = prefs.getInt("current_eq_preset_index", 0)
-        set(value) = prefs.edit().putInt("current_eq_preset_index", value).apply()
-
+    // Audio FX
     var bassBoost: Int
         get() = prefs.getInt("bass_boost", 600)
         set(value) = prefs.edit().putInt("bass_boost", value).apply()
@@ -102,27 +129,6 @@ class SonoraPreferences(context: Context) {
     var loudnessGainMb: Int
         get() = prefs.getInt("loudness_gain_mb", 300)
         set(value) = prefs.edit().putInt("loudness_gain_mb", value).apply()
-
-    // Custom Band Gains
-    fun getSavedBandGains(): List<Float>? {
-        val raw = prefs.getString("saved_band_gains", null) ?: return null
-        return try {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<Float>()
-            for (i in 0 until arr.length()) {
-                list.add(arr.getDouble(i).toFloat())
-            }
-            list
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    fun saveBandGains(gains: List<Float>) {
-        val arr = JSONArray()
-        gains.forEach { arr.put(it.toDouble()) }
-        prefs.edit().putString("saved_band_gains", arr.toString()).apply()
-    }
 
     // 360 Spatial Audio
     var selectedSpatialPresetIndex: Int
@@ -273,4 +279,64 @@ class SonoraPreferences(context: Context) {
         }
         return map
     }
+
+    // Motion & Accessibility
+    var reduceAnimations: Boolean
+        get() = prefs.getBoolean("reduce_animations", false)
+        set(value) = prefs.edit().putBoolean("reduce_animations", value).apply()
+
+    // Persisted Recent Search History (max 10 queries)
+    var recentSearches: List<String>
+        get() {
+            val raw = prefs.getString("recent_searches_json", null) ?: return emptyList()
+            return try {
+                val arr = JSONArray(raw)
+                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+        set(value) {
+            val arr = JSONArray()
+            value.distinct().take(10).forEach { arr.put(it) }
+            prefs.edit().putString("recent_searches_json", arr.toString()).apply()
+        }
+
+    // Audio Effects Studio: Global Bypass & 8D Slow-Orbit Spatializer
+    var globalEffectsBypass: Boolean
+        get() = prefs.getBoolean("global_effects_bypass", false)
+        set(value) = prefs.edit().putBoolean("global_effects_bypass", value).apply()
+
+    var orbit8dEnabled: Boolean
+        get() = prefs.getBoolean("orbit_8d_enabled", false)
+        set(value) = prefs.edit().putBoolean("orbit_8d_enabled", value).apply()
+
+    var orbit8dSpeed: Float
+        get() = prefs.getFloat("orbit_8d_speed", 0.35f)
+        set(value) = prefs.edit().putFloat("orbit_8d_speed", value).apply()
+
+    var orbit8dDepth: Float
+        get() = prefs.getFloat("orbit_8d_depth", 0.75f)
+        set(value) = prefs.edit().putFloat("orbit_8d_depth", value).apply()
+
+    // Extended Playback & Notification Preferences
+    var audioFocusEnabled: Boolean
+        get() = prefs.getBoolean("audio_focus_enabled", true)
+        set(value) = prefs.edit().putBoolean("audio_focus_enabled", value).apply()
+
+    var resumeOnLaunch: Boolean
+        get() = prefs.getBoolean("resume_on_launch", true)
+        set(value) = prefs.edit().putBoolean("resume_on_launch", value).apply()
+
+    var headsetAutoPlayPause: Boolean
+        get() = prefs.getBoolean("headset_auto_play_pause", true)
+        set(value) = prefs.edit().putBoolean("headset_auto_play_pause", value).apply()
+
+    var showLockScreenControls: Boolean
+        get() = prefs.getBoolean("show_lock_screen_controls", true)
+        set(value) = prefs.edit().putBoolean("show_lock_screen_controls", value).apply()
+
+    var showNotificationFormatBadge: Boolean
+        get() = prefs.getBoolean("show_notification_format_badge", true)
+        set(value) = prefs.edit().putBoolean("show_notification_format_badge", value).apply()
 }

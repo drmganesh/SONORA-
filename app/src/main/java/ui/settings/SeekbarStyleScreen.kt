@@ -2,6 +2,8 @@ package ui.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,19 +17,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,24 +39,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.SonoraCharcoal
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
-import com.example.ui.theme.SonoraTextPrimary
-import com.example.ui.theme.SonoraTextSecondary
+import com.example.ui.theme.OutfitFontFamily
+import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
 import ui.player.seekbar.SeekbarStyle
+import ui.theme.LocalEditorialColors
 
-/**
- * Seekbar Style Settings Screen
- * Title: "Seekbar Style"
- * Subtitle: "Choose how the seekbar appears on the player screen."
- * Displays 9 selectable styles with live animated previews, reset to default, and player launch.
- */
 @Composable
 fun SeekbarStyleScreen(
     viewModel: SonoraViewModel,
@@ -62,88 +55,82 @@ fun SeekbarStyleScreen(
     onOpenPlayer: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val colors = LocalEditorialColors.current
     val currentSeekbarStyle by viewModel.seekbarStyle.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
 
-    BackHandler {
-        onBack()
-    }
+    BackHandler(onBack = onBack)
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .statusBarsPadding()
+            .background(colors.background)
+            .statusBarsPadding(),
+        contentAlignment = Alignment.TopCenter
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Header Bar
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .widthIn(max = 760.dp)
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = SonoraTextPrimary,
-                            modifier = Modifier.size(24.dp)
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Surface(
+                        shape = CircleShape,
+                        color = colors.surface,
+                        shadowElevation = 2.dp,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .clickable { onBack() }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back", tint = colors.textPrimary)
+                        }
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(14.dp))
                     Column {
                         Text(
                             text = "Seekbar Style",
-                            color = SonoraTextPrimary,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 22.sp,
+                            color = colors.textPrimary
                         )
                         Text(
-                            text = "Choose how the seekbar appears on the player screen.",
-                            color = SonoraTextSecondary,
-                            fontSize = 12.sp
+                            text = "Choose how timelines render in Now Playing",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 12.sp,
+                            color = colors.textSecondary
                         )
                     }
                 }
 
-                // Reset to Default Button
-                TextButton(
-                    onClick = { viewModel.resetSeekbarStyleToDefault() },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Icon(
-                        Icons.Default.RestartAlt,
-                        contentDescription = "Reset to Default",
-                        tint = SonoraDustyRose,
-                        modifier = Modifier.size(16.dp)
-                    )
+                TextButton(onClick = { viewModel.resetSeekbarStyleToDefault() }) {
+                    Icon(Icons.Rounded.RestartAlt, contentDescription = null, tint = colors.accentStrong, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Reset",
-                        color = SonoraDustyRose,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Reset", color = colors.accentStrong, fontWeight = FontWeight.Bold)
                 }
             }
 
-            // Scrollable List of 9 Style Cards
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 120.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 100.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Intro Info Banner
                 item {
                     Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = colors.surfaceTinted,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(20.dp)),
-                        color = SonoraCharcoal,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, SonoraCharcoalBorder)
+                            .border(0.75.dp, colors.cardBorder, RoundedCornerShape(20.dp))
                     ) {
                         Row(
                             modifier = Modifier
@@ -151,75 +138,59 @@ fun SeekbarStyleScreen(
                                 .padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = SonoraDustyRose.copy(alpha = 0.2f),
-                                modifier = Modifier.size(44.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .background(colors.accentPill, CircleShape),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Default.Tune,
-                                        contentDescription = null,
-                                        tint = SonoraDustyRose,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
+                                Icon(Icons.Rounded.Tune, contentDescription = null, tint = colors.onAccentPill)
                             }
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "UNIVERSAL PLAYER COMPATIBILITY",
-                                    color = SonoraDustyRose,
-                                    fontSize = 11.sp,
+                                    text = "9 EXPRESSIVE SEEKBAR STYLES",
+                                    fontFamily = PlusJakartaFontFamily,
                                     fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.sp,
+                                    color = colors.accentStrong
                                 )
                                 Text(
-                                    text = "Your chosen seekbar style updates instantly across all 9 player layouts with drag-to-seek, tap-to-seek, and live timeline tracking.",
-                                    color = SonoraTextSecondary,
+                                    text = "Updates across all 9 Now Playing layouts with drag-to-seek and live position tracking.",
+                                    fontFamily = PlusJakartaFontFamily,
                                     fontSize = 12.sp,
-                                    lineHeight = 16.sp,
-                                    modifier = Modifier.padding(top = 2.dp)
+                                    color = colors.textSecondary
                                 )
                             }
                         }
                     }
                 }
 
-                // 9 Seekbar Style Cards
-                items(SeekbarStyle.entries) { style ->
-                    val isSelected = style == currentSeekbarStyle
-
+                items(SeekbarStyle.entries, key = { it.name }) { style ->
                     SeekbarStyleCard(
                         style = style,
-                        isSelected = isSelected,
-                        onSelect = {
-                            viewModel.setSeekbarStyle(style)
-                        }
+                        isSelected = style == currentSeekbarStyle,
+                        onSelect = { viewModel.setSeekbarStyle(style) }
                     )
                 }
 
-                // Quick Launch Preview Button
                 if (currentSong != null) {
                     item {
                         Button(
                             onClick = onOpenPlayer,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = SonoraDustyRose,
-                                contentColor = Color.Black
+                                containerColor = colors.accentStrong,
+                                contentColor = colors.onAccentStrong
                             ),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(22.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(52.dp)
                         ) {
-                            Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(22.dp))
+                            Icon(Icons.Rounded.PlayCircle, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Preview Seekbar in Player",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("Preview Seekbar in Player", fontWeight = FontWeight.Bold)
                         }
                     }
                 }

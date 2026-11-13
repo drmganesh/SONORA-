@@ -25,10 +25,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
 import kotlin.math.PI
 import kotlin.math.sin
+import ui.theme.LocalEditorialColors
+import ui.theme.LocalReduceAnimations
 
 /**
  * Style 9: M3 Expressive Seekbar
@@ -43,22 +43,24 @@ fun M3ExpressiveSeekbar(
     modifier: Modifier = Modifier,
     isPlaying: Boolean = false,
     enabled: Boolean = true,
-    accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    accentColor: Color = LocalEditorialColors.current.accentStrong,
+    inactiveColor: Color = LocalEditorialColors.current.cardBorder
 ) {
+    val reduceAnimations = LocalReduceAnimations.current
     val infiniteTransition = rememberInfiniteTransition(label = "expressiveSquiggle")
-    val phase by infiniteTransition.animateFloat(
+    val animatedPhase by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = if (isPlaying) (2 * PI).toFloat() else 0f,
+        targetValue = if (isPlaying && !reduceAnimations) (2 * PI).toFloat() else 0f,
         animationSpec = infiniteRepeatable(
             animation = tween(2400, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "phase"
     )
+    val phase = if (reduceAnimations) 0f else animatedPhase
 
     val waveAmplitude by animateFloatAsState(
-        targetValue = if (isPlaying) 4f else 0.5f,
+        targetValue = if (isPlaying && !reduceAnimations) 4f else 0.5f,
         label = "amplitude"
     )
 
@@ -101,7 +103,6 @@ fun M3ExpressiveSeekbar(
             val wavelength = 28.dp.toPx()
             val amp = waveAmplitude.dp.toPx()
 
-            // Inactive straight track
             if (activeX < width) {
                 drawLine(
                     color = inactiveColor,
@@ -112,7 +113,6 @@ fun M3ExpressiveSeekbar(
                 )
             }
 
-            // Active squiggly expressive wave path
             if (activeX > 0f) {
                 val path = Path()
                 path.moveTo(0f, centerY)
@@ -128,18 +128,17 @@ fun M3ExpressiveSeekbar(
                 drawPath(
                     path = path,
                     color = accentColor,
-                    style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
+                    style = Stroke(width = 4.5.dp.toPx(), cap = StrokeCap.Round)
                 )
             }
 
-            // Expressive M3 Capsule Pill Thumb
             val thumbWidth = 5.dp.toPx()
             val thumbHeight = 16.dp.toPx()
             val thumbLeft = (activeX - (thumbWidth / 2f)).coerceIn(0f, width - thumbWidth)
             val thumbTop = centerY - (thumbHeight / 2f)
 
             drawRoundRect(
-                color = Color.White,
+                color = accentColor,
                 topLeft = Offset(thumbLeft, thumbTop),
                 size = Size(thumbWidth, thumbHeight),
                 cornerRadius = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx())

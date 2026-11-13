@@ -16,17 +16,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
-import com.example.ui.theme.SonoraTextMuted
+import com.example.ui.theme.PlusJakartaFontFamily
 import ui.player.formatDurationMs
+import ui.theme.LocalEditorialColors
 
 /**
  * Universal Seekbar Renderer
  * Dispatches to the active SeekbarStyle, coordinates drag seeking vs live playback updates,
- * and displays accurate duration timestamps.
+ * and displays accurate duration timestamps tinted by LocalEditorialColors.
  */
 @Composable
 fun SeekbarRenderer(
@@ -38,9 +38,10 @@ fun SeekbarRenderer(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     showTimestamps: Boolean = true,
-    accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    accentColor: Color = LocalEditorialColors.current.accentStrong,
+    inactiveColor: Color = LocalEditorialColors.current.cardBorder
 ) {
+    val colors = LocalEditorialColors.current
     var isDragging by remember { mutableStateOf(false) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
 
@@ -210,12 +211,16 @@ fun SeekbarRenderer(
             ) {
                 Text(
                     text = formatDurationMs(displayPositionMs),
-                    color = SonoraTextMuted,
+                    fontFamily = PlusJakartaFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
                     fontSize = 11.sp
                 )
                 Text(
                     text = formatDurationMs(durationMs),
-                    color = SonoraTextMuted,
+                    fontFamily = PlusJakartaFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textSecondary,
                     fontSize = 11.sp
                 )
             }

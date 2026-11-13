@@ -21,13 +21,15 @@ class SonoraApplication : Application() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = "Playback Controls"
-            val descriptionText = "Displays playback status and controls for SONORA music player"
+            val name = "SONORA Playback Controls"
+            val descriptionText = "Displays playback status, album artwork, and controls for SONORA music player"
             val importance = NotificationManager.IMPORTANCE_LOW
             val channel = NotificationChannel(PLAYBACK_CHANNEL_ID, name, importance).apply {
                 description = descriptionText
                 setShowBadge(false)
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                enableVibration(false)
+                setSound(null, null)
             }
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)

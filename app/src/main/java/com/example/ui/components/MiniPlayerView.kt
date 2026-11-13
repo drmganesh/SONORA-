@@ -73,6 +73,7 @@ fun MiniPlayerView(
         (playbackInfo.currentPositionMs.toFloat() / playbackInfo.durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
+    val palette = ui.theme.LocalDynamicColorPalette.current
     var totalDragX by remember { mutableFloatStateOf(0f) }
     var totalDragY by remember { mutableFloatStateOf(0f) }
 
@@ -80,7 +81,8 @@ fun MiniPlayerView(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = SonoraGold.copy(alpha = 0.25f))
+            .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = palette.glowColor.copy(alpha = 0.35f))
+            .border(1.dp, palette.cardBorder, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .pointerInput(gesturesEnabled) {
                 if (!gesturesEnabled) return@pointerInput
@@ -123,7 +125,7 @@ fun MiniPlayerView(
             }
             .clickable { onClick() }
             .testTag("mini_player"),
-        color = SonoraSurfaceElevated,
+        color = palette.cardBackground,
         tonalElevation = 6.dp
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -190,7 +192,7 @@ fun MiniPlayerView(
                     modifier = Modifier
                         .size(42.dp)
                         .background(
-                            Brush.linearGradient(listOf(SonoraGold, SonoraGoldDark)),
+                            Brush.linearGradient(listOf(palette.playbackButton, palette.accent)),
                             CircleShape
                         )
                         .testTag("mini_play_pause_button")
@@ -198,7 +200,7 @@ fun MiniPlayerView(
                     Icon(
                         imageVector = if (playbackInfo.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
-                        tint = SonoraOnGold,
+                        tint = palette.onPlaybackButton,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -226,15 +228,13 @@ fun MiniPlayerView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(2.5.dp)
-                    .background(SonoraSurfaceDark)
+                    .background(Color.Black.copy(alpha = 0.5f))
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(progress)
                         .height(2.5.dp)
-                        .background(
-                            Brush.horizontalGradient(listOf(SonoraGold, SonoraCyan))
-                        )
+                        .background(palette.progressBar)
                 )
             }
         }

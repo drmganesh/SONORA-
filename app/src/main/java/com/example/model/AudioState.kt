@@ -32,27 +32,17 @@ enum class ThemeMode {
     DYNAMIC_YOU
 }
 
-data class EqualizerBand(
-    val bandIndex: Short,
-    val centerFreqHz: Int,
-    val minLevelMb: Short,
-    val maxLevelMb: Short,
-    var currentLevelMb: Short
-) {
-    val centerFreqFormatted: String
-        get() = if (centerFreqHz >= 1000) "${centerFreqHz / 1000}k" else "${centerFreqHz}Hz"
 
-    val currentGainDb: Float
-        get() = currentLevelMb / 100f
-}
-
-data class EqPreset(
+data class SpatialPreset(
     val name: String,
-    val gainsDb: List<Float>,
-    val bassBoost: Int = 0,
-    val virtualizer: Int = 0,
+    val description: String,
+    val mode: SpatialMode,
+    val intensity: Float,
+    val soundstageWidth: Float,
+    val stereoWidening: Float,
     val reverbPreset: Short = 0,
-    val isCustom: Boolean = false
+    val listenerX: Float = 0f,
+    val listenerY: Float = 0f
 )
 
 data class SpatialPreset(

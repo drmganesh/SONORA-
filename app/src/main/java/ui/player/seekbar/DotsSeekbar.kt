@@ -12,8 +12,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
+import ui.theme.LocalEditorialColors
 
 /**
  * Style 4: Dots Seekbar
@@ -27,9 +26,10 @@ fun DotsSeekbar(
     modifier: Modifier = Modifier,
     isPlaying: Boolean = false,
     enabled: Boolean = true,
-    accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    accentColor: Color = LocalEditorialColors.current.accentStrong,
+    inactiveColor: Color = LocalEditorialColors.current.cardBorder
 ) {
+    val colors = LocalEditorialColors.current
     val totalDots = 28
 
     Box(
@@ -66,30 +66,36 @@ fun DotsSeekbar(
         Canvas(modifier = Modifier.matchParentSize()) {
             val width = size.width
             val centerY = size.height / 2f
-            val step = if (totalDots > 1) width / (totalDots - 1) else width
+            val pad = 6.dp.toPx()
+            val usableW = (width - pad * 2).coerceAtLeast(1f)
+            val step = if (totalDots > 1) usableW / (totalDots - 1) else usableW
             val activeIndex = (progress * (totalDots - 1)).toInt().coerceIn(0, totalDots - 1)
 
             for (i in 0 until totalDots) {
-                val cx = i * step
+                val cx = pad + i * step
                 val isPlayed = i <= activeIndex
                 val isCurrent = i == activeIndex
 
                 if (isCurrent) {
-                    // Current dot halo
                     drawCircle(
-                        color = accentColor.copy(alpha = 0.35f),
-                        radius = 7.dp.toPx(),
+                        color = accentColor.copy(alpha = 0.28f),
+                        radius = 7.5.dp.toPx(),
                         center = Offset(cx, centerY)
                     )
                     drawCircle(
-                        color = Color.White,
-                        radius = 4.5.dp.toPx(),
+                        color = accentColor,
+                        radius = 4.8.dp.toPx(),
+                        center = Offset(cx, centerY)
+                    )
+                    drawCircle(
+                        color = colors.surface,
+                        radius = 2.dp.toPx(),
                         center = Offset(cx, centerY)
                     )
                 } else {
                     drawCircle(
                         color = if (isPlayed) accentColor else inactiveColor,
-                        radius = if (isPlayed) 3.2.dp.toPx() else 2.5.dp.toPx(),
+                        radius = if (isPlayed) 3.2.dp.toPx() else 2.4.dp.toPx(),
                         center = Offset(cx, centerY)
                     )
                 }

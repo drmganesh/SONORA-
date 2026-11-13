@@ -14,13 +14,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraCyan
-import com.example.ui.theme.SonoraDustyRose
+import ui.theme.LocalEditorialColors
 
 /**
  * Style 5: Gradient Seekbar
- * Smooth horizontal bar with multicolor gradient transitioning from Dusty Rose into Violet and Cyan.
+ * Smooth horizontal bar with theme-aware multicolor gradient.
  */
 @Composable
 fun GradientSeekbar(
@@ -30,13 +28,14 @@ fun GradientSeekbar(
     modifier: Modifier = Modifier,
     isPlaying: Boolean = false,
     enabled: Boolean = true,
-    accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    accentColor: Color = LocalEditorialColors.current.accentStrong,
+    inactiveColor: Color = LocalEditorialColors.current.cardBorder
 ) {
+    val colors = LocalEditorialColors.current
     val gradientColors = listOf(
-        SonoraDustyRose,
-        Color(0xFFAB47BC),
-        SonoraCyan
+        accentColor,
+        colors.onAccentPill,
+        accentColor.copy(alpha = 0.85f)
     )
 
     Box(
@@ -74,9 +73,9 @@ fun GradientSeekbar(
             val width = size.width
             val centerY = size.height / 2f
             val trackHeight = 4.5.dp.toPx()
-            val activeX = width * progress
+            val thumbR = 6.5.dp.toPx()
+            val activeX = (width * progress).coerceIn(thumbR, (width - thumbR).coerceAtLeast(thumbR))
 
-            // Inactive track
             drawLine(
                 color = inactiveColor,
                 start = Offset(0f, centerY),
@@ -85,8 +84,7 @@ fun GradientSeekbar(
                 cap = StrokeCap.Round
             )
 
-            // Gradient active track
-            if (activeX > 0f) {
+            if (progress > 0f) {
                 drawLine(
                     brush = Brush.horizontalGradient(
                         colors = gradientColors,
@@ -100,15 +98,14 @@ fun GradientSeekbar(
                 )
             }
 
-            // Glossy thumb knob
             drawCircle(
-                color = Color.White,
-                radius = 6.5.dp.toPx(),
+                color = accentColor,
+                radius = thumbR,
                 center = Offset(activeX, centerY)
             )
             drawCircle(
-                color = Color(0xFFAB47BC),
-                radius = 4.dp.toPx(),
+                color = colors.surface,
+                radius = 3.5.dp.toPx(),
                 center = Offset(activeX, centerY)
             )
         }

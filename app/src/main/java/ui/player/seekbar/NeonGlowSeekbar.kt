@@ -20,12 +20,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
+import ui.theme.LocalEditorialColors
+import ui.theme.LocalReduceAnimations
 
 /**
  * Style 6: Neon Glow Seekbar
- * Minimal horizontal track with soft luminous neon glow around the played section and thumb.
+ * Minimal horizontal track with soft luminous glow around the played section and thumb.
  */
 @Composable
 fun NeonGlowSeekbar(
@@ -35,11 +35,13 @@ fun NeonGlowSeekbar(
     modifier: Modifier = Modifier,
     isPlaying: Boolean = false,
     enabled: Boolean = true,
-    accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    accentColor: Color = LocalEditorialColors.current.accentStrong,
+    inactiveColor: Color = LocalEditorialColors.current.cardBorder
 ) {
+    val colors = LocalEditorialColors.current
+    val reduceAnimations = LocalReduceAnimations.current
     val infiniteTransition = rememberInfiniteTransition(label = "neonPulse")
-    val neonAlpha by infiniteTransition.animateFloat(
+    val pulsedAlpha by infiniteTransition.animateFloat(
         initialValue = 0.35f,
         targetValue = 0.70f,
         animationSpec = infiniteRepeatable(
@@ -48,6 +50,7 @@ fun NeonGlowSeekbar(
         ),
         label = "neonAlpha"
     )
+    val neonAlpha = if (reduceAnimations) 0.5f else pulsedAlpha
 
     Box(
         modifier = modifier
@@ -83,9 +86,9 @@ fun NeonGlowSeekbar(
         Canvas(modifier = Modifier.matchParentSize()) {
             val width = size.width
             val centerY = size.height / 2f
-            val activeX = width * progress
+            val thumbR = 6.dp.toPx()
+            val activeX = (width * progress).coerceIn(thumbR, (width - thumbR).coerceAtLeast(thumbR))
 
-            // Inactive track
             drawLine(
                 color = inactiveColor,
                 start = Offset(0f, centerY),
@@ -94,47 +97,36 @@ fun NeonGlowSeekbar(
                 cap = StrokeCap.Round
             )
 
-            if (activeX > 0f) {
-                // Neon glow outer aura
+            if (progress > 0f) {
                 drawLine(
-                    color = accentColor.copy(alpha = if (isPlaying) neonAlpha * 0.4f else 0.25f),
+                    color = accentColor.copy(alpha = if (isPlaying) neonAlpha * 0.35f else 0.22f),
                     start = Offset(0f, centerY),
                     end = Offset(activeX, centerY),
                     strokeWidth = 10.dp.toPx(),
                     cap = StrokeCap.Round
                 )
-                // Neon glow mid aura
                 drawLine(
-                    color = accentColor.copy(alpha = if (isPlaying) neonAlpha * 0.7f else 0.5f),
+                    color = accentColor,
                     start = Offset(0f, centerY),
                     end = Offset(activeX, centerY),
-                    strokeWidth = 6.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
-                // Active crisp core line
-                drawLine(
-                    color = Color.White,
-                    start = Offset(0f, centerY),
-                    end = Offset(activeX, centerY),
-                    strokeWidth = 2.5.dp.toPx(),
+                    strokeWidth = 3.5.dp.toPx(),
                     cap = StrokeCap.Round
                 )
             }
 
-            // Glowing neon thumb
             drawCircle(
-                color = accentColor.copy(alpha = if (isPlaying) neonAlpha else 0.4f),
+                color = accentColor.copy(alpha = if (isPlaying) neonAlpha * 0.55f else 0.32f),
                 radius = 10.dp.toPx(),
                 center = Offset(activeX, centerY)
             )
             drawCircle(
                 color = accentColor,
-                radius = 6.dp.toPx(),
+                radius = thumbR,
                 center = Offset(activeX, centerY)
             )
             drawCircle(
-                color = Color.White,
-                radius = 3.dp.toPx(),
+                color = colors.surface,
+                radius = 2.8.dp.toPx(),
                 center = Offset(activeX, centerY)
             )
         }

@@ -1,13 +1,10 @@
 package ui.player
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -48,29 +45,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.PlayerStyle
-import com.example.ui.theme.SonoraCharcoal
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
-import com.example.ui.theme.SonoraDustyRoseLight
-import com.example.ui.theme.SonoraTextMuted
-import com.example.ui.theme.SonoraTextPrimary
-import com.example.ui.theme.SonoraTextSecondary
+import com.example.ui.theme.OutfitFontFamily
+import com.example.ui.theme.PlusJakartaFontFamily
 import ui.player.components.PlayerStyleMiniPreview
+import ui.theme.LocalEditorialColors
+import ui.theme.LocalReduceAnimations
 
 /**
  * Quick Style Switching: Style Wheel Modal
- * Triggered when long-pressing album artwork on any player screen.
- * Displays all 9 player styles in an interactive wheel carousel with miniature previews,
- * highlighted selection, and swipe-down-to-dismiss gesture.
+ * Displays all 9 player styles in an interactive horizontal wheel with miniature previews.
  */
 @Composable
 fun PlayerStyleWheel(
@@ -79,21 +71,22 @@ fun PlayerStyleWheel(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val colors = LocalEditorialColors.current
+    val reduceAnimations = LocalReduceAnimations.current
     val listState = rememberLazyListState()
     var dragY by remember { mutableFloatStateOf(0f) }
 
-    // Scroll to current selected style initially
     LaunchedEffect(currentStyle) {
         val idx = PlayerStyle.entries.indexOf(currentStyle)
         if (idx >= 0) {
-            listState.animateScrollToItem(idx)
+            if (reduceAnimations) listState.scrollToItem(idx) else listState.animateScrollToItem(idx)
         }
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.75f))
+            .background(Color.Black.copy(alpha = 0.55f))
             .clickable { onDismiss() }
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
@@ -114,12 +107,12 @@ fun PlayerStyleWheel(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(enabled = false) {} // Prevent click-through
+                .clickable(enabled = false) {}
                 .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
                 .navigationBarsPadding(),
-            color = SonoraCharcoal,
-            tonalElevation = 16.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, SonoraCharcoalBorder)
+            color = colors.surface,
+            tonalElevation = 12.dp,
+            border = BorderStroke(1.dp, colors.cardBorder)
         ) {
             Column(
                 modifier = Modifier
@@ -127,17 +120,15 @@ fun PlayerStyleWheel(
                     .padding(vertical = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Drag Handle
                 Box(
                     modifier = Modifier
                         .size(width = 44.dp, height = 4.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.25f))
+                        .background(colors.cardBorder)
                 )
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Header
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -148,38 +139,39 @@ fun PlayerStyleWheel(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             shape = CircleShape,
-                            color = SonoraDustyRose.copy(alpha = 0.2f),
-                            modifier = Modifier.size(36.dp)
+                            color = colors.accentPill,
+                            modifier = Modifier.size(40.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Palette, contentDescription = null, tint = SonoraDustyRose, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.Palette, contentDescription = null, tint = colors.onAccentPill, modifier = Modifier.size(20.dp))
                             }
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
                                 text = "PLAYER STYLE WHEEL",
-                                color = SonoraDustyRose,
+                                fontFamily = OutfitFontFamily,
+                                color = colors.accentStrong,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 1.2.sp
                             )
                             Text(
-                                text = "Select from 9 bespoke interfaces",
-                                color = SonoraTextSecondary,
+                                text = "Select from 9 bespoke layouts",
+                                fontFamily = PlusJakartaFontFamily,
+                                color = colors.textSecondary,
                                 fontSize = 13.sp
                             )
                         }
                     }
 
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = SonoraTextPrimary, modifier = Modifier.size(22.dp))
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = colors.textPrimary, modifier = Modifier.size(22.dp))
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
-                // Interactive Carousel Wheel of 9 Styles
                 LazyRow(
                     state = listState,
                     contentPadding = PaddingValues(horizontal = 20.dp),
@@ -189,27 +181,28 @@ fun PlayerStyleWheel(
                     items(PlayerStyle.entries) { style ->
                         val isSelected = style == currentStyle
                         val cardScale by animateFloatAsState(
-                            targetValue = if (isSelected) 1.05f else 0.95f,
-                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            targetValue = if (isSelected) 1.04f else 0.96f,
+                            animationSpec = if (reduceAnimations) snap() else spring(stiffness = Spring.StiffnessMediumLow),
                             label = "scale"
                         )
 
                         Surface(
                             modifier = Modifier
-                                .width(128.dp)
+                                .width(132.dp)
                                 .scale(cardScale)
-                                .clip(RoundedCornerShape(20.dp))
+                                .clip(RoundedCornerShape(22.dp))
                                 .border(
                                     width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) SonoraDustyRose else SonoraCharcoalBorder,
-                                    shape = RoundedCornerShape(20.dp)
+                                    color = if (isSelected) colors.accentStrong else colors.cardBorder,
+                                    shape = RoundedCornerShape(22.dp)
                                 )
                                 .clickable {
                                     onSelectStyle(style)
                                     onDismiss()
-                                },
-                            color = if (isSelected) Color(0xFF1E1718) else Color(0xFF101216),
-                            tonalElevation = if (isSelected) 8.dp else 2.dp
+                                }
+                                .testTag("style_wheel_card_${style.name.lowercase()}"),
+                            color = if (isSelected) colors.surfaceTinted else colors.surfaceElevated,
+                            tonalElevation = if (isSelected) 6.dp else 1.dp
                         ) {
                             Column(
                                 modifier = Modifier
@@ -217,7 +210,6 @@ fun PlayerStyleWheel(
                                     .padding(12.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                // Miniature Preview Illustration
                                 PlayerStyleMiniPreview(
                                     style = style,
                                     modifier = Modifier.size(72.dp),
@@ -233,17 +225,20 @@ fun PlayerStyleWheel(
                                 ) {
                                     Text(
                                         text = style.displayName,
-                                        color = if (isSelected) SonoraDustyRose else SonoraTextPrimary,
+                                        fontFamily = OutfitFontFamily,
+                                        color = if (isSelected) colors.accentStrong else colors.textPrimary,
                                         fontSize = 13.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        textAlign = TextAlign.Center
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     if (isSelected) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Icon(
                                             Icons.Default.CheckCircle,
                                             contentDescription = "Selected",
-                                            tint = SonoraDustyRose,
+                                            tint = colors.accentStrong,
                                             modifier = Modifier.size(14.dp)
                                         )
                                     }
@@ -251,10 +246,12 @@ fun PlayerStyleWheel(
 
                                 Text(
                                     text = style.subtitle,
-                                    color = SonoraTextMuted,
+                                    fontFamily = PlusJakartaFontFamily,
+                                    color = colors.textSecondary,
                                     fontSize = 10.sp,
                                     textAlign = TextAlign.Center,
                                     maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                             }
@@ -264,10 +261,10 @@ fun PlayerStyleWheel(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Bottom hint text
                 Text(
-                    text = "Tip: Long-press artwork on any player to open this wheel again",
-                    color = SonoraTextMuted,
+                    text = "Tip: Long-press album artwork anytime to open the style wheel",
+                    fontFamily = PlusJakartaFontFamily,
+                    color = colors.textMuted,
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 24.dp)

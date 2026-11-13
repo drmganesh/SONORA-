@@ -13,7 +13,6 @@ import android.os.Handler
 import android.os.Looper
 import android.media.audiofx.AudioEffect
 import android.media.audiofx.BassBoost
-import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
 import android.media.audiofx.PresetReverb
 import android.media.audiofx.Virtualizer
@@ -21,7 +20,6 @@ import android.media.audiofx.Visualizer
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.example.model.EqualizerBand
 import com.example.model.SpatialAudioConfig
 import com.example.model.SpatialMode
 import kotlinx.coroutines.CoroutineScope
@@ -69,7 +67,7 @@ class SonoraAudioEngine(private val context: Context) {
         }
 
     // Audio FX instances attached to current audioSessionId
-    private var equalizer: Equalizer? = null
+    val adaptiveEqualizer = com.example.equalizer.AdaptiveEqualizerEngine.getInstance(context)
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
     private var presetReverb: PresetReverb? = null
@@ -85,10 +83,6 @@ class SonoraAudioEngine(private val context: Context) {
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-    // Supported Equalizer Bands from Hardware/Framework
-    private val _equalizerBands = MutableStateFlow<List<EqualizerBand>>(emptyList())
-    val equalizerBands: StateFlow<List<EqualizerBand>> = _equalizerBands.asStateFlow()
-
     // TWS & Bluetooth Audio Device Detection & State Tracking
     private val _isTwsConnected = MutableStateFlow(false)
     val isTwsConnected: StateFlow<Boolean> = _isTwsConnected.asStateFlow()
@@ -99,18 +93,39 @@ class SonoraAudioEngine(private val context: Context) {
     private var audioDeviceCallback: Any? = null
 
     private var currentSessionId = 0
-    private var eqEnabled = true
     private var bassBoostStrength = 600 // 0..1000
     private var virtualizerStrength = 750 // 0..1000
     private var currentReverbPreset: Short = PresetReverb.PRESET_NONE
     private var loudnessGainMb = 300 // millibels
     private var spatialConfig = SpatialAudioConfig()
+    private var currentPlaybackSpeed = 1.0f
+
+    // Global bypass & 8D Slow Orbit state
+    private var globalEffectsBypass = false
+    private var orbit8dEnabled = false
+    private var orbit8dSpeed = 0.35f // rotations/sec multiplier
+    private var orbit8dDepth = 0.75f // 0..1
+    private val _orbitAzimuthRad = MutableStateFlow(0f)
+    val orbitAzimuthRad: StateFlow<Float> = _orbitAzimuthRad.asStateFlow()
+    private var orbitJob: Job? = null
+
+    // Hardware AudioEffect capability flags for honest Audio Effects Studio reporting
+    private val _isBassBoostSupported = MutableStateFlow(true)
+    val isBassBoostSupported: StateFlow<Boolean> = _isBassBoostSupported.asStateFlow()
+
+    private val _isVirtualizerSupported = MutableStateFlow(true)
+    val isVirtualizerSupported: StateFlow<Boolean> = _isVirtualizerSupported.asStateFlow()
+
+    private val _isReverbSupported = MutableStateFlow(true)
+    val isReverbSupported: StateFlow<Boolean> = _isReverbSupported.asStateFlow()
+
+    private val _isLoudnessSupported = MutableStateFlow(true)
+    val isLoudnessSupported: StateFlow<Boolean> = _isLoudnessSupported.asStateFlow()
 
     // Visualizer simulation fallback job for smooth animations
     private var simulationJob: Job? = null
 
     init {
-        setupFallbackEqualizerBands()
         setupAudioDeviceDetection()
         initMediaPlayer()
         startVisualizerLoop()
@@ -240,6 +255,18 @@ class SonoraAudioEngine(private val context: Context) {
                 currentSessionId = mp.audioSessionId
                 setupAudioEffects(currentSessionId)
                 applyVolumeAndBalance()
+
+                // Apply tempo / playback speed if configured
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    try {
+                        if (currentPlaybackSpeed != 1.0f) {
+                            mp.playbackParams = mp.playbackParams?.setSpeed(currentPlaybackSpeed)
+                                ?: android.media.PlaybackParams().setSpeed(currentPlaybackSpeed)
+                        }
+                    } catch (e: Throwable) {
+                        Log.w(tag, "Error applying initial speed: ${e.message}")
+                    }
+                }
 
                 try {
                     mp.start()
@@ -380,143 +407,161 @@ class SonoraAudioEngine(private val context: Context) {
         }
     }
 
-    // --- Equalizer & Audio Effects Management ---
+    // --- Audio Effects Management ---
 
     private fun setupAudioEffects(sessionId: Int) {
         if (sessionId == 0 || sessionId == AudioManager.ERROR) return
 
-        // 1. Equalizer
+        // 0. Adaptive 15-Band Equalizer & Preamp
         try {
-            if (equalizer == null) {
-                equalizer = Equalizer(0, sessionId).apply {
-                    enabled = eqEnabled
-                }
-                // Maintain the 15-band precision filter array
-                setupFallbackEqualizerBands()
-            }
+            adaptiveEqualizer.attachToAudioSession(sessionId)
         } catch (e: Throwable) {
-            Log.w(tag, "Hardware Equalizer not available on this session, using software DSP: ${e.message}")
+            Log.w(tag, "Failed to attach adaptive equalizer: ${e.message}")
         }
 
-        // 2. BassBoost
+        // 1. BassBoost
         try {
             if (bassBoost == null) {
                 bassBoost = BassBoost(0, sessionId).apply {
+                    _isBassBoostSupported.value = strengthSupported
                     if (strengthSupported) {
                         setStrength(bassBoostStrength.toShort())
-                        enabled = bassBoostStrength > 0
+                        enabled = !globalEffectsBypass && bassBoostStrength > 0
                     }
                 }
             }
         } catch (e: Throwable) {
+            _isBassBoostSupported.value = false
             Log.w(tag, "Hardware BassBoost not available: ${e.message}")
         }
 
-        // 3. Virtualizer
+        // 2. Virtualizer
         try {
             if (virtualizer == null) {
                 virtualizer = Virtualizer(0, sessionId).apply {
+                    _isVirtualizerSupported.value = strengthSupported
                     if (strengthSupported) {
                         setStrength(virtualizerStrength.toShort())
-                        enabled = virtualizerStrength > 0
+                        enabled = !globalEffectsBypass && virtualizerStrength > 0
                     }
                 }
             }
         } catch (e: Throwable) {
+            _isVirtualizerSupported.value = false
             Log.w(tag, "Hardware Virtualizer not available: ${e.message}")
         }
 
-        // 4. PresetReverb (Safely check before instantiating to avoid AudioFlinger status -1)
+        // 3. PresetReverb (Safely check before instantiating to avoid AudioFlinger status -1)
         try {
             if (presetReverb == null && currentReverbPreset != PresetReverb.PRESET_NONE) {
                 presetReverb = PresetReverb(0, sessionId).apply {
                     preset = currentReverbPreset
-                    enabled = true
+                    enabled = !globalEffectsBypass
                 }
             }
+            _isReverbSupported.value = true
         } catch (e: Throwable) {
+            _isReverbSupported.value = false
             Log.w(tag, "Hardware PresetReverb not supported by AudioFlinger: ${e.message}")
             presetReverb = null
         }
 
-        // 5. LoudnessEnhancer
+        // 4. LoudnessEnhancer
         try {
             if (loudnessEnhancer == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
                     setTargetGain(loudnessGainMb)
-                    enabled = loudnessGainMb > 0
+                    enabled = !globalEffectsBypass && loudnessGainMb > 0
                 }
             }
+            _isLoudnessSupported.value = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT
         } catch (e: Throwable) {
+            _isLoudnessSupported.value = false
             Log.w(tag, "LoudnessEnhancer not available: ${e.message}")
         }
 
-        // 6. Visualizer (Only try if RECORD_AUDIO permission is granted to prevent initCheck -3)
+        // 5. Visualizer (Only try if RECORD_AUDIO permission is granted to prevent initCheck -3)
         setupVisualizer(sessionId)
     }
 
-    companion object {
-        // Studio-Grade 15-Band ISO Center Frequencies
-        val ISO_15_BAND_FREQUENCIES = listOf(
-            25,    // Sub-bass rumble
-            40,    // Deep bass
-            63,    // Punch bass
-            100,   // Low bass
-            160,   // Upper bass
-            250,   // Warmth / low mids
-            400,   // Low mids
-            630,   // Center mids
-            1000,  // Vocal presence
-            1600,  // Upper mids
-            2500,  // Vocal bite / edge
-            4000,  // Presence / attack
-            6300,  // Definition / brightness
-            10000, // Treble / air
-            16000  // Ultra-high brilliance
-        )
-    }
+    private var lastSpatialLeft = 1.0f
+    private var lastSpatialRight = 1.0f
 
-    private fun setupFallbackEqualizerBands() {
-        _equalizerBands.value = ISO_15_BAND_FREQUENCIES.mapIndexed { idx, freq ->
-            EqualizerBand(
-                bandIndex = idx.toShort(),
-                centerFreqHz = freq,
-                minLevelMb = -1500,
-                maxLevelMb = 1500,
-                currentLevelMb = 0
-            )
-        }
-    }
-
-    fun setEqualizerEnabled(enabled: Boolean) {
-        eqEnabled = enabled
+    private fun applySpatialBalance(left: Float, right: Float) {
+        lastSpatialLeft = left
+        lastSpatialRight = right
+        // Enforce safe audio floor during playback to guarantee audio never drops to zero/silence
+        val minFloor = if (currentVolumeScale > 0.05f) 0.35f * currentVolumeScale else 0f
+        val finalLeft = (left * currentVolumeScale).coerceIn(minFloor, 1.0f)
+        val finalRight = (right * currentVolumeScale).coerceIn(minFloor, 1.0f)
         try {
-            equalizer?.enabled = enabled
+            mediaPlayer?.setVolume(finalLeft, finalRight)
         } catch (e: Throwable) {
-            Log.w(tag, "Error setting EQ enabled", e)
+            Log.w(tag, "applySpatialBalance error: ${e.message}")
         }
     }
 
-    fun setBandGain(bandIndex: Short, gainMb: Short) {
-        val updated = _equalizerBands.value.map {
-            if (it.bandIndex == bandIndex) it.copy(currentLevelMb = gainMb) else it
-        }
-        _equalizerBands.value = updated
-
-        try {
-            val eq = equalizer
-            if (eq != null) {
-                val hwBands = eq.numberOfBands.toInt()
-                if (hwBands > 0) {
-                    // Map 15-band index (0..14) proportionally to hardware band index (0..hwBands-1)
-                    val hwIndex = ((bandIndex.toFloat() / 14f) * (hwBands - 1)).toInt().coerceIn(0, hwBands - 1).toShort()
-                    val range = eq.bandLevelRange
-                    val clampedGain = gainMb.coerceIn(range[0], range[1])
-                    eq.setBandLevel(hwIndex, clampedGain)
-                }
+    fun setPlaybackSpeed(speed: Float) {
+        currentPlaybackSpeed = speed
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && isPrepared) {
+            try {
+                mediaPlayer?.playbackParams = mediaPlayer?.playbackParams?.setSpeed(speed)
+                    ?: android.media.PlaybackParams().setSpeed(speed)
+            } catch (e: Throwable) {
+                Log.w(tag, "Error setting playback speed: ${e.message}")
             }
+        }
+    }
+
+    fun setGlobalEffectsBypass(bypass: Boolean) {
+        globalEffectsBypass = bypass
+        adaptiveEqualizer.setExternalBypass(bypass)
+        try {
+            bassBoost?.enabled = !bypass && bassBoostStrength > 0
+            virtualizer?.enabled = !bypass && (spatialConfig.isEnabled || virtualizerStrength > 0)
+            presetReverb?.enabled = !bypass && currentReverbPreset != PresetReverb.PRESET_NONE
+            loudnessEnhancer?.enabled = !bypass && loudnessGainMb > 0
         } catch (e: Throwable) {
-            Log.w(tag, "Error mapping 15-band gain to hardware EQ", e)
+            Log.w(tag, "Global bypass toggle warning: ${e.message}")
+        }
+        applySpatialAudio()
+        if (bypass) {
+            orbitJob?.cancel()
+            orbitJob = null
+            applyVolumeAndBalance()
+        } else if (orbit8dEnabled) {
+            startOrbit8dLoop()
+        }
+    }
+
+    fun update8dOrbitConfig(enabled: Boolean, speed: Float, depth: Float) {
+        orbit8dEnabled = enabled
+        orbit8dSpeed = speed.coerceIn(0.1f, 2.0f)
+        orbit8dDepth = depth.coerceIn(0.1f, 1.0f)
+        if (enabled && !globalEffectsBypass) {
+            startOrbit8dLoop()
+        } else {
+            orbitJob?.cancel()
+            orbitJob = null
+            applyVolumeAndBalance()
+        }
+    }
+
+    private fun startOrbit8dLoop() {
+        orbitJob?.cancel()
+        orbitJob = scope.launch {
+            var angle = _orbitAzimuthRad.value
+            while (isActive && orbit8dEnabled && !globalEffectsBypass) {
+                if (_isPlayingState) {
+                    angle = ((angle + 0.03f * orbit8dSpeed) % (2f * Math.PI.toFloat()))
+                    _orbitAzimuthRad.value = angle
+                    val pan = sin(angle.toDouble()).toFloat() * orbit8dDepth
+                    val leftGain = (1f - (pan.coerceAtLeast(0f) * 0.55f)).coerceIn(0.35f, 1f)
+                    val rightGain = (1f - ((-pan).coerceAtLeast(0f) * 0.55f)).coerceIn(0.35f, 1f)
+                    applySpatialBalance(leftGain, rightGain)
+                }
+                delay(33L)
+            }
         }
     }
 
@@ -526,7 +571,7 @@ class SonoraAudioEngine(private val context: Context) {
             bassBoost?.apply {
                 if (strengthSupported) {
                     setStrength(bassBoostStrength.toShort())
-                    enabled = bassBoostStrength > 0
+                    enabled = !globalEffectsBypass && bassBoostStrength > 0
                 }
             }
         } catch (e: Throwable) {
@@ -540,7 +585,7 @@ class SonoraAudioEngine(private val context: Context) {
             virtualizer?.apply {
                 if (strengthSupported) {
                     setStrength(virtualizerStrength.toShort())
-                    enabled = virtualizerStrength > 0
+                    enabled = !globalEffectsBypass && virtualizerStrength > 0
                 }
             }
         } catch (e: Throwable) {
@@ -556,9 +601,11 @@ class SonoraAudioEngine(private val context: Context) {
             }
             presetReverb?.apply {
                 this.preset = preset
-                enabled = preset != PresetReverb.PRESET_NONE
+                enabled = !globalEffectsBypass && preset != PresetReverb.PRESET_NONE
             }
+            _isReverbSupported.value = true
         } catch (e: Throwable) {
+            _isReverbSupported.value = false
             Log.w(tag, "PresetReverb not supported: ${e.message}")
         }
     }
@@ -568,7 +615,7 @@ class SonoraAudioEngine(private val context: Context) {
         try {
             loudnessEnhancer?.apply {
                 setTargetGain(gainMb)
-                enabled = gainMb > 0
+                enabled = !globalEffectsBypass && gainMb > 0
             }
         } catch (e: Throwable) {
             Log.w(tag, "Error setting loudness enhancer", e)
@@ -583,7 +630,7 @@ class SonoraAudioEngine(private val context: Context) {
     }
 
     private fun applySpatialAudio() {
-        if (!spatialConfig.isEnabled) {
+        if (!spatialConfig.isEnabled || globalEffectsBypass) {
             try {
                 virtualizer?.enabled = false
             } catch (e: Throwable) {
@@ -630,24 +677,27 @@ class SonoraAudioEngine(private val context: Context) {
             val isHeadphoneOrTws = _isTwsConnected.value ||
                     spatialConfig.mode == SpatialMode.HEADPHONES ||
                     spatialConfig.mode == SpatialMode.CINEMA_360
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                if (isHeadphoneOrTws) {
-                    val canBinaural = virt.canVirtualize(
-                        AudioFormat.CHANNEL_OUT_STEREO,
-                        Virtualizer.VIRTUALIZATION_MODE_BINAURAL
-                    )
-                    if (canBinaural) {
-                        virt.forceVirtualizationMode(Virtualizer.VIRTUALIZATION_MODE_BINAURAL)
+                try {
+                    if (isHeadphoneOrTws) {
+                        val canBinaural = virt.canVirtualize(
+                            AudioFormat.CHANNEL_OUT_STEREO,
+                            Virtualizer.VIRTUALIZATION_MODE_BINAURAL
+                        )
+                        if (canBinaural) {
+                            virt.forceVirtualizationMode(Virtualizer.VIRTUALIZATION_MODE_BINAURAL)
+                        }
+                    } else {
+                        val canTransaural = virt.canVirtualize(
+                            AudioFormat.CHANNEL_OUT_STEREO,
+                            Virtualizer.VIRTUALIZATION_MODE_TRANSAURAL
+                        )
+                        if (canTransaural) {
+                            virt.forceVirtualizationMode(Virtualizer.VIRTUALIZATION_MODE_TRANSAURAL)
+                        }
                     }
-                } else {
-                    val canTransaural = virt.canVirtualize(
-                        AudioFormat.CHANNEL_OUT_STEREO,
-                        Virtualizer.VIRTUALIZATION_MODE_TRANSAURAL
-                    )
-                    if (canTransaural) {
-                        virt.forceVirtualizationMode(Virtualizer.VIRTUALIZATION_MODE_TRANSAURAL)
-                    }
+                } catch (e: Throwable) {
+                    Log.w(tag, "forceVirtualizationMode unsupported, bypassed: ${e.message}")
                 }
             }
 
@@ -667,6 +717,9 @@ class SonoraAudioEngine(private val context: Context) {
             }
         } catch (e: Throwable) {
             Log.w(tag, "Virtualizer routing configuration error: ${e.message}")
+            try {
+                virt.enabled = false
+            } catch (_: Throwable) {}
         }
     }
 
@@ -730,8 +783,9 @@ class SonoraAudioEngine(private val context: Context) {
             right = right.coerceAtLeast(0.95f)
         }
 
-        val finalLeft = (left * currentVolumeScale).coerceIn(0.0f, 1.0f)
-        val finalRight = (right * currentVolumeScale).coerceIn(0.0f, 1.0f)
+        val minFloor = if (currentVolumeScale > 0.05f) 0.35f * currentVolumeScale else 0f
+        val finalLeft = (left * currentVolumeScale).coerceIn(minFloor, 1.0f)
+        val finalRight = (right * currentVolumeScale).coerceIn(minFloor, 1.0f)
 
         try {
             mediaPlayer?.setVolume(finalLeft, finalRight)
@@ -857,21 +911,15 @@ class SonoraAudioEngine(private val context: Context) {
 
     private fun releaseEffects() {
         try {
+            adaptiveEqualizer.releaseHardwareEffects()
+        } catch (_: Throwable) {}
+
+        try {
             visualizer?.apply {
                 enabled = false
                 release()
             }
             visualizer = null
-        } catch (e: Throwable) {
-            // Ignored
-        }
-
-        try {
-            equalizer?.apply {
-                enabled = false
-                release()
-            }
-            equalizer = null
         } catch (e: Throwable) {
             // Ignored
         }
@@ -914,6 +962,7 @@ class SonoraAudioEngine(private val context: Context) {
             }
             audioDeviceCallback = null
         }
+        orbitJob?.cancel()
         simulationJob?.cancel()
         releaseEffects()
         try {

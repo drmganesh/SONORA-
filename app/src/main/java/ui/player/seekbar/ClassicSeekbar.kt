@@ -13,8 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
+import ui.theme.LocalEditorialColors
 
 /**
  * Style 3: Classic Seekbar
@@ -28,9 +27,11 @@ fun ClassicSeekbar(
     modifier: Modifier = Modifier,
     isPlaying: Boolean = false,
     enabled: Boolean = true,
-    accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    accentColor: Color = LocalEditorialColors.current.accentStrong,
+    inactiveColor: Color = LocalEditorialColors.current.cardBorder
 ) {
+    val colors = LocalEditorialColors.current
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -66,10 +67,9 @@ fun ClassicSeekbar(
             val width = size.width
             val centerY = size.height / 2f
             val trackHeight = 4.dp.toPx()
-            val thumbRadius = 6.5.dp.toPx()
-            val activeX = width * progress
+            val thumbRadius = 7.dp.toPx()
+            val activeX = (width * progress).coerceIn(thumbRadius, (width - thumbRadius).coerceAtLeast(thumbRadius))
 
-            // Inactive track
             drawLine(
                 color = inactiveColor,
                 start = Offset(0f, centerY),
@@ -78,8 +78,7 @@ fun ClassicSeekbar(
                 cap = StrokeCap.Round
             )
 
-            // Active track
-            if (activeX > 0f) {
+            if (progress > 0f) {
                 drawLine(
                     color = accentColor,
                     start = Offset(0f, centerY),
@@ -89,15 +88,14 @@ fun ClassicSeekbar(
                 )
             }
 
-            // Thumb
             drawCircle(
-                color = Color.White,
+                color = accentColor,
                 radius = thumbRadius,
                 center = Offset(activeX, centerY)
             )
             drawCircle(
-                color = accentColor,
-                radius = thumbRadius * 0.6f,
+                color = colors.surface,
+                radius = thumbRadius * 0.45f,
                 center = Offset(activeX, centerY)
             )
         }

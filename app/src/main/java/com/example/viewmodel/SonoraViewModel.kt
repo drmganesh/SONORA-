@@ -18,14 +18,20 @@ import com.example.data.SonoraDatabase
 import com.example.data.SonoraPreferences
 import com.example.model.Album
 import com.example.model.Artist
-import com.example.model.EqualizerBand
-import com.example.model.EqPreset
 import com.example.model.Genre
 import com.example.model.MusicFolder
 import com.example.model.PlayerStyle
 import data.preferences.PlayerStylePreferences
 import ui.player.seekbar.SeekbarStyle
 import data.preferences.SeekbarPreferences
+import com.example.model.DynamicThemeMode
+import data.preferences.ThemePreferences
+import data.cache.AlbumColorCache
+import domain.color.AlbumArtColorExtractor
+import domain.color.DynamicThemeGenerator
+import ui.theme.DynamicColorPalette
+import com.example.util.AlbumArtHelper
+import kotlinx.coroutines.withContext
 import com.example.model.PlaybackInfo
 import com.example.model.Playlist
 import com.example.model.RepeatMode
@@ -61,6 +67,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private var musicService: SonoraMusicService? = null
     private var isBound = false
 
+    val folderFilterPreferences by lazy { data.preferences.FolderFilterPreferences(getApplication()) }
+    val folderFilterSettings: StateFlow<domain.model.FolderFilterSettings>
+        get() = folderFilterPreferences.settings
+
+    private val _rawScannedSongs = MutableStateFlow<List<Song>>(emptyList())
+    val rawScannedSongs: StateFlow<List<Song>> = _rawScannedSongs.asStateFlow()
+
     private val _allSongs = MutableStateFlow<List<Song>>(emptyList())
     val allSongs: StateFlow<List<Song>> = _allSongs.asStateFlow()
 
@@ -90,12 +103,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists.asStateFlow()
 
-    // Equalizer & Audio FX State (Restored from preferences)
-    private val _equalizerEnabled = MutableStateFlow(preferences.equalizerEnabled)
-    val equalizerEnabled: StateFlow<Boolean> = _equalizerEnabled.asStateFlow()
-
-    private val _equalizerBands = MutableStateFlow<List<EqualizerBand>>(emptyList())
-    val equalizerBands: StateFlow<List<EqualizerBand>> = _equalizerBands.asStateFlow()
+    // Audio FX State (Restored from preferences)
 
     private val _bassBoost = MutableStateFlow(preferences.bassBoost) // 0..1000
     val bassBoost: StateFlow<Int> = _bassBoost.asStateFlow()
@@ -109,9 +117,97 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _loudnessGainMb = MutableStateFlow(preferences.loudnessGainMb) // 0..1000 millibels
     val loudnessGainMb: StateFlow<Int> = _loudnessGainMb.asStateFlow()
 
-    // 360° Spatial Audio State (Restored from preferences)
+    // Adaptive 15-Band Equalizer Engine & States
+    val adaptiveEqualizer = com.example.equalizer.AdaptiveEqualizerEngine.getInstance(application)
+    val equalizerSettings: StateFlow<com.example.equalizer.AdaptiveEqualizerSettings> = adaptiveEqualizer.settings
+    val equalizerResponseCurve: StateFlow<FloatArray> = adaptiveEqualizer.frequencyResponseCurve
+    val isHardwareEqSupported: StateFlow<Boolean> = adaptiveEqualizer.isHardwareEqSupported
+
+    val customEqPresets: StateFlow<List<com.example.data.CustomEqPresetEntity>> =
+        dao.getCustomEqPresetsFlow()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun setEqualizerMasterEnabled(enabled: Boolean) = adaptiveEqualizer.setMasterEnabled(enabled)
+    fun setEqualizerMode(mode: com.example.equalizer.EqualizerMode) = adaptiveEqualizer.setMode(mode)
+    fun setEqualizerDynamicPad(tilt: Float, contour: Float) = adaptiveEqualizer.setDynamicPad(tilt, contour)
+    fun setEqualizerMacroProfile(profile: com.example.equalizer.MacroProfile) = adaptiveEqualizer.setMacroProfile(profile)
+    fun setEqualizerBandGain(index: Int, gainDb: Float) = adaptiveEqualizer.setManualBandGain(index, gainDb)
+    fun setEqualizerVolumeBoost(boostDb: Float) = adaptiveEqualizer.setVolumeBoost(boostDb)
+    fun selectEqualizerSoundProfile(profileId: String) = adaptiveEqualizer.selectSoundProfile(profileId)
+    fun resetEqualizerToNeutral() = adaptiveEqualizer.resetToNeutral()
+    fun applyStudioEqShelf(isBass: Boolean, levelDb: Float) = adaptiveEqualizer.applyStudioShelf(isBass, levelDb)
+
+    fun saveCustomEqPreset(name: String) {
+        val clean = name.trim()
+        if (clean.isBlank()) return
+        val gains = equalizerSettings.value.getEffectiveGains()
+        val json = org.json.JSONArray().apply {
+            gains.forEach { put(it.toDouble()) }
+        }.toString()
+        val entity = com.example.data.CustomEqPresetEntity(
+            name = clean,
+            bandLevelsJson = json,
+            bassBoost = _bassBoost.value,
+            virtualizer = _virtualizer.value,
+            reverbPreset = _reverbPreset.value
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.insertCustomEqPreset(entity)
+        }
+    }
+
+    fun applyCustomEqPreset(preset: com.example.data.CustomEqPresetEntity) {
+        val parsedGains = try {
+            val arr = org.json.JSONArray(preset.bandLevelsJson)
+            FloatArray(15) { i -> arr.optDouble(i, 0.0).toFloat() }
+        } catch (_: Exception) {
+            preset.bandLevelsJson.split(",").mapNotNull { it.trim().toFloatOrNull() }.toFloatArray()
+        }
+        adaptiveEqualizer.applyCustomPresetGains(parsedGains, "user_${preset.name}")
+        setBassBoost(preset.bassBoost)
+        setVirtualizer(preset.virtualizer)
+        setReverb(preset.reverbPreset)
+    }
+
+    fun deleteCustomEqPreset(name: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.deleteCustomEqPreset(name)
+        }
+    }
+
+    // 360° Spatial Audio & Audio Effects Studio State
     private val _spatialConfig = MutableStateFlow(preferences.spatialConfig)
     val spatialConfig: StateFlow<SpatialAudioConfig> = _spatialConfig.asStateFlow()
+
+    private val _globalEffectsBypass = MutableStateFlow(preferences.globalEffectsBypass)
+    val globalEffectsBypass: StateFlow<Boolean> = _globalEffectsBypass.asStateFlow()
+
+    private val _orbit8dEnabled = MutableStateFlow(preferences.orbit8dEnabled)
+    val orbit8dEnabled: StateFlow<Boolean> = _orbit8dEnabled.asStateFlow()
+
+    private val _orbit8dSpeed = MutableStateFlow(preferences.orbit8dSpeed)
+    val orbit8dSpeed: StateFlow<Float> = _orbit8dSpeed.asStateFlow()
+
+    private val _orbit8dDepth = MutableStateFlow(preferences.orbit8dDepth)
+    val orbit8dDepth: StateFlow<Float> = _orbit8dDepth.asStateFlow()
+
+    private val _orbitAzimuthRad = MutableStateFlow(0f)
+    val orbitAzimuthRad: StateFlow<Float> = _orbitAzimuthRad.asStateFlow()
+
+    private val _isBassBoostSupported = MutableStateFlow(true)
+    val isBassBoostSupported: StateFlow<Boolean> = _isBassBoostSupported.asStateFlow()
+
+    private val _isVirtualizerSupported = MutableStateFlow(true)
+    val isVirtualizerSupported: StateFlow<Boolean> = _isVirtualizerSupported.asStateFlow()
+
+    private val _isReverbSupported = MutableStateFlow(true)
+    val isReverbSupported: StateFlow<Boolean> = _isReverbSupported.asStateFlow()
+
+    private val _isLoudnessSupported = MutableStateFlow(true)
+    val isLoudnessSupported: StateFlow<Boolean> = _isLoudnessSupported.asStateFlow()
+
+    private val _playbackSpeed = MutableStateFlow(preferences.playbackSpeed)
+    val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
 
     // Real-time Visualizer Flows
     private val _visualizerFrequencies = MutableStateFlow(FloatArray(32) { 0f })
@@ -186,6 +282,162 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         setSeekbarStyle(SeekbarStyle.DEFAULT)
     }
 
+    // Dynamic Album Art-Based Theme Engine
+    private val themePrefs = ThemePreferences(application)
+    private val _dynamicColorsEnabled = MutableStateFlow(preferences.dynamicColorsEnabled)
+    val dynamicColorsEnabled: StateFlow<Boolean> = _dynamicColorsEnabled.asStateFlow()
+
+    private val _dynamicThemeMode = MutableStateFlow(preferences.dynamicThemeMode)
+    val dynamicThemeMode: StateFlow<DynamicThemeMode> = _dynamicThemeMode.asStateFlow()
+
+    private val _dynamicPalette = MutableStateFlow(DynamicColorPalette.default())
+    val dynamicPalette: StateFlow<DynamicColorPalette> = _dynamicPalette.asStateFlow()
+
+    private var paletteExtractionJob: Job? = null
+
+    fun setDynamicColorsEnabled(enabled: Boolean) {
+        _dynamicColorsEnabled.value = enabled
+        preferences.dynamicColorsEnabled = enabled
+        viewModelScope.launch(Dispatchers.IO) {
+            themePrefs.setDynamicColorsEnabled(enabled)
+        }
+        updateDynamicThemeForSong(_currentSong.value)
+    }
+
+    fun setDynamicThemeMode(mode: DynamicThemeMode) {
+        _dynamicThemeMode.value = mode
+        preferences.dynamicThemeMode = mode
+        viewModelScope.launch(Dispatchers.IO) {
+            themePrefs.setDynamicThemeMode(mode)
+        }
+        updateDynamicThemeForSong(_currentSong.value)
+    }
+
+    // Editorial Home Theme Mode & Custom Accent
+    private val _homeThemeMode = MutableStateFlow(preferences.homeThemeMode)
+    val homeThemeMode: StateFlow<ui.theme.HomeThemeMode> = _homeThemeMode.asStateFlow()
+
+    private val _homeCustomAccentArgb = MutableStateFlow<Long?>(preferences.homeCustomAccentArgb.takeIf { it != -1L })
+    val homeCustomAccentArgb: StateFlow<Long?> = _homeCustomAccentArgb.asStateFlow()
+
+    private val _reduceAnimations = MutableStateFlow(preferences.reduceAnimations)
+    val reduceAnimations: StateFlow<Boolean> = _reduceAnimations.asStateFlow()
+
+    private val _recentSearches = MutableStateFlow(preferences.recentSearches)
+    val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
+
+    private val _audioFocusEnabled = MutableStateFlow(preferences.audioFocusEnabled)
+    val audioFocusEnabled: StateFlow<Boolean> = _audioFocusEnabled.asStateFlow()
+
+    private val _resumeOnLaunch = MutableStateFlow(preferences.resumeOnLaunch)
+    val resumeOnLaunch: StateFlow<Boolean> = _resumeOnLaunch.asStateFlow()
+
+    private val _headsetAutoPlayPause = MutableStateFlow(preferences.headsetAutoPlayPause)
+    val headsetAutoPlayPause: StateFlow<Boolean> = _headsetAutoPlayPause.asStateFlow()
+
+    private val _showLockScreenControls = MutableStateFlow(preferences.showLockScreenControls)
+    val showLockScreenControls: StateFlow<Boolean> = _showLockScreenControls.asStateFlow()
+
+    private val _showNotificationFormatBadge = MutableStateFlow(preferences.showNotificationFormatBadge)
+    val showNotificationFormatBadge: StateFlow<Boolean> = _showNotificationFormatBadge.asStateFlow()
+
+    fun setHomeThemeMode(mode: ui.theme.HomeThemeMode) {
+        _homeThemeMode.value = mode
+        preferences.homeThemeMode = mode
+    }
+
+    fun setHomeCustomAccentArgb(argb: Long?) {
+        _homeCustomAccentArgb.value = argb
+        preferences.homeCustomAccentArgb = argb ?: -1L
+    }
+
+    fun setReduceAnimations(reduce: Boolean) {
+        _reduceAnimations.value = reduce
+        preferences.reduceAnimations = reduce
+    }
+
+    fun addRecentSearch(query: String) {
+        val clean = query.trim()
+        if (clean.length < 2) return
+        val updated = (listOf(clean) + _recentSearches.value.filterNot { it.equals(clean, ignoreCase = true) }).take(10)
+        _recentSearches.value = updated
+        preferences.recentSearches = updated
+    }
+
+    fun removeRecentSearch(query: String) {
+        val updated = _recentSearches.value.filterNot { it == query }
+        _recentSearches.value = updated
+        preferences.recentSearches = updated
+    }
+
+    fun clearRecentSearches() {
+        _recentSearches.value = emptyList()
+        preferences.recentSearches = emptyList()
+    }
+
+    fun setAudioFocusEnabled(enabled: Boolean) {
+        _audioFocusEnabled.value = enabled
+        preferences.audioFocusEnabled = enabled
+    }
+
+    fun setResumeOnLaunch(enabled: Boolean) {
+        _resumeOnLaunch.value = enabled
+        preferences.resumeOnLaunch = enabled
+    }
+
+    fun setHeadsetAutoPlayPause(enabled: Boolean) {
+        _headsetAutoPlayPause.value = enabled
+        preferences.headsetAutoPlayPause = enabled
+    }
+
+    fun setShowLockScreenControls(enabled: Boolean) {
+        _showLockScreenControls.value = enabled
+        preferences.showLockScreenControls = enabled
+    }
+
+    fun setShowNotificationFormatBadge(enabled: Boolean) {
+        _showNotificationFormatBadge.value = enabled
+        preferences.showNotificationFormatBadge = enabled
+    }
+
+    fun resetDynamicThemeToDefault() {
+        setDynamicColorsEnabled(true)
+        setDynamicThemeMode(DynamicThemeMode.DEFAULT)
+    }
+
+    fun updateDynamicThemeForSong(song: Song?) {
+        paletteExtractionJob?.cancel()
+        paletteExtractionJob = viewModelScope.launch(Dispatchers.Default) {
+            val enabled = _dynamicColorsEnabled.value
+            val mode = _dynamicThemeMode.value
+            if (!enabled || mode == DynamicThemeMode.STATIC_THEME || song == null) {
+                _dynamicPalette.value = DynamicColorPalette.default()
+                return@launch
+            }
+
+            val artKey = "song_${song.id}_${song.albumId}"
+            // Check in-memory cache first
+            val cachedPalette = AlbumColorCache.get(artKey)
+            if (cachedPalette != null) {
+                _dynamicPalette.value = DynamicThemeGenerator.generate(cachedPalette, mode, enabled)
+                return@launch
+            }
+
+            // Decode artwork asynchronously on IO dispatcher
+            val bitmap = withContext(Dispatchers.IO) {
+                AlbumArtHelper.loadAlbumArt(getApplication(), song)
+            }
+
+            if (!isActive) return@launch
+
+            val rawPalette = AlbumArtColorExtractor.extractPalette(bitmap, artKey)
+            if (!isActive) return@launch
+
+            val dynamicPalette = DynamicThemeGenerator.generate(rawPalette, mode, enabled)
+            _dynamicPalette.value = dynamicPalette
+        }
+    }
+
     // Harmonic / Genre Next Matched Song Indicator
     private val _nextMatchedSong = MutableStateFlow<Song?>(null)
     val nextMatchedSong: StateFlow<Song?> = _nextMatchedSong.asStateFlow()
@@ -211,37 +463,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _dailyMixes = MutableStateFlow<List<com.example.model.DailyMix>>(emptyList())
     val dailyMixes: StateFlow<List<com.example.model.DailyMix>> = _dailyMixes.asStateFlow()
 
-    // Expanded Equalizer Presets (21 Audio Engineering Profiles calibrated for 15-Band ISO EQ)
-    // Bands: [25Hz, 40Hz, 63Hz, 100Hz, 160Hz, 250Hz, 400Hz, 630Hz, 1kHz, 1.6kHz, 2.5kHz, 4kHz, 6.3kHz, 10kHz, 16kHz]
-    val standardPresets = listOf(
-        EqPreset("Flat (Reference)", listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)),
-        EqPreset("Poweramp Deep Bass", listOf(7f, 6.5f, 6f, 5f, 3.5f, 2f, 0.5f, 0f, 0f, 1f, 1.5f, 2.5f, 3f, 4f, 4.5f), bassBoost = 850, virtualizer = 600),
-        EqPreset("Sub-Bass Rumble 25Hz", listOf(9f, 8f, 7f, 5.5f, 3f, 1f, 0f, -0.5f, -1f, 0f, 0.5f, 1.5f, 2f, 2.5f, 3f), bassBoost = 1000, virtualizer = 400),
-        EqPreset("Bass & Treble Loudness", listOf(6.5f, 6f, 5f, 3.5f, 1f, -1f, -2f, -1.5f, 0f, 1.5f, 3f, 4.5f, 6f, 7f, 7.5f), bassBoost = 700, virtualizer = 650),
-        EqPreset("Rock Studio Punch", listOf(4.5f, 4f, 3.5f, 2f, -1f, -2f, -1.5f, 1f, 2f, 3.5f, 4.5f, 5f, 4.5f, 4f, 3.5f), bassBoost = 500, virtualizer = 400),
-        EqPreset("Metal & Hardcore", listOf(6f, 5.5f, 4.5f, 3f, -2f, -3f, -2.5f, 0.5f, 2f, 3.5f, 5f, 6f, 6f, 5.5f, 5f), bassBoost = 650, virtualizer = 500),
-        EqPreset("Pop Vibrant Modern", listOf(2f, 2f, 2.5f, 3.5f, 4f, 3.5f, 2.5f, 1.5f, 2f, 3f, 3.5f, 4f, 4.5f, 5f, 5f), bassBoost = 450, virtualizer = 550),
-        EqPreset("Hip-Hop & Urban", listOf(7f, 6.5f, 6f, 5f, 3f, 1f, -0.5f, 1f, 2f, 3f, 3.5f, 4.5f, 5f, 5.5f, 6f), bassBoost = 900, virtualizer = 600),
-        EqPreset("R&B Smooth Groove", listOf(4.5f, 4f, 3.5f, 2.5f, 1.5f, 0.5f, 0f, 1f, 2f, 3f, 3.5f, 4f, 4f, 3.5f, 3f), bassBoost = 550, virtualizer = 450),
-        EqPreset("Electronic 360 EDM", listOf(6f, 5.5f, 5f, 4f, 2f, 0f, -1f, 1.5f, 3f, 4.5f, 5.5f, 6.5f, 7f, 7.5f, 8f), bassBoost = 800, virtualizer = 900),
-        EqPreset("Techno & House Pulse", listOf(7.5f, 7f, 6f, 4.5f, 1f, -1f, -2f, 0f, 2f, 3.5f, 5f, 6f, 6.5f, 6f, 5.5f), bassBoost = 850, virtualizer = 700),
-        EqPreset("Trance Euphoria", listOf(5.5f, 5f, 4.5f, 3f, 1.5f, 0f, 1f, 2.5f, 4f, 5f, 6f, 7f, 7.5f, 7f, 6.5f), bassBoost = 700, virtualizer = 850),
-        EqPreset("Classical Symphony", listOf(3.5f, 3f, 2.5f, 1.5f, 0.5f, 0f, 0.5f, 1.5f, 2f, 2.5f, 3.5f, 4f, 4.5f, 4f, 3.5f), reverbPreset = PresetReverb.PRESET_LARGEHALL),
-        EqPreset("Opera & Reverb Hall", listOf(2.5f, 2f, 1.5f, 0.5f, 1f, 2f, 2.5f, 3f, 3.5f, 4f, 4.5f, 5f, 5f, 4.5f, 4f), reverbPreset = PresetReverb.PRESET_LARGEHALL),
-        EqPreset("Jazz Club Live", listOf(3f, 2.5f, 2f, 1f, 1f, 1.5f, 2f, 2f, 2f, 2f, 2.5f, 3f, 3.5f, 3f, 2.5f), reverbPreset = PresetReverb.PRESET_SMALLROOM),
-        EqPreset("Acoustic Warmth", listOf(4f, 3.5f, 3f, 2f, 1.5f, 2f, 2f, 2f, 2.5f, 3f, 3.5f, 4f, 3.5f, 3f, 2.5f), bassBoost = 350, virtualizer = 350),
-        EqPreset("Vocal Clarity & Speech", listOf(-3f, -2.5f, -1.5f, 0f, 2f, 4f, 5f, 5f, 4.5f, 3.5f, 2.5f, 1.5f, 0.5f, -0.5f, -1.5f), virtualizer = 300),
-        EqPreset("Air & Treble Crisp", listOf(-1.5f, -1f, -1f, 0f, 0.5f, 1f, 2f, 3f, 4.5f, 6f, 7f, 8f, 8.5f, 8f, 7.5f), virtualizer = 400),
-        EqPreset("Lo-Fi Warm Tape", listOf(3.5f, 3f, 2.5f, 1.5f, 0.5f, -0.5f, -1f, -1f, 0f, 0f, -1f, -2f, -3.5f, -5f, -6f), bassBoost = 400),
-        EqPreset("Gaming Surround", listOf(5.5f, 5f, 4f, 2.5f, 1.5f, 2.5f, 3.5f, 4.5f, 5f, 6f, 6.5f, 6.5f, 6f, 5.5f, 5f), bassBoost = 650, virtualizer = 950),
-        EqPreset("Audiophile Master Neutral", listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f))
-    )
 
-    private val _presets = MutableStateFlow(standardPresets)
-    val presets: StateFlow<List<EqPreset>> = _presets.asStateFlow()
-
-    private val _currentPresetIndex = MutableStateFlow(preferences.currentEqPresetIndex)
-    val currentPresetIndex: StateFlow<Int> = _currentPresetIndex.asStateFlow()
 
     // Professional 360° Spatial Audio & TWS Presets
     val spatialPresets = listOf(
@@ -338,7 +560,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             listenerY = 0f
         ),
         com.example.model.SpatialPreset(
-            name = "Cinematic Surround 7.1",
+            name = "Cinema Surround 7.1",
             description = "Ultra-wide cinema theater soundfield with deep surround presence",
             mode = SpatialMode.CINEMA_360,
             intensity = 0.90f,
@@ -388,33 +610,23 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 override fun onRemotePause() = togglePlayPause()
                 override fun onRemoteNext() = playNext()
                 override fun onRemotePrev() = playPrevious()
+                override fun onRemoteShuffle() = toggleShuffle()
+                override fun onRemoteRepeat() = cycleRepeatMode()
+                override fun onRemoteSeek(positionMs: Long) = seekTo(positionMs)
             })
 
             // Bind audio visualizer & bands flows from AudioEngine
             val engine = musicService?.audioEngine
             engine?.let { eng ->
                 // Apply restored settings to audio engine
-                eng.setEqualizerEnabled(_equalizerEnabled.value)
                 eng.setBassBoost(_bassBoost.value)
                 eng.setVirtualizer(_virtualizer.value)
                 eng.setReverbPreset(_reverbPreset.value)
                 eng.setLoudnessEnhancer(_loudnessGainMb.value)
                 eng.updateSpatialAudioConfig(_spatialConfig.value)
-
-                // Restore custom band gains if saved
-                val savedBands = preferences.getSavedBandGains()
-                if (savedBands != null) {
-                    savedBands.forEachIndexed { idx, gainDb ->
-                        val gainMb = (gainDb * 100).toInt().toShort()
-                        eng.setBandGain(idx.toShort(), gainMb)
-                    }
-                } else if (_currentPresetIndex.value in standardPresets.indices) {
-                    val p = standardPresets[_currentPresetIndex.value]
-                    p.gainsDb.forEachIndexed { idx, gainDb ->
-                        val gainMb = (gainDb * 100).toInt().toShort()
-                        eng.setBandGain(idx.toShort(), gainMb)
-                    }
-                }
+                eng.setGlobalEffectsBypass(_globalEffectsBypass.value)
+                eng.update8dOrbitConfig(_orbit8dEnabled.value, _orbit8dSpeed.value, _orbit8dDepth.value)
+                eng.setPlaybackSpeed(_playbackSpeed.value)
 
                 viewModelScope.launch {
                     eng.visualizerFrequencies.collect { _visualizerFrequencies.value = it }
@@ -423,17 +635,30 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     eng.waveformSamples.collect { _waveformSamples.value = it }
                 }
                 viewModelScope.launch {
-                    eng.equalizerBands.collect { bands ->
-                        if (bands.isNotEmpty()) {
-                            _equalizerBands.value = bands
+                    eng.isTwsConnected.collect { _isTwsConnected.value = it }
+                }
+                viewModelScope.launch {
+                    eng.connectedAudioDeviceName.collect {
+                        _connectedAudioDeviceName.value = it
+                        if (_currentSong.value != null) {
+                            syncNotification()
                         }
                     }
                 }
                 viewModelScope.launch {
-                    eng.isTwsConnected.collect { _isTwsConnected.value = it }
+                    eng.orbitAzimuthRad.collect { _orbitAzimuthRad.value = it }
                 }
                 viewModelScope.launch {
-                    eng.connectedAudioDeviceName.collect { _connectedAudioDeviceName.value = it }
+                    eng.isBassBoostSupported.collect { _isBassBoostSupported.value = it }
+                }
+                viewModelScope.launch {
+                    eng.isVirtualizerSupported.collect { _isVirtualizerSupported.value = it }
+                }
+                viewModelScope.launch {
+                    eng.isReverbSupported.collect { _isReverbSupported.value = it }
+                }
+                viewModelScope.launch {
+                    eng.isLoudnessSupported.collect { _isLoudnessSupported.value = it }
                 }
             }
         }
@@ -448,6 +673,22 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         bindMusicService()
         loadLocalSongs()
         observePlaylists()
+        observeFolderFiltering()
+        viewModelScope.launch {
+            _currentSong.collect { song ->
+                updateDynamicThemeForSong(song)
+            }
+        }
+    }
+
+    private fun observeFolderFiltering() {
+        viewModelScope.launch {
+            combine(_rawScannedSongs, folderFilterPreferences.settingsFlow) { raw, settings ->
+                domain.filter.MusicFolderFilter.filterSongs(raw, settings)
+            }.collect { filtered ->
+                _allSongs.value = filtered
+            }
+        }
     }
 
     private fun bindMusicService() {
@@ -458,35 +699,98 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun loadLocalSongs() {
         viewModelScope.launch(Dispatchers.IO) {
             val songs = scanner.scanSongs()
-            _allSongs.value = songs
-            if (_queue.value.isEmpty() && songs.isNotEmpty()) {
+            _rawScannedSongs.value = songs
+            val filteredInitial = domain.filter.MusicFolderFilter.filterSongs(songs, folderFilterPreferences.settings.value)
+            _allSongs.value = filteredInitial
+            if (_queue.value.isEmpty() && filteredInitial.isNotEmpty()) {
                 val lastId = preferences.lastPlayedSongId
-                val savedSong = if (lastId != -1L) songs.find { it.id == lastId } else null
-                val targetSong = savedSong ?: songs.first()
-                val targetIndex = if (savedSong != null) songs.indexOf(savedSong).coerceAtLeast(0) else 0
+                val savedSong = if (lastId != -1L) filteredInitial.find { it.id == lastId } else null
+                val targetSong = savedSong ?: filteredInitial.first()
+                val targetIndex = if (savedSong != null) filteredInitial.indexOf(savedSong).coerceAtLeast(0) else 0
 
-                _queue.value = songs
+                _queue.value = filteredInitial
                 _queueIndex.value = targetIndex
                 _currentSong.value = targetSong
                 _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
             }
-            generateDailyMixes(songs)
+            generateDailyMixes(filteredInitial)
             updateDailyAnalytics()
         }
     }
 
+    fun setWhitelistEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            folderFilterPreferences.setWhitelistEnabled(enabled)
+        }
+    }
+
+    fun setWhitelistedFolder(folder: domain.model.FolderInfo) {
+        viewModelScope.launch {
+            folderFilterPreferences.setWhitelistedFolder(folder)
+        }
+    }
+
+    fun addWhitelistedFolder(folder: domain.model.FolderInfo) {
+        viewModelScope.launch {
+            folderFilterPreferences.addWhitelistedFolder(folder)
+        }
+    }
+
+    fun removeWhitelistedFolder(pathOrUri: String) {
+        viewModelScope.launch {
+            folderFilterPreferences.removeWhitelistedFolder(pathOrUri)
+        }
+    }
+
+    fun addBlacklistedFolder(folder: domain.model.FolderInfo) {
+        viewModelScope.launch {
+            folderFilterPreferences.addBlacklistedFolder(folder)
+        }
+    }
+
+    fun addBlacklistedFolders(folders: List<domain.model.FolderInfo>) {
+        viewModelScope.launch {
+            folderFilterPreferences.addBlacklistedFolders(folders)
+        }
+    }
+
+    fun removeBlacklistedFolder(pathOrUri: String) {
+        viewModelScope.launch {
+            folderFilterPreferences.removeBlacklistedFolder(pathOrUri)
+        }
+    }
+
+    fun clearBlacklist() {
+        viewModelScope.launch {
+            folderFilterPreferences.clearBlacklist()
+        }
+    }
+
+    fun getAvailableDeviceFolders(): List<domain.model.FolderInfo> {
+        return data.scanner.FolderScannerHelper.extractDistinctFoldersFromSongs(_rawScannedSongs.value)
+    }
+
     private fun observePlaylists() {
         viewModelScope.launch {
-            dao.getAllPlaylistsFlow().collect { entities ->
-                _playlists.value = entities.map { entity ->
+            combine(
+                dao.getAllPlaylistsFlow(),
+                dao.getAllPlaylistSongCrossRefsFlow(),
+                _allSongs
+            ) { entities, crossRefs, songs ->
+                val activeIds = songs.map { it.id }.toSet()
+                val grouped = crossRefs.filter { it.songId in activeIds }.groupBy { it.playlistId }
+                entities.map { entity ->
+                    val refs = grouped[entity.id].orEmpty()
                     Playlist(
                         id = entity.id,
                         name = entity.name,
-                        songCount = 0, // will count dynamically
+                        songCount = refs.size,
                         createdAt = entity.createdAt,
                         coverArtUri = entity.coverArtUri
                     )
                 }
+            }.collect { enriched ->
+                _playlists.value = enriched
             }
         }
     }
@@ -582,6 +886,43 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             .take(15)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val recentlyAddedSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, _ ->
+        songs.sortedByDescending { it.dateAdded }.take(15)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val yourMixSongs: StateFlow<List<Song>> = _allSongs.combine(_playbackInfo) { songs, _ ->
+        domain.home.HomeDiscoveryEngine.buildYourMix(songs)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val yourMixContributorsSummary: StateFlow<String> = yourMixSongs.combine(_allSongs) { mix, all ->
+        domain.home.HomeDiscoveryEngine.buildContributorsSummary(mix.ifEmpty { all })
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val favouriteAlbums: StateFlow<List<Album>> = combine(_allSongs, albums) { songs, albumList ->
+        domain.home.HomeDiscoveryEngine.rankFavouriteAlbums(songs, albumList)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val favouriteArtists: StateFlow<List<Artist>> = combine(_allSongs, artists) { songs, artistList ->
+        domain.home.HomeDiscoveryEngine.rankFavouriteArtists(songs, artistList)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun playCollection(songs: List<Song>, shuffle: Boolean = false) {
+        if (songs.isEmpty()) return
+        val targetQueue = if (shuffle) songs.shuffled() else songs
+        if (shuffle && _playbackInfo.value.shuffleMode == ShuffleMode.OFF) {
+            _playbackInfo.value = _playbackInfo.value.copy(shuffleMode = ShuffleMode.ON)
+            preferences.shuffleMode = ShuffleMode.ON
+        }
+        playSong(targetQueue.first(), targetQueue, 0)
+    }
+
+    fun getSongsForPlaylistFlow(playlistId: Long): kotlinx.coroutines.flow.Flow<List<Song>> {
+        return combine(dao.getPlaylistSongsFlow(playlistId), _allSongs) { refs, songs ->
+            val byId = songs.associateBy { it.id }
+            refs.mapNotNull { byId[it.songId] }
+        }
+    }
+
     // --- Playback Controls ---
 
     fun playSong(song: Song, newQueue: List<Song>? = null, startIndex: Int = -1) {
@@ -615,7 +956,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     durationMs = song.durationMs
                 )
                 startProgressTracker()
-                musicService?.updateForegroundNotification(song, true)
+                syncNotification(song, true)
                 incrementPlayCount(song)
 
                 // If crossfade is enabled, smoothly fade in
@@ -637,7 +978,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         if (engine.isPlaying) {
             engine.pause()
             _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
-            musicService?.updateForegroundNotification(_currentSong.value, false)
+            syncNotification(_currentSong.value, false)
         } else {
             val cur = _currentSong.value
             if (cur != null) {
@@ -645,7 +986,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     engine.play()
                     _playbackInfo.value = _playbackInfo.value.copy(isPlaying = true)
                     startProgressTracker()
-                    musicService?.updateForegroundNotification(cur, true)
+                    syncNotification(cur, true)
                 } else {
                     playSong(cur)
                 }
@@ -737,6 +1078,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun seekTo(positionMs: Long) {
         musicService?.audioEngine?.seekTo(positionMs)
         _playbackInfo.value = _playbackInfo.value.copy(currentPositionMs = positionMs)
+        musicService?.notificationManager?.updatePlaybackState(
+            isPlaying = _playbackInfo.value.isPlaying,
+            positionMs = positionMs,
+            durationMs = _playbackInfo.value.durationMs,
+            isShuffle = _playbackInfo.value.shuffleMode == ShuffleMode.ON,
+            repeatMode = _playbackInfo.value.repeatMode
+        )
     }
 
     fun toggleShuffle() {
@@ -753,6 +1101,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             _queue.value = _allSongs.value
             _queueIndex.value = _queue.value.indexOfFirst { it.id == _currentSong.value?.id }.coerceAtLeast(0)
         }
+        syncNotification()
     }
 
     fun cycleRepeatMode() {
@@ -763,6 +1112,21 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
         _playbackInfo.value = _playbackInfo.value.copy(repeatMode = newMode)
         preferences.repeatMode = newMode
+        syncNotification()
+    }
+
+    fun syncNotification(song: Song? = _currentSong.value, isPlaying: Boolean = _playbackInfo.value.isPlaying) {
+        val cur = song ?: _currentSong.value
+        val isShuffle = _playbackInfo.value.shuffleMode == ShuffleMode.ON
+        val repeat = _playbackInfo.value.repeatMode
+        val dev = _connectedAudioDeviceName.value
+        musicService?.updateForegroundNotification(
+            song = cur,
+            isPlaying = isPlaying,
+            isShuffle = isShuffle,
+            repeatMode = repeat,
+            deviceName = dev
+        )
     }
 
     private fun handleTrackCompletion() {
@@ -776,7 +1140,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     playNext()
                 } else {
                     _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false, currentPositionMs = 0)
-                    musicService?.updateForegroundNotification(_currentSong.value, false)
+                    syncNotification(_currentSong.value, false)
                 }
             }
         }
@@ -901,46 +1265,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _queue.value = q
     }
 
-    // --- Equalizer & Spatial Controls ---
-
-    fun setEqualizerEnabled(enabled: Boolean) {
-        _equalizerEnabled.value = enabled
-        preferences.equalizerEnabled = enabled
-        musicService?.audioEngine?.setEqualizerEnabled(enabled)
+    fun shuffleRemainingQueue() {
+        val q = _queue.value
+        if (q.size <= 2) return
+        val curIdx = _queueIndex.value.coerceIn(0, q.lastIndex)
+        val playedAndCurrent = q.subList(0, curIdx + 1)
+        val upNextShuffled = q.subList(curIdx + 1, q.size).shuffled()
+        _queue.value = playedAndCurrent + upNextShuffled
     }
 
-    fun setBandGain(bandIndex: Short, gainMb: Short) {
-        musicService?.audioEngine?.setBandGain(bandIndex, gainMb)
-        val updated = _equalizerBands.value.map {
-            if (it.bandIndex == bandIndex) it.copy(currentLevelMb = gainMb) else it
-        }
-        _equalizerBands.value = updated
-        // Save custom band gains
-        val gainsDb = updated.map { (it.currentLevelMb / 100f) }
-        preferences.saveBandGains(gainsDb)
-    }
-
-    fun selectPreset(index: Int) {
-        if (index !in _presets.value.indices) return
-        _currentPresetIndex.value = index
-        preferences.currentEqPresetIndex = index
-        val preset = _presets.value[index]
-
-        // Apply band gains
-        val bands = _equalizerBands.value
-        bands.forEachIndexed { i, band ->
-            val gainDb = preset.gainsDb.getOrElse(i) { 0f }
-            val gainMb = (gainDb * 100).toInt().toShort()
-            musicService?.audioEngine?.setBandGain(band.bandIndex, gainMb)
-        }
-
-        // Also save custom band gains array
-        preferences.saveBandGains(preset.gainsDb)
-
-        if (preset.bassBoost > 0) setBassBoost(preset.bassBoost)
-        if (preset.virtualizer > 0) setVirtualizer(preset.virtualizer)
-        if (preset.reverbPreset != PresetReverb.PRESET_NONE) setReverb(preset.reverbPreset)
-    }
+    // --- Audio Effects & Spatial Controls ---
 
     fun setBassBoost(value: Int) {
         _bassBoost.value = value
@@ -1011,8 +1345,40 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         musicService?.audioEngine?.forceSymmetricalDualEarbudBalance()
     }
 
+    fun setGlobalEffectsBypass(bypass: Boolean) {
+        _globalEffectsBypass.value = bypass
+        preferences.globalEffectsBypass = bypass
+        musicService?.audioEngine?.setGlobalEffectsBypass(bypass)
+    }
+
+    fun setOrbit8dConfig(enabled: Boolean, speed: Float = _orbit8dSpeed.value, depth: Float = _orbit8dDepth.value) {
+        val clampedSpeed = speed.coerceIn(0.1f, 2.0f)
+        val clampedDepth = depth.coerceIn(0.1f, 1.0f)
+        _orbit8dEnabled.value = enabled
+        _orbit8dSpeed.value = clampedSpeed
+        _orbit8dDepth.value = clampedDepth
+        preferences.orbit8dEnabled = enabled
+        preferences.orbit8dSpeed = clampedSpeed
+        preferences.orbit8dDepth = clampedDepth
+        musicService?.audioEngine?.update8dOrbitConfig(enabled, clampedSpeed, clampedDepth)
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        val clamped = speed.coerceIn(0.5f, 2.0f)
+        _playbackSpeed.value = clamped
+        preferences.playbackSpeed = clamped
+        _playbackInfo.value = _playbackInfo.value.copy(playbackSpeed = clamped)
+        musicService?.audioEngine?.setPlaybackSpeed(clamped)
+    }
+
     fun setVisualizerStyle(style: VisualizerStyle) {
         _visualizerStyle.value = style
+    }
+
+    fun cycleVisualizerStyle() {
+        val styles = VisualizerStyle.values()
+        val nextIdx = (styles.indexOf(_visualizerStyle.value) + 1) % styles.size
+        _visualizerStyle.value = styles[nextIdx]
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -1084,88 +1450,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     // --- Daily Mix & Analytics Algorithms ---
 
     fun generateDailyMixes(songs: List<Song>) {
-        if (songs.isEmpty()) {
-            _dailyMixes.value = emptyList()
-            return
-        }
-
-        val mixes = mutableListOf<com.example.model.DailyMix>()
-
-        // Daily Mix 1: Dynamic Energy Flow (Upbeat / Pop / Electronic or high tempo)
-        val highEnergy = songs.filter {
-            it.genre.contains("rock", ignoreCase = true) ||
-            it.genre.contains("electronic", ignoreCase = true) ||
-            it.genre.contains("pop", ignoreCase = true) ||
-            it.genre.contains("dance", ignoreCase = true)
-        }.ifEmpty { songs.shuffled().take(8) }
-
-        mixes.add(
-            com.example.model.DailyMix(
-                id = "daily_mix_1",
-                title = "Daily Mix 1",
-                subtitle = "High Energy & Upbeat",
-                description = "Harmonically sequenced driving beats and studio highs",
-                badge = "ENERGETIC",
-                songs = highEnergy,
-                coverSong = highEnergy.firstOrNull(),
-                gradientColors = listOf(0xFFE5A93C, 0xFFE55D3C)
-            )
-        )
-
-        // Daily Mix 2: Focus & Acoustic Chill (Acoustic, Classical, Lo-Fi, Jazz)
-        val chill = songs.filter {
-            it.genre.contains("acoustic", ignoreCase = true) ||
-            it.genre.contains("classical", ignoreCase = true) ||
-            it.genre.contains("jazz", ignoreCase = true) ||
-            it.genre.contains("ambient", ignoreCase = true)
-        }.ifEmpty { songs.sortedByDescending { it.durationMs }.take(8) }
-
-        mixes.add(
-            com.example.model.DailyMix(
-                id = "daily_mix_2",
-                title = "Daily Mix 2",
-                subtitle = "Deep Focus & Warmth",
-                description = "Soothing acoustic spaces and binaural relaxation",
-                badge = "ACOUSTIC",
-                songs = chill,
-                coverSong = chill.firstOrNull(),
-                gradientColors = listOf(0xFF4AC4E2, 0xFF2D82B7)
-            )
-        )
-
-        // Daily Mix 3: Heavy Rotation & Favorites
-        val favoritesAndTop = (songs.filter { it.isFavorite } + songs.sortedByDescending { it.playCount }).distinctBy { it.id }.take(10)
-        val mix3Songs = favoritesAndTop.ifEmpty { songs.take(8) }
-
-        mixes.add(
-            com.example.model.DailyMix(
-                id = "daily_mix_3",
-                title = "Daily Mix 3",
-                subtitle = "Your Heavy Rotation",
-                description = "Curated based on your most repeated listening sessions",
-                badge = "ON REPEAT",
-                songs = mix3Songs,
-                coverSong = mix3Songs.firstOrNull(),
-                gradientColors = listOf(0xFF8E44AD, 0xFFE91E63)
-            )
-        )
-
-        // Daily Mix 4: Deep Archive & Unheard Gems
-        val unplayed = songs.filter { it.playCount == 0 }.ifEmpty { songs.shuffled() }.take(8)
-        mixes.add(
-            com.example.model.DailyMix(
-                id = "daily_mix_4",
-                title = "Daily Mix 4",
-                subtitle = "Hidden Gems & Archive",
-                description = "Rediscover overlooked masterpieces in your local library",
-                badge = "REDISCOVER",
-                songs = unplayed,
-                coverSong = unplayed.firstOrNull(),
-                gradientColors = listOf(0xFF16A085, 0xFF27AE60)
-            )
-        )
-
-        _dailyMixes.value = mixes
+        _dailyMixes.value = domain.home.HomeDiscoveryEngine.buildDailyMixes(songs)
     }
 
     fun updateDailyAnalytics() {
@@ -1235,7 +1520,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             // Timer expired -> pause playback
             musicService?.audioEngine?.pause()
             _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false, sleepTimerMinutesRemaining = null)
-            musicService?.updateForegroundNotification(_currentSong.value, false)
+            syncNotification(_currentSong.value, false)
         }
     }
 
@@ -1300,9 +1585,32 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun updatePlaylistDetails(playlistId: Long, newName: String, coverArtUri: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updatePlaylistDetails(playlistId, newName, coverArtUri)
+        }
+    }
+
     fun addSongToPlaylist(playlistId: Long, songId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             dao.insertPlaylistSong(PlaylistSongCrossRef(playlistId, songId, 0))
+        }
+    }
+
+    fun addSongsToPlaylist(playlistId: Long, songIds: List<Long>) {
+        if (songIds.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val baseTime = (System.currentTimeMillis() % 100000).toInt()
+            val refs = songIds.distinct().mapIndexed { index, id ->
+                PlaylistSongCrossRef(playlistId, id, baseTime + index)
+            }
+            dao.insertPlaylistSongs(refs)
+        }
+    }
+
+    fun reorderPlaylistSongs(playlistId: Long, orderedSongIds: List<Long>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.replacePlaylistOrder(playlistId, orderedSongIds)
         }
     }
 

@@ -37,17 +37,37 @@ interface SonoraDao {
     @Query("UPDATE playlists SET name = :newName WHERE id = :playlistId")
     suspend fun renamePlaylist(playlistId: Long, newName: String)
 
+    @Query("UPDATE playlists SET name = :newName, coverArtUri = :coverArtUri WHERE id = :playlistId")
+    suspend fun updatePlaylistDetails(playlistId: Long, newName: String, coverArtUri: String?)
+
     @Query("SELECT * FROM playlist_songs WHERE playlistId = :playlistId ORDER BY orderIndex ASC")
     fun getPlaylistSongsFlow(playlistId: Long): Flow<List<PlaylistSongCrossRef>>
 
+    @Query("SELECT * FROM playlist_songs")
+    fun getAllPlaylistSongCrossRefsFlow(): Flow<List<PlaylistSongCrossRef>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylistSong(crossRef: PlaylistSongCrossRef)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaylistSongs(crossRefs: List<PlaylistSongCrossRef>)
 
     @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId AND songId = :songId")
     suspend fun removeSongFromPlaylist(playlistId: Long, songId: Long)
 
     @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId")
     suspend fun clearPlaylistSongs(playlistId: Long)
+
+    @Transaction
+    suspend fun replacePlaylistOrder(playlistId: Long, orderedSongIds: List<Long>) {
+        clearPlaylistSongs(playlistId)
+        val refs = orderedSongIds.distinct().mapIndexed { index, songId ->
+            PlaylistSongCrossRef(playlistId = playlistId, songId = songId, orderIndex = index)
+        }
+        if (refs.isNotEmpty()) {
+            insertPlaylistSongs(refs)
+        }
+    }
 
     @Query("SELECT * FROM custom_eq_presets")
     fun getCustomEqPresetsFlow(): Flow<List<CustomEqPresetEntity>>

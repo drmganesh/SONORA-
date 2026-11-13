@@ -1,5 +1,6 @@
 package ui.player
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -11,14 +12,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Pause
@@ -30,22 +32,15 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,17 +50,16 @@ import com.example.model.RepeatMode
 import com.example.model.ShuffleMode
 import com.example.model.Song
 import com.example.ui.components.ArtworkAlbumView
-import com.example.ui.theme.SonoraCharcoal
-import com.example.ui.theme.SonoraCharcoalBorder
-import com.example.ui.theme.SonoraDustyRose
-import com.example.ui.theme.SonoraTextMuted
-import com.example.ui.theme.SonoraTextPrimary
-import com.example.ui.theme.SonoraTextSecondary
+import com.example.ui.theme.OutfitFontFamily
+import com.example.ui.theme.PlusJakartaFontFamily
+import ui.player.seekbar.SeekbarRenderer
+import ui.player.seekbar.SeekbarStyle
+import ui.theme.LocalEditorialColors
 
 /**
  * Style 4: Canvas
- * Full-screen album artwork filling the entire player background with cinematic
- * gradient scrims for total readability and a floating glass card with minimal playback controls.
+ * Full-screen album artwork filling the entire player background with cinematic gradient scrim
+ * and a theme-aware floating control card.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -82,11 +76,11 @@ fun CanvasPlayer(
     onOpenLyrics: () -> Unit,
     onOpenSleepTimer: () -> Unit,
     onClose: () -> Unit,
-    onNavigateToEqualizer: () -> Unit,
     onArtworkLongPress: () -> Unit,
-    seekbarStyle: ui.player.seekbar.SeekbarStyle = ui.player.seekbar.SeekbarStyle.DEFAULT,
+    seekbarStyle: SeekbarStyle = SeekbarStyle.DEFAULT,
     modifier: Modifier = Modifier
 ) {
+    val colors = LocalEditorialColors.current
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
 
     Box(
@@ -97,7 +91,6 @@ fun CanvasPlayer(
                 onLongClick = onArtworkLongPress
             )
     ) {
-        // Fullscreen Background Artwork
         ArtworkAlbumView(
             song = song,
             modifier = Modifier.fillMaxSize(),
@@ -105,80 +98,85 @@ fun CanvasPlayer(
             isPlaying = playbackInfo.isPlaying
         )
 
-        // Gradient Scrim Overlays for pristine contrast
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color.Black.copy(alpha = 0.7f),
-                            Color.Black.copy(alpha = 0.2f),
-                            Color.Black.copy(alpha = 0.6f),
-                            Color.Black.copy(alpha = 0.95f)
+                            Color.Black.copy(alpha = 0.65f),
+                            Color.Black.copy(alpha = 0.15f),
+                            Color.Black.copy(alpha = 0.55f),
+                            Color.Black.copy(alpha = 0.90f)
                         )
                     )
                 )
         )
 
-        // Foreground Content
         Column(
             modifier = Modifier
+                .align(Alignment.Center)
                 .fillMaxSize()
+                .widthIn(max = 600.dp)
                 .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top Navigation Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onClose, modifier = Modifier.size(44.dp)) {
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("collapse_now_playing_button")
+                ) {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Collapse", tint = Color.White, modifier = Modifier.size(28.dp))
                 }
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color.Black.copy(alpha = 0.5f),
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.White.copy(alpha = 0.2f))
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.Black.copy(alpha = 0.48f),
+                    border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.22f))
                 ) {
                     Text(
                         text = "CANVAS IMMERSIVE",
-                        color = SonoraDustyRose,
+                        fontFamily = OutfitFontFamily,
+                        color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.2.sp,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                 }
-                Row {
-                    IconButton(onClick = onNavigateToEqualizer, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Default.GraphicEq, contentDescription = "Equalizer", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
-                    }
-                    IconButton(onClick = onOpenQueue, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
-                    }
+                IconButton(
+                    onClick = onOpenQueue,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("open_queue_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Queue", tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
                 }
             }
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Floating Frosted Glass Card for Song Info and Controls
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(28.dp)),
-                color = SonoraCharcoal.copy(alpha = 0.85f),
+                color = colors.surface.copy(alpha = 0.92f),
+                shape = RoundedCornerShape(28.dp),
                 tonalElevation = 8.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, SonoraCharcoalBorder)
+                border = BorderStroke(1.dp, colors.cardBorder)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp)
                 ) {
-                    // Song Info
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -187,7 +185,8 @@ fun CanvasPlayer(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = song?.title ?: "No Song Selected",
-                                color = Color.White,
+                                fontFamily = OutfitFontFamily,
+                                color = colors.textPrimary,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -195,21 +194,21 @@ fun CanvasPlayer(
                             )
                             Text(
                                 text = song?.artist ?: "Unknown Artist",
-                                color = SonoraDustyRose,
+                                fontFamily = PlusJakartaFontFamily,
+                                color = colors.accentStrong,
                                 fontSize = 14.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        IconButton(onClick = onOpenLyrics, modifier = Modifier.size(40.dp)) {
-                            Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = SonoraDustyRose, modifier = Modifier.size(22.dp))
+                        IconButton(onClick = onOpenLyrics, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = colors.accentStrong, modifier = Modifier.size(22.dp))
                         }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // Dynamic Seekbar
-                    ui.player.seekbar.SeekbarRenderer(
+                    SeekbarRenderer(
                         currentPositionMs = playbackInfo.currentPositionMs,
                         durationMs = duration,
                         onSeekTo = onSeekTo,
@@ -220,49 +219,50 @@ fun CanvasPlayer(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Transport Controls
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = onToggleShuffle, modifier = Modifier.size(44.dp)) {
+                        IconButton(onClick = onToggleShuffle, modifier = Modifier.size(48.dp)) {
                             Icon(
                                 Icons.Default.Shuffle,
                                 contentDescription = "Shuffle",
-                                tint = if (playbackInfo.shuffleMode == ShuffleMode.ON) SonoraDustyRose else Color.White.copy(alpha = 0.5f),
+                                tint = if (playbackInfo.shuffleMode == ShuffleMode.ON) colors.accentStrong else colors.textMuted,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
 
                         IconButton(onClick = onPlayPrevious, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(30.dp))
+                            Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = colors.textPrimary, modifier = Modifier.size(30.dp))
                         }
 
                         Surface(
                             onClick = onTogglePlayPause,
-                            modifier = Modifier.size(64.dp),
+                            modifier = Modifier
+                                .size(64.dp)
+                                .testTag("play_pause_button"),
                             shape = CircleShape,
-                            color = SonoraDustyRose,
+                            color = colors.accentStrong,
                             shadowElevation = 8.dp
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = if (playbackInfo.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = "Play/Pause",
-                                    tint = Color.Black,
+                                    contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
+                                    tint = colors.onAccentStrong,
                                     modifier = Modifier.size(34.dp)
                                 )
                             }
                         }
 
                         IconButton(onClick = onPlayNext, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(30.dp))
+                            Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = colors.textPrimary, modifier = Modifier.size(30.dp))
                         }
 
-                        IconButton(onClick = onCycleRepeat, modifier = Modifier.size(44.dp)) {
+                        IconButton(onClick = onCycleRepeat, modifier = Modifier.size(48.dp)) {
                             val icon = if (playbackInfo.repeatMode == RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat
-                            val tint = if (playbackInfo.repeatMode != RepeatMode.OFF) SonoraDustyRose else Color.White.copy(alpha = 0.5f)
+                            val tint = if (playbackInfo.repeatMode != RepeatMode.OFF) colors.accentStrong else colors.textMuted
                             Icon(icon, contentDescription = "Repeat", tint = tint, modifier = Modifier.size(22.dp))
                         }
                     }
