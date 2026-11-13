@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.player.seekbar.BlocksSeekbar
+import ui.player.seekbar.CircularProgressSeekbar
 import ui.player.seekbar.ClassicSeekbar
 import ui.player.seekbar.DotsSeekbar
 import ui.player.seekbar.GradientSeekbar
@@ -175,6 +176,7 @@ fun SeekbarStyleCard(
                         SeekbarStyle.NEON_GLOW -> NeonGlowSeekbar(sampleProgress, {}, {}, isPlaying = true, enabled = false, accentColor = accent)
                         SeekbarStyle.MATERIAL3 -> Material3Seekbar(sampleProgress, {}, {}, isPlaying = true, enabled = false, accentColor = accent)
                         SeekbarStyle.M3_EXPRESSIVE -> M3ExpressiveSeekbar(sampleProgress, {}, {}, isPlaying = true, enabled = false, accentColor = accent)
+                        SeekbarStyle.CIRCULAR_PROGRESS -> CircularProgressSeekbar(sampleProgress, {}, {}, isPlaying = true, enabled = false, accentColor = accent)
                     }
                 }
             }

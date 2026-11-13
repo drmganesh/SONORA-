@@ -81,6 +81,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -94,12 +95,24 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.PlayerBackgroundStyle
 import com.example.model.PlayerStyle
 import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.util.LyricsExtractor
 import com.example.viewmodel.SonoraViewModel
+import ui.components.GestureOverlay
+import ui.player.styles.GlassPlayer
+import ui.player.styles.MaterialYouPlayer
+import ui.player.styles.MinimalPlayer
+import ui.player.styles.NeonPlayer
+import ui.player.styles.OrbitPlayer
+import ui.player.styles.PolaroidPlayer
+import ui.player.styles.PosterPlayer
+import ui.player.styles.SpectrumPlayer
+import ui.player.styles.VinylPlayer
+import ui.player.styles.WaveformPlayer
 import ui.theme.HomeThemeMode
 import ui.theme.LocalDynamicColorPalette
 import ui.theme.LocalEditorialColors
@@ -107,10 +120,11 @@ import ui.theme.LocalReduceAnimations
 
 /**
  * Unified PlayerScreen Coordinator
- * Hosts all 9 customizable Player Styles on SONORA AESTHETIC UI, plus:
+ * Hosts all 19 customizable Player Styles on SONORA AESTHETIC UI, plus:
  * - Full Artwork Focus Mode
+ * - Player Appearance Customization Screen
  * - Real AudioManager Output Device Sheet + Dual-Earbud Recenter
- * - Quick Playback Speed selector
+ * - Quick Playback Speed selector & Unified Gesture HUD Overlay
  * - Unified Equalizer, Audio Effects Studio (8D), Queue, Lyrics, and Sleep Timer
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -140,10 +154,9 @@ fun PlayerScreen(
     val connectedAudioDevice by viewModel.connectedAudioDeviceName.collectAsState()
     val isTwsConnected by viewModel.isTwsConnected.collectAsState()
 
-    val gesturesEnabled by viewModel.gesturesEnabled.collectAsState()
-    val swipeArtworkToSkip by viewModel.swipeArtworkToSkip.collectAsState()
-    val doubleTapToSeek by viewModel.doubleTapToSeek.collectAsState()
-    val swipeDownToCollapse by viewModel.swipeDownToCollapse.collectAsState()
+    val playerAppearance by viewModel.playerAppearance.collectAsState()
+    val playerGestureConfig by viewModel.playerGestureConfig.collectAsState()
+    val gestureController = rememberPlayerGestureController()
 
     val visualizerFrequencies by viewModel.visualizerFrequencies.collectAsState()
     val waveformSamples by viewModel.waveformSamples.collectAsState()
@@ -152,6 +165,7 @@ fun PlayerScreen(
 
     var isArtworkFocusMode by remember { mutableStateOf(false) }
     var showStyleWheel by remember { mutableStateOf(false) }
+    var showCustomizationScreen by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showLyricsSheet by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
@@ -159,10 +173,13 @@ fun PlayerScreen(
     var showAudioEffectsModal by remember { mutableStateOf(false) }
     var showEqualizerModal by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = isArtworkFocusMode) {
+    BackHandler(enabled = showCustomizationScreen) {
+        showCustomizationScreen = false
+    }
+    BackHandler(enabled = isArtworkFocusMode && !showCustomizationScreen) {
         isArtworkFocusMode = false
     }
-    BackHandler(enabled = showStyleWheel) {
+    BackHandler(enabled = showStyleWheel && !showCustomizationScreen) {
         showStyleWheel = false
     }
 
@@ -176,30 +193,125 @@ fun PlayerScreen(
         if (onOpenQueueScreen != null) onOpenQueueScreen() else showQueueSheet = true
     }
 
+    val renderState = remember(
+        currentSong,
+        playbackInfo,
+        currentSeekbarStyle,
+        playerAppearance,
+        playerGestureConfig,
+        palette,
+        visualizerFrequencies,
+        waveformSamples,
+        isVisualizerActive,
+        visualizerStyle
+    ) {
+        PlayerRenderState(
+            song = currentSong,
+            playbackInfo = playbackInfo,
+            seekbarStyle = currentSeekbarStyle,
+            appearance = playerAppearance,
+            gestureConfig = playerGestureConfig,
+            dynamicPalette = palette,
+            frequencies = visualizerFrequencies,
+            waveformSamples = waveformSamples,
+            isVisualizerActive = isVisualizerActive,
+            visualizerStyle = visualizerStyle,
+            isNowPlayingActive = true
+        )
+    }
+
+    val styleCallbacks = remember(openQueueAction, openAudioStudioAction, openEqualizerAction, currentSong) {
+        PlayerStyleCallbacks(
+            onTogglePlayPause = { viewModel.togglePlayPause() },
+            onPlayNext = { viewModel.playNext() },
+            onPlayPrevious = { viewModel.playPrevious() },
+            onSeekTo = { viewModel.seekTo(it) },
+            onToggleShuffle = { viewModel.toggleShuffle() },
+            onCycleRepeat = { viewModel.cycleRepeatMode() },
+            onOpenQueue = openQueueAction,
+            onOpenLyrics = { showLyricsSheet = true },
+            onOpenSleepTimer = { showSleepTimerDialog = true },
+            onClose = onClose,
+            onArtworkLongPress = { showStyleWheel = true },
+            onToggleFavorite = { currentSong?.let { viewModel.toggleFavorite(it) } },
+            onOpenAudioEffects = openAudioStudioAction,
+            onOpenEqualizer = openEqualizerAction,
+            onOpenOutputDevice = { showOutputDeviceSheet = true },
+            onToggleFocusMode = { isArtworkFocusMode = true },
+            onOpenCustomization = { showCustomizationScreen = true },
+            onCyclePlayerStyle = { viewModel.cyclePlayerStyle() },
+            onToggleVisualizer = { isVisualizerActive = !isVisualizerActive },
+            onCycleVisualizerStyle = { viewModel.cycleVisualizerStyle() }
+        )
+    }
+
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val glowAlpha = if (homeThemeMode == HomeThemeMode.DYNAMIC_ALBUM_ART || dynamicColorsEnabled) {
         if (colors.isDark) 0.24f else 0.14f
-    } else 0.06f
+    } else 0.08f
+    val rootBackground = when (playerAppearance.backgroundStyle) {
+        PlayerBackgroundStyle.AMOLED_PURE -> Color(0xFF000000)
+        PlayerBackgroundStyle.SOLID_SURFACE -> colors.surface
+        else -> colors.background
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(rootBackground)
+            .playerScreenEdgeGestures(
+                config = playerGestureConfig,
+                controller = gestureController,
+                onClose = onClose,
+                onOpenQueue = openQueueAction
+            )
     ) {
-        // Subtle Ambient Album Glow (preserves editorial background contrast)
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            palette.primary.copy(alpha = glowAlpha),
-                            colors.accentStrong.copy(alpha = glowAlpha * 0.45f),
-                            Color.Transparent
+        // Configurable Player Background Atmosphere
+        when (playerAppearance.backgroundStyle) {
+            PlayerBackgroundStyle.THEME_DEFAULT,
+            PlayerBackgroundStyle.SOLID_SURFACE,
+            PlayerBackgroundStyle.AMOLED_PURE -> Unit
+
+            PlayerBackgroundStyle.GRADIENT_GLOW -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(
+                                    palette.primary.copy(alpha = glowAlpha),
+                                    colors.accentStrong.copy(alpha = glowAlpha * 0.45f),
+                                    Color.Transparent
+                                )
+                            )
                         )
-                    )
                 )
-        )
+            }
+
+            PlayerBackgroundStyle.BLURRED_ARTWORK -> {
+                ArtworkAlbumView(
+                    song = currentSong,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(if (colors.isDark) 0.22f else 0.14f),
+                    cornerRadius = 0.dp,
+                    isPlaying = playbackInfo.isPlaying
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    rootBackground.copy(alpha = 0.72f),
+                                    rootBackground.copy(alpha = 0.56f),
+                                    rootBackground.copy(alpha = 0.88f)
+                                )
+                            )
+                        )
+                )
+            }
+        }
 
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
@@ -219,167 +331,270 @@ fun PlayerScreen(
                         PlayerStyle.CLASSIC -> ClassicPlayer(
                             song = currentSong,
                             playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
                             seekbarStyle = currentSeekbarStyle,
-                            onToggleFavorite = { currentSong?.let { viewModel.toggleFavorite(it) } },
-                            onOpenAudioEffects = openAudioStudioAction,
-                            onOpenEqualizer = openEqualizerAction,
-                            onOpenOutputDevice = { showOutputDeviceSheet = true },
-                            onToggleFocusMode = { isArtworkFocusMode = true },
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onOpenAudioEffects = styleCallbacks.onOpenAudioEffects,
+                            onOpenEqualizer = styleCallbacks.onOpenEqualizer,
+                            onOpenOutputDevice = styleCallbacks.onOpenOutputDevice,
+                            onToggleFocusMode = styleCallbacks.onToggleFocusMode,
                             isVisualizerActive = isVisualizerActive,
-                            onToggleVisualizer = { isVisualizerActive = !isVisualizerActive },
+                            onToggleVisualizer = styleCallbacks.onToggleVisualizer,
                             frequencies = visualizerFrequencies,
                             waveform = waveformSamples,
                             visualizerStyle = visualizerStyle,
-                            onCycleVisualizerStyle = { viewModel.cycleVisualizerStyle() }
+                            onCycleVisualizerStyle = styleCallbacks.onCycleVisualizerStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            onOpenCustomization = styleCallbacks.onOpenCustomization,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
+                        )
+                        PlayerStyle.MINIMAL -> MinimalPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
+                        )
+                        PlayerStyle.MATERIAL_YOU -> MaterialYouPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
+                        )
+                        PlayerStyle.GLASS -> GlassPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
                         )
                         PlayerStyle.GESTURE -> GesturePlayer(
                             song = currentSong,
                             playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
                             seekbarStyle = currentSeekbarStyle,
-                            gesturesEnabled = gesturesEnabled,
-                            swipeArtworkToSkip = swipeArtworkToSkip,
-                            doubleTapToSeek = doubleTapToSeek,
-                            swipeDownToCollapse = swipeDownToCollapse
+                            gesturesEnabled = playerGestureConfig.gesturesEnabled,
+                            swipeArtworkToSkip = playerGestureConfig.swipeArtworkEnabled,
+                            doubleTapToSeek = playerGestureConfig.doubleTapEnabled,
+                            swipeDownToCollapse = playerGestureConfig.swipeDownToMinimizeEnabled,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
                         )
                         PlayerStyle.EDITORIAL -> EditorialPlayer(
                             song = currentSong,
                             playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
-                            seekbarStyle = currentSeekbarStyle
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
+                            seekbarStyle = currentSeekbarStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
                         )
                         PlayerStyle.CANVAS -> CanvasPlayer(
                             song = currentSong,
                             playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
-                            seekbarStyle = currentSeekbarStyle
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
+                            seekbarStyle = currentSeekbarStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
                         )
                         PlayerStyle.BENTO -> BentoPlayer(
                             song = currentSong,
                             playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
-                            seekbarStyle = currentSeekbarStyle
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
+                            seekbarStyle = currentSeekbarStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
                         )
-                        PlayerStyle.STICKER -> StickerPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
-                            seekbarStyle = currentSeekbarStyle
+                        PlayerStyle.POSTER -> PosterPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
                         )
-                        PlayerStyle.MORPH -> MorphPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
-                            seekbarStyle = currentSeekbarStyle
+                        PlayerStyle.POLAROID -> PolaroidPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
+                        )
+                        PlayerStyle.VINYL -> VinylPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
                         )
                         PlayerStyle.DIAL -> DialPlayer(
                             song = currentSong,
                             playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
-                            seekbarStyle = currentSeekbarStyle
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
+                            seekbarStyle = currentSeekbarStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
+                        )
+                        PlayerStyle.MORPH -> MorphPlayer(
+                            song = currentSong,
+                            playbackInfo = playbackInfo,
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
+                            seekbarStyle = currentSeekbarStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
+                        )
+                        PlayerStyle.STICKER -> StickerPlayer(
+                            song = currentSong,
+                            playbackInfo = playbackInfo,
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
+                            seekbarStyle = currentSeekbarStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
+                        )
+                        PlayerStyle.WAVEFORM -> WaveformPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
+                        )
+                        PlayerStyle.SPECTRUM -> SpectrumPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
+                        )
+                        PlayerStyle.ORBIT -> OrbitPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
                         )
                         PlayerStyle.HERO -> HeroPlayer(
                             song = currentSong,
                             playbackInfo = playbackInfo,
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPlayNext = { viewModel.playNext() },
-                            onPlayPrevious = { viewModel.playPrevious() },
-                            onSeekTo = { viewModel.seekTo(it) },
-                            onToggleShuffle = { viewModel.toggleShuffle() },
-                            onCycleRepeat = { viewModel.cycleRepeatMode() },
-                            onOpenQueue = openQueueAction,
-                            onOpenLyrics = { showLyricsSheet = true },
-                            onOpenSleepTimer = { showSleepTimerDialog = true },
-                            onClose = onClose,
-                            onArtworkLongPress = { showStyleWheel = true },
-                            seekbarStyle = currentSeekbarStyle
+                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
+                            onPlayNext = styleCallbacks.onPlayNext,
+                            onPlayPrevious = styleCallbacks.onPlayPrevious,
+                            onSeekTo = styleCallbacks.onSeekTo,
+                            onToggleShuffle = styleCallbacks.onToggleShuffle,
+                            onCycleRepeat = styleCallbacks.onCycleRepeat,
+                            onOpenQueue = styleCallbacks.onOpenQueue,
+                            onOpenLyrics = styleCallbacks.onOpenLyrics,
+                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
+                            onClose = styleCallbacks.onClose,
+                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
+                            seekbarStyle = currentSeekbarStyle,
+                            appearance = playerAppearance,
+                            gestureConfig = playerGestureConfig,
+                            gestureController = gestureController,
+                            liveWaveform = waveformSamples,
+                            onToggleFavorite = styleCallbacks.onToggleFavorite,
+                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
+                        )
+                        PlayerStyle.NEON -> NeonPlayer(
+                            state = renderState,
+                            callbacks = styleCallbacks,
+                            gestureController = gestureController
                         )
                     }
                 }
             }
 
-            // Sleek Shared Bottom Utility & Queue Swipe Dock across all 9 Player Styles
+            // Sleek Shared Bottom Utility & Queue Swipe Dock across all 19 Player Styles
             PlayerUtilityStrip(
                 connectedDevice = connectedAudioDevice,
                 playbackSpeed = playbackSpeed,
@@ -396,6 +611,12 @@ fun PlayerScreen(
                 onOpenQueue = openQueueAction
             )
         }
+
+        // Unified Gesture HUD Feedback (Seek / Skip / Volume / Brightness / Zoom)
+        GestureOverlay(
+            hudState = gestureController.hudState,
+            modifier = Modifier.align(Alignment.Center)
+        )
 
         // Full Artwork Focus Mode Overlay
         AnimatedVisibility(
@@ -418,7 +639,20 @@ fun PlayerScreen(
             PlayerStyleWheel(
                 currentStyle = currentStyle,
                 onSelectStyle = { newStyle -> viewModel.setPlayerStyle(newStyle) },
-                onDismiss = { showStyleWheel = false }
+                onDismiss = { showStyleWheel = false },
+                song = currentSong
+            )
+        }
+
+        // Now Playing Customization Overlay
+        AnimatedVisibility(
+            visible = showCustomizationScreen,
+            enter = if (reduceAnimations) fadeIn(snap()) else fadeIn(tween(220)),
+            exit = if (reduceAnimations) fadeOut(snap()) else fadeOut(tween(180))
+        ) {
+            PlayerCustomizationScreen(
+                viewModel = viewModel,
+                onBack = { showCustomizationScreen = false }
             )
         }
 

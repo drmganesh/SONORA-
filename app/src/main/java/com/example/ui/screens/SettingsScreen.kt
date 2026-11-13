@@ -47,9 +47,11 @@ import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.SpatialAudio
 import androidx.compose.material.icons.rounded.Source
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -74,9 +76,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.DoubleTapAction
+import com.example.model.LockScreenStyle
+import com.example.model.MiniPlayerStyle
+import com.example.model.SingleTapAction
+import com.example.model.SwipeAction
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import ui.player.PlayerCustomizationScreen
 import ui.player.PlayerStyleSelector
 import ui.settings.DynamicThemeSettingsScreen
 import ui.settings.LibraryFolderManagementScreen
@@ -117,11 +125,9 @@ fun SettingsScreen(
     val resumeOnLaunch by viewModel.resumeOnLaunch.collectAsState()
     val headsetAutoPlayPause by viewModel.headsetAutoPlayPause.collectAsState()
 
-    val gesturesEnabled by viewModel.gesturesEnabled.collectAsState()
-    val swipeArtworkToSkip by viewModel.swipeArtworkToSkip.collectAsState()
-    val doubleTapToSeek by viewModel.doubleTapToSeek.collectAsState()
-    val swipeDownToCollapse by viewModel.swipeDownToCollapse.collectAsState()
-    val miniPlayerGestures by viewModel.miniPlayerGestures.collectAsState()
+    val gestureConfig by viewModel.playerGestureConfig.collectAsState()
+    val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsState()
+    val lockScreenStyle by viewModel.lockScreenStyle.collectAsState()
 
     val eqSettings by viewModel.equalizerSettings.collectAsState()
     val orbit8dEnabled by viewModel.orbit8dEnabled.collectAsState()
@@ -135,6 +141,7 @@ fun SettingsScreen(
     val showNotificationFormatBadge by viewModel.showNotificationFormatBadge.collectAsState()
 
     var showPlayerStyleSelector by remember { mutableStateOf(false) }
+    var showPlayerCustomization by remember { mutableStateOf(false) }
     var showSeekbarStyleScreen by remember { mutableStateOf(false) }
     var showDynamicThemeSettings by remember { mutableStateOf(false) }
     var showInternalFolderManagement by remember { mutableStateOf(false) }
@@ -163,6 +170,17 @@ fun SettingsScreen(
             onBack = { showDynamicThemeSettings = false },
             onOpenPlayer = {
                 showDynamicThemeSettings = false
+                onOpenNowPlaying()
+            }
+        )
+        return
+    }
+    if (showPlayerCustomization) {
+        PlayerCustomizationScreen(
+            viewModel = viewModel,
+            onBack = { showPlayerCustomization = false },
+            onOpenPlayer = {
+                showPlayerCustomization = false
                 onOpenNowPlaying()
             }
         )
@@ -407,57 +425,269 @@ fun SettingsScreen(
                         SettingsLinkRow(
                             icon = Icons.Rounded.Palette,
                             title = "Player Style",
-                            subtitle = "${playerStyle.displayName} • 9 layouts",
+                            subtitle = "${playerStyle.displayName} • 19 layouts",
                             colors = colors,
                             onClick = { showPlayerStyleSelector = true }
                         )
 
                         SettingsLinkRow(
+                            icon = Icons.Rounded.Tune,
+                            title = "Player Appearance & Layout",
+                            subtitle = "Artwork size, corners, backdrop & button shape",
+                            colors = colors,
+                            onClick = { showPlayerCustomization = true }
+                        )
+
+                        SettingsLinkRow(
                             icon = Icons.Rounded.LinearScale,
                             title = "Seekbar Style",
-                            subtitle = "${seekbarStyle.displayName} • 9 styles",
+                            subtitle = "${seekbarStyle.displayName} • 10 styles",
                             colors = colors,
                             onClick = { showSeekbarStyleScreen = true }
                         )
 
-                        HorizontalDivider(color = colors.cardBorder, modifier = Modifier.padding(vertical = 8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Mini-Player Style",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = colors.textPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        GestureOptionChipRow(
+                            options = MiniPlayerStyle.entries.map { it to it.displayName },
+                            selected = miniPlayerStyle,
+                            onSelect = { viewModel.setMiniPlayerStyle(it) },
+                            colors = colors
+                        )
+
+                        HorizontalDivider(color = colors.cardBorder, modifier = Modifier.padding(vertical = 10.dp))
 
                         SettingsSwitchRow(
                             title = "Player Gestures",
-                            subtitle = "Enable touch gestures on player & mini player",
-                            checked = gesturesEnabled,
-                            onCheckedChange = { viewModel.toggleGesturesEnabled(it) },
+                            subtitle = "Master switch for artwork, screen edge & mini player gestures",
+                            checked = gestureConfig.gesturesEnabled,
+                            onCheckedChange = { enabled ->
+                                viewModel.updatePlayerGestureConfig { it.copy(gesturesEnabled = enabled) }
+                            },
                             colors = colors
                         )
-                        if (gesturesEnabled) {
+                        if (gestureConfig.gesturesEnabled) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Single-Tap Artwork Action",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = colors.textPrimary
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            GestureOptionChipRow(
+                                options = SingleTapAction.entries.map { it to it.label },
+                                selected = gestureConfig.singleTapAction,
+                                onSelect = { action ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(singleTapAction = action) }
+                                },
+                                colors = colors
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
                             SettingsSwitchRow(
-                                title = "Swipe Artwork to Skip",
-                                subtitle = "Swipe artwork left or right for next/previous",
-                                checked = swipeArtworkToSkip,
-                                onCheckedChange = { viewModel.toggleSwipeArtworkToSkip(it) },
+                                title = "Double-Tap Artwork Gesture",
+                                subtitle = "Double-tap artwork to seek or trigger quick action",
+                                checked = gestureConfig.doubleTapEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(doubleTapEnabled = enabled) }
+                                },
+                                colors = colors
+                            )
+                            if (gestureConfig.doubleTapEnabled) {
+                                GestureOptionChipRow(
+                                    options = DoubleTapAction.entries.map { it to it.label },
+                                    selected = gestureConfig.doubleTapAction,
+                                    onSelect = { action ->
+                                        viewModel.updatePlayerGestureConfig { it.copy(doubleTapAction = action) }
+                                    },
+                                    colors = colors
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SettingsSwitchRow(
+                                title = "Horizontal Swipe on Artwork",
+                                subtitle = "Swipe artwork left or right for track skip, seek or style",
+                                checked = gestureConfig.swipeArtworkEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(swipeArtworkEnabled = enabled) }
+                                },
+                                colors = colors
+                            )
+                            if (gestureConfig.swipeArtworkEnabled) {
+                                Text(
+                                    text = "Swipe Left Action",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary,
+                                    modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                                )
+                                GestureOptionChipRow(
+                                    options = SwipeAction.entries.map { it to it.label },
+                                    selected = gestureConfig.swipeLeftAction,
+                                    onSelect = { action ->
+                                        viewModel.updatePlayerGestureConfig { it.copy(swipeLeftAction = action) }
+                                    },
+                                    colors = colors
+                                )
+                                Text(
+                                    text = "Swipe Right Action",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                )
+                                GestureOptionChipRow(
+                                    options = SwipeAction.entries.map { it to it.label },
+                                    selected = gestureConfig.swipeRightAction,
+                                    onSelect = { action ->
+                                        viewModel.updatePlayerGestureConfig { it.copy(swipeRightAction = action) }
+                                    },
+                                    colors = colors
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+                            SettingsSwitchRow(
+                                title = "Long-Press Artwork for Style Wheel",
+                                subtitle = "Open quick 19-style switcher wheel anywhere",
+                                checked = gestureConfig.longPressStyleWheelEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(longPressStyleWheelEnabled = enabled) }
+                                },
                                 colors = colors
                             )
                             SettingsSwitchRow(
-                                title = "Double-Tap Artwork to Seek",
-                                subtitle = "Double-tap left (-10s) or right (+10s)",
-                                checked = doubleTapToSeek,
-                                onCheckedChange = { viewModel.toggleDoubleTapToSeek(it) },
+                                title = "Pinch-to-Zoom Artwork",
+                                subtitle = "Two-finger zoom up to 2.2x on album artwork",
+                                checked = gestureConfig.pinchZoomArtworkEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(pinchZoomArtworkEnabled = enabled) }
+                                },
                                 colors = colors
                             )
                             SettingsSwitchRow(
-                                title = "Swipe Down to Collapse",
-                                subtitle = "Pull down artwork to close Now Playing",
-                                checked = swipeDownToCollapse,
-                                onCheckedChange = { viewModel.toggleSwipeDownToCollapse(it) },
+                                title = "Swipe Down to Minimize",
+                                subtitle = "Pull down player artwork to return to library",
+                                checked = gestureConfig.swipeDownToMinimizeEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(swipeDownToMinimizeEnabled = enabled) }
+                                },
                                 colors = colors
                             )
                             SettingsSwitchRow(
-                                title = "Mini Player Gestures",
-                                subtitle = "Swipe mini player horizontally to skip tracks",
-                                checked = miniPlayerGestures,
-                                onCheckedChange = { viewModel.toggleMiniPlayerGestures(it) },
+                                title = "Swipe Up to Open Queue",
+                                subtitle = "Swipe up from artwork or dock to view Up Next",
+                                checked = gestureConfig.swipeUpToOpenQueueEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(swipeUpToOpenQueueEnabled = enabled) }
+                                },
                                 colors = colors
                             )
+                            SettingsSwitchRow(
+                                title = "Right-Edge Volume Slide",
+                                subtitle = "Slide vertically near right edge to adjust media volume",
+                                checked = gestureConfig.rightEdgeVolumeEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(rightEdgeVolumeEnabled = enabled) }
+                                },
+                                colors = colors
+                            )
+                            SettingsSwitchRow(
+                                title = "Left-Edge Brightness Slide",
+                                subtitle = "Slide vertically near left edge to adjust screen brightness",
+                                checked = gestureConfig.leftEdgeBrightnessEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(leftEdgeBrightnessEnabled = enabled) }
+                                },
+                                colors = colors
+                            )
+                            SettingsSwitchRow(
+                                title = "Mini-Player Swipes",
+                                subtitle = "Swipe mini-player horizontally to skip or up to expand",
+                                checked = gestureConfig.miniPlayerGesturesEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(miniPlayerGesturesEnabled = enabled) }
+                                },
+                                colors = colors
+                            )
+                            SettingsSwitchRow(
+                                title = "Haptic Gesture Feedback",
+                                subtitle = "Subtle tactile confirmation when gestures trigger",
+                                checked = gestureConfig.hapticFeedbackEnabled,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(hapticFeedbackEnabled = enabled) }
+                                },
+                                colors = colors
+                            )
+
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Swipe Sensitivity", fontFamily = OutfitFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colors.textPrimary)
+                                Text("${String.format(Locale.US, "%.2fx", gestureConfig.swipeSensitivity)}", fontFamily = PlusJakartaFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = colors.accentStrong)
+                            }
+                            Slider(
+                                value = gestureConfig.swipeSensitivity,
+                                onValueChange = { v ->
+                                    val snapped = ((v * 20f).roundToInt() / 20f).coerceIn(0.5f, 1.8f)
+                                    viewModel.updatePlayerGestureConfig { it.copy(swipeSensitivity = snapped) }
+                                },
+                                valueRange = 0.5f..1.8f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = colors.accentStrong,
+                                    activeTrackColor = colors.accentStrong
+                                )
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Swipe Distance Threshold", fontFamily = OutfitFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colors.textPrimary)
+                                Text("${gestureConfig.swipeThresholdDp} dp", fontFamily = PlusJakartaFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = colors.accentStrong)
+                            }
+                            Slider(
+                                value = gestureConfig.swipeThresholdDp.toFloat(),
+                                onValueChange = { v ->
+                                    viewModel.updatePlayerGestureConfig { it.copy(swipeThresholdDp = v.roundToInt().coerceIn(32, 110)) }
+                                },
+                                valueRange = 32f..110f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = colors.accentStrong,
+                                    activeTrackColor = colors.accentStrong
+                                )
+                            )
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedButton(
+                                onClick = { viewModel.resetPlayerGestureConfigToDefault() },
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("settings_reset_gestures_button")
+                            ) {
+                                Text(
+                                    text = "Reset Gestures to Default",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = colors.accentStrong
+                                )
+                            }
                         }
                     }
                 }
@@ -757,6 +987,24 @@ fun SettingsScreen(
                             },
                             colors = colors
                         )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Lock-Screen Media Style",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = colors.textPrimary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        GestureOptionChipRow(
+                            options = LockScreenStyle.entries.map { it to it.displayName },
+                            selected = lockScreenStyle,
+                            onSelect = { style ->
+                                viewModel.setLockScreenStyle(style)
+                                viewModel.syncNotification()
+                            },
+                            colors = colors
+                        )
                     }
                 }
 
@@ -1026,5 +1274,45 @@ private fun SettingsLinkRow(
             )
         }
         Icon(Icons.Rounded.ChevronRight, contentDescription = "Open $title", tint = colors.textMuted)
+    }
+}
+
+@Composable
+private fun <T> GestureOptionChipRow(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    colors: EditorialColors
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        options.forEach { (item, label) ->
+            val isSelected = item == selected
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (isSelected) colors.accentStrong else colors.surfaceTinted,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .border(
+                        width = if (isSelected) 1.5.dp else 0.75.dp,
+                        color = if (isSelected) colors.accentStrong else colors.cardBorder,
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    .clickable { onSelect(item) }
+            ) {
+                Text(
+                    text = label,
+                    fontFamily = PlusJakartaFontFamily,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 12.sp,
+                    color = if (isSelected) colors.onAccentStrong else colors.textPrimary,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
+        }
     }
 }

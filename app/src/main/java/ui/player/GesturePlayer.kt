@@ -1,14 +1,8 @@
 package ui.player
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,39 +32,31 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.PlaybackInfo
+import com.example.model.PlayerAppearanceConfig
+import com.example.model.PlayerGestureConfig
 import com.example.model.Song
-import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
-import kotlinx.coroutines.delay
+import ui.components.ArtworkContainer
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
 
 /**
  * Style 2: Gesture
- * Large album artwork occupying most of the screen with swipe-to-skip,
- * double-tap-to-seek, swipe-up queue, and theme-matched floating pill.
+ * Large album artwork occupying most of the screen with customizable swipe,
+ * double-tap seek, pinch-to-zoom, swipe-up queue, and theme-matched floating dock.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GesturePlayer(
     song: Song?,
@@ -91,19 +77,21 @@ fun GesturePlayer(
     swipeArtworkToSkip: Boolean = true,
     doubleTapToSeek: Boolean = true,
     swipeDownToCollapse: Boolean = true,
+    appearance: PlayerAppearanceConfig = PlayerAppearanceConfig.DEFAULT,
+    gestureConfig: PlayerGestureConfig = PlayerGestureConfig.DEFAULT,
+    gestureController: PlayerGestureController = rememberPlayerGestureController(),
+    liveWaveform: FloatArray? = null,
+    onToggleFavorite: (() -> Unit)? = null,
+    onCyclePlayerStyle: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
-    var gestureCue by remember { mutableStateOf<String?>(null) }
-    var totalDragX by remember { mutableFloatStateOf(0f) }
-    var totalDragY by remember { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(gestureCue) {
-        if (gestureCue != null) {
-            delay(1200)
-            gestureCue = null
-        }
-    }
+    val effectiveGestureConfig = gestureConfig.copy(
+        gesturesEnabled = gesturesEnabled && gestureConfig.gesturesEnabled,
+        swipeArtworkEnabled = swipeArtworkToSkip && gestureConfig.swipeArtworkEnabled,
+        doubleTapEnabled = doubleTapToSeek && gestureConfig.doubleTapEnabled,
+        swipeDownToMinimizeEnabled = swipeDownToCollapse && gestureConfig.swipeDownToMinimizeEnabled
+    )
 
     val currentPos = playbackInfo.currentPositionMs
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
@@ -161,80 +149,27 @@ fun GesturePlayer(
                 }
             }
 
-            Box(
+            ArtworkContainer(
+                song = song,
+                playbackInfo = playbackInfo,
+                appearance = appearance,
+                gestureConfig = effectiveGestureConfig,
+                gestureController = gestureController,
+                onTogglePlayPause = onTogglePlayPause,
+                onPlayNext = onPlayNext,
+                onPlayPrevious = onPlayPrevious,
+                onSeekTo = onSeekTo,
+                onOpenQueue = onOpenQueue,
+                onClose = onClose,
+                onArtworkLongPress = onArtworkLongPress,
+                onToggleFavorite = onToggleFavorite,
+                onCyclePlayerStyle = onCyclePlayerStyle,
+                defaultCornerRadius = 32.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(horizontal = 20.dp, vertical = 6.dp)
-                    .shadow(14.dp, RoundedCornerShape(32.dp), ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
-                    .clip(RoundedCornerShape(32.dp))
-                    .pointerInput(gesturesEnabled, doubleTapToSeek, currentPos, duration) {
-                        detectTapGestures(
-                            onTap = { onTogglePlayPause() },
-                            onLongPress = { onArtworkLongPress() },
-                            onDoubleTap = { offset ->
-                                if (gesturesEnabled && doubleTapToSeek) {
-                                    val width = size.width
-                                    if (offset.x < width / 2) {
-                                        val newPos = (currentPos - 10000L).coerceAtLeast(0L)
-                                        onSeekTo(newPos)
-                                        gestureCue = "Rewind -10s"
-                                    } else {
-                                        val newPos = (currentPos + 10000L).coerceAtMost(duration)
-                                        onSeekTo(newPos)
-                                        gestureCue = "Forward +10s"
-                                    }
-                                }
-                            }
-                        )
-                    }
-                    .pointerInput(gesturesEnabled, swipeArtworkToSkip) {
-                        if (!gesturesEnabled || !swipeArtworkToSkip) return@pointerInput
-                        detectHorizontalDragGestures(
-                            onDragStart = { totalDragX = 0f },
-                            onDragEnd = {
-                                if (totalDragX > 80f) {
-                                    onPlayPrevious()
-                                    gestureCue = "Previous Track"
-                                } else if (totalDragX < -80f) {
-                                    onPlayNext()
-                                    gestureCue = "Next Track"
-                                }
-                            },
-                            onHorizontalDrag = { change, dragAmount ->
-                                change.consume()
-                                totalDragX += dragAmount
-                            }
-                        )
-                    }
-                    .pointerInput(gesturesEnabled, swipeDownToCollapse) {
-                        if (!gesturesEnabled) return@pointerInput
-                        detectVerticalDragGestures(
-                            onDragStart = { totalDragY = 0f },
-                            onDragEnd = {
-                                if (swipeDownToCollapse && totalDragY > 120f) {
-                                    onClose()
-                                } else if (totalDragY < -100f) {
-                                    onOpenQueue()
-                                    gestureCue = "Queue Opened"
-                                }
-                            },
-                            onVerticalDrag = { change, dragAmount ->
-                                change.consume()
-                                totalDragY += dragAmount
-                            }
-                        )
-                    }
-                    .testTag("player_artwork_box"),
-                contentAlignment = Alignment.Center
             ) {
-                ArtworkAlbumView(
-                    song = song,
-                    modifier = Modifier.fillMaxSize(),
-                    cornerRadius = 32.dp,
-                    isPlaying = playbackInfo.isPlaying
-                )
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -263,29 +198,33 @@ fun GesturePlayer(
                 }
             }
 
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .clip(RoundedCornerShape(24.dp)),
-                color = colors.surface,
-                shape = RoundedCornerShape(24.dp),
-                tonalElevation = 4.dp,
-                border = BorderStroke(1.dp, colors.cardBorder)
-            ) {
-                Column(
+            AnimatedVisibility(visible = gestureController.controlsVisible) {
+                Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp)
+                        .padding(horizontal = 20.dp)
+                        .clip(RoundedCornerShape(24.dp)),
+                    color = colors.surface,
+                    shape = RoundedCornerShape(24.dp),
+                    tonalElevation = 4.dp,
+                    border = BorderStroke(1.dp, colors.cardBorder)
                 ) {
-                    SeekbarRenderer(
-                        currentPositionMs = currentPos,
-                        durationMs = duration,
-                        onSeekTo = onSeekTo,
-                        isPlaying = playbackInfo.isPlaying,
-                        style = seekbarStyle,
-                        showTimestamps = false
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp)
+                    ) {
+                        SeekbarRenderer(
+                            currentPositionMs = currentPos,
+                            durationMs = duration,
+                            onSeekTo = onSeekTo,
+                            isPlaying = playbackInfo.isPlaying,
+                            style = seekbarStyle,
+                            showTimestamps = false,
+                            liveWaveform = liveWaveform,
+                            thicknessScale = appearance.seekbarThicknessScale,
+                            hapticFeedbackEnabled = effectiveGestureConfig.hapticFeedbackEnabled
+                        )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -339,28 +278,6 @@ fun GesturePlayer(
                     }
                 }
             }
-        }
-
-        AnimatedVisibility(
-            visible = gestureCue != null,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.align(Alignment.Center)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = colors.surface.copy(alpha = 0.94f),
-                border = BorderStroke(1.5.dp, colors.accentStrong),
-                shadowElevation = 12.dp
-            ) {
-                Text(
-                    text = gestureCue ?: "",
-                    fontFamily = OutfitFontFamily,
-                    color = colors.accentStrong,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
-                )
             }
         }
     }

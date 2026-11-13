@@ -1,7 +1,7 @@
 package ui.player.seekbar
 
 /**
- * Nine premium seekbar styles supported in SONORA music player.
+ * Ten expressive seekbar styles supported in SONORA music player.
  */
 enum class SeekbarStyle(
     val id: String,
@@ -19,7 +19,7 @@ enum class SeekbarStyle(
         id = "waveform",
         displayName = "Waveform",
         subtitle = "Dynamic Audio Spectrum",
-        description = "Realistic multi-height audio waveform bars with filled played progress."
+        description = "Multi-height audio waveform bars reactive to live PCM playback with filled progress."
     ),
     WAVE_LINE(
         id = "wave_line",
@@ -43,7 +43,7 @@ enum class SeekbarStyle(
         id = "gradient",
         displayName = "Gradient",
         subtitle = "Multicolor Vivid Spectrum",
-        description = "Modern smooth gradient bar transitioning through dusty rose and violet tones."
+        description = "Modern smooth gradient bar transitioning through dynamic artwork accent tones."
     ),
     NEON_GLOW(
         id = "neon_glow",
@@ -62,6 +62,12 @@ enum class SeekbarStyle(
         displayName = "M3 Expressive",
         subtitle = "Organic Squiggly Motion",
         description = "Expressive wavy Material 3 track with dynamic squiggly animation."
+    ),
+    CIRCULAR_PROGRESS(
+        id = "circular_progress",
+        displayName = "Circular Progress",
+        subtitle = "Radial Arc Scrubber",
+        description = "Compact radial arc scrubber with interactive circular progress indicator and drag seeking."
     );
 
     companion object {

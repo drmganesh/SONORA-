@@ -70,6 +70,7 @@ fun NowPlayingTopHeader(
     onOpenAudioStudio: (() -> Unit)? = null,
     onOpenOutputDevice: (() -> Unit)? = null,
     onToggleFocusMode: (() -> Unit)? = null,
+    onOpenCustomization: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
@@ -225,13 +226,24 @@ fun NowPlayingTopHeader(
                     }
 
                     DropdownMenuItem(
-                        text = { Text("Player Style (9 Styles)", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
+                        text = { Text("Player Style (19 Styles)", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
                         leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = colors.accentStrong, modifier = Modifier.size(18.dp)) },
                         onClick = {
                             showMenu = false
                             onOpenStyleWheel()
                         }
                     )
+
+                    if (onOpenCustomization != null) {
+                        DropdownMenuItem(
+                            text = { Text("Customize Appearance", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, tint = colors.accentStrong, modifier = Modifier.size(18.dp)) },
+                            onClick = {
+                                showMenu = false
+                                onOpenCustomization()
+                            }
+                        )
+                    }
 
                     DropdownMenuItem(
                         text = { Text(if (isVisualizerActive) "Hide Visualizer" else "Show Visualizer", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },

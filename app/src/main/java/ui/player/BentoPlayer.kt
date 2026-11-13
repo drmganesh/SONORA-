@@ -1,8 +1,6 @@
 package ui.player
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,12 +37,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.PlaybackInfo
+import com.example.model.PlayerAppearanceConfig
+import com.example.model.PlayerGestureConfig
 import com.example.model.RepeatMode
 import com.example.model.ShuffleMode
 import com.example.model.Song
@@ -59,7 +60,6 @@ import ui.theme.LocalEditorialColors
  * Style 5: Bento
  * Modular Bento grid layout with crisp editorial cards and theme-matched typography.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BentoPlayer(
     song: Song?,
@@ -76,10 +76,17 @@ fun BentoPlayer(
     onClose: () -> Unit,
     onArtworkLongPress: () -> Unit,
     seekbarStyle: SeekbarStyle = SeekbarStyle.DEFAULT,
+    appearance: PlayerAppearanceConfig = PlayerAppearanceConfig.DEFAULT,
+    gestureConfig: PlayerGestureConfig = PlayerGestureConfig.DEFAULT,
+    gestureController: PlayerGestureController = rememberPlayerGestureController(),
+    liveWaveform: FloatArray? = null,
+    onToggleFavorite: (() -> Unit)? = null,
+    onCyclePlayerStyle: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
+    val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
 
     Box(
         modifier = modifier
@@ -138,10 +145,26 @@ fun BentoPlayer(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1.18f)
+                    .graphicsLayer {
+                        scaleX = gestureController.artworkZoomScale
+                        scaleY = gestureController.artworkZoomScale
+                    }
                     .clip(RoundedCornerShape(26.dp))
-                    .combinedClickable(
-                        onClick = onTogglePlayPause,
-                        onLongClick = onArtworkLongPress
+                    .playerArtworkGestures(
+                        config = gestureConfig,
+                        controller = gestureController,
+                        currentPositionMs = playbackInfo.currentPositionMs,
+                        durationMs = duration,
+                        isPlaying = playbackInfo.isPlaying,
+                        onTogglePlayPause = onTogglePlayPause,
+                        onPlayNext = onPlayNext,
+                        onPlayPrevious = onPlayPrevious,
+                        onSeekTo = onSeekTo,
+                        onOpenQueue = onOpenQueue,
+                        onClose = onClose,
+                        onArtworkLongPress = onArtworkLongPress,
+                        onToggleFavorite = onToggleFavorite,
+                        onCyclePlayerStyle = onCyclePlayerStyle
                     )
                     .testTag("player_artwork_box"),
                 color = colors.surface,
@@ -182,18 +205,20 @@ fun BentoPlayer(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "NOW PLAYING",
+                            text = if (appearance.showAudioFormatMetadata && song != null) song.audioFormatInfo else "NOW PLAYING",
                             fontFamily = OutfitFontFamily,
                             color = colors.accentStrong,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
+                            letterSpacing = 1.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = song?.title ?: "No Song Selected",
                             fontFamily = OutfitFontFamily,
                             color = colors.textPrimary,
-                            fontSize = 18.sp,
+                            fontSize = (18f * scale).sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -202,7 +227,7 @@ fun BentoPlayer(
                             text = song?.artist ?: "Unknown Artist",
                             fontFamily = PlusJakartaFontFamily,
                             color = colors.textSecondary,
-                            fontSize = 13.sp,
+                            fontSize = (13f * scale).sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -255,6 +280,9 @@ fun BentoPlayer(
                         onSeekTo = onSeekTo,
                         isPlaying = playbackInfo.isPlaying,
                         style = seekbarStyle,
+                        liveWaveform = liveWaveform,
+                        thicknessScale = appearance.seekbarThicknessScale,
+                        hapticFeedbackEnabled = gestureConfig.hapticFeedbackEnabled,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

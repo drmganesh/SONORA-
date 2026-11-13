@@ -149,7 +149,7 @@ fun SeekbarStyleScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "9 EXPRESSIVE SEEKBAR STYLES",
+                                    text = "10 EXPRESSIVE SEEKBAR STYLES",
                                     fontFamily = PlusJakartaFontFamily,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 11.sp,
@@ -157,7 +157,7 @@ fun SeekbarStyleScreen(
                                     color = colors.accentStrong
                                 )
                                 Text(
-                                    text = "Updates across all 9 Now Playing layouts with drag-to-seek and live position tracking.",
+                                    text = "Updates across all Now Playing layouts with long-press fine seeking and live waveform tracking.",
                                     fontFamily = PlusJakartaFontFamily,
                                     fontSize = 12.sp,
                                     color = colors.textSecondary

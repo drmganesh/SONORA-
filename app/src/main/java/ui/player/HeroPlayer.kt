@@ -1,9 +1,7 @@
 package ui.player
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,12 +44,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.PlaybackInfo
+import com.example.model.PlayerAppearanceConfig
+import com.example.model.PlayerGestureConfig
 import com.example.model.RepeatMode
 import com.example.model.ShuffleMode
 import com.example.model.Song
-import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
+import ui.components.ArtworkContainer
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -60,7 +60,6 @@ import ui.theme.LocalEditorialColors
  * Style 9: Hero
  * Grand-scale artwork with prominent Play/Pause centerpiece and editorial typography.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HeroPlayer(
     song: Song?,
@@ -77,10 +76,17 @@ fun HeroPlayer(
     onClose: () -> Unit,
     onArtworkLongPress: () -> Unit,
     seekbarStyle: SeekbarStyle = SeekbarStyle.DEFAULT,
+    appearance: PlayerAppearanceConfig = PlayerAppearanceConfig.DEFAULT,
+    gestureConfig: PlayerGestureConfig = PlayerGestureConfig.DEFAULT,
+    gestureController: PlayerGestureController = rememberPlayerGestureController(),
+    liveWaveform: FloatArray? = null,
+    onToggleFavorite: (() -> Unit)? = null,
+    onCyclePlayerStyle: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
+    val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
 
     Box(
         modifier = modifier
@@ -137,26 +143,26 @@ fun HeroPlayer(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Box(
+            ArtworkContainer(
+                song = song,
+                playbackInfo = playbackInfo,
+                appearance = appearance,
+                gestureConfig = gestureConfig,
+                gestureController = gestureController,
+                onTogglePlayPause = onTogglePlayPause,
+                onPlayNext = onPlayNext,
+                onPlayPrevious = onPlayPrevious,
+                onSeekTo = onSeekTo,
+                onOpenQueue = onOpenQueue,
+                onClose = onClose,
+                onArtworkLongPress = onArtworkLongPress,
+                onToggleFavorite = onToggleFavorite,
+                onCyclePlayerStyle = onCyclePlayerStyle,
+                defaultCornerRadius = 32.dp,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxWidth(appearance.artworkSize.fraction)
                     .weight(1.3f)
-                    .shadow(16.dp, RoundedCornerShape(32.dp), ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
-                    .clip(RoundedCornerShape(32.dp))
-                    .combinedClickable(
-                        onClick = onTogglePlayPause,
-                        onLongClick = onArtworkLongPress
-                    )
-                    .testTag("player_artwork_box"),
-                contentAlignment = Alignment.Center
             ) {
-                ArtworkAlbumView(
-                    song = song,
-                    modifier = Modifier.fillMaxSize(),
-                    cornerRadius = 32.dp,
-                    isPlaying = playbackInfo.isPlaying
-                )
-
                 Box(
                     modifier = Modifier
                         .size(92.dp)
@@ -195,17 +201,21 @@ fun HeroPlayer(
                     text = song?.title ?: "No Song Selected",
                     fontFamily = OutfitFontFamily,
                     color = colors.textPrimary,
-                    fontSize = 26.sp,
+                    fontSize = (26f * scale).sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = song?.artist ?: "Unknown Artist",
+                    text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
+                        "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
+                    } else {
+                        song?.artist ?: "Unknown Artist"
+                    },
                     fontFamily = PlusJakartaFontFamily,
                     color = colors.accentStrong,
-                    fontSize = 16.sp,
+                    fontSize = (16f * scale).sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -220,6 +230,9 @@ fun HeroPlayer(
                 onSeekTo = onSeekTo,
                 isPlaying = playbackInfo.isPlaying,
                 style = seekbarStyle,
+                liveWaveform = liveWaveform,
+                thicknessScale = appearance.seekbarThicknessScale,
+                hapticFeedbackEnabled = gestureConfig.hapticFeedbackEnabled,
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -241,8 +254,10 @@ fun HeroPlayer(
                     Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = colors.textPrimary, modifier = Modifier.size(34.dp))
                 }
 
-                IconButton(onClick = onOpenLyrics, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = colors.accentStrong, modifier = Modifier.size(24.dp))
+                if (appearance.showLyricsShortcut) {
+                    IconButton(onClick = onOpenLyrics, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.Lyrics, contentDescription = "Lyrics", tint = colors.accentStrong, modifier = Modifier.size(24.dp))
+                    }
                 }
 
                 IconButton(onClick = onPlayNext, modifier = Modifier.size(54.dp)) {

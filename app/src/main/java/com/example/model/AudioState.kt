@@ -45,18 +45,6 @@ data class SpatialPreset(
     val listenerY: Float = 0f
 )
 
-data class SpatialPreset(
-    val name: String,
-    val description: String,
-    val mode: SpatialMode,
-    val intensity: Float,
-    val soundstageWidth: Float,
-    val stereoWidening: Float,
-    val reverbPreset: Short = 0,
-    val listenerX: Float = 0f,
-    val listenerY: Float = 0f
-)
-
 data class SpatialAudioConfig(
     val isEnabled: Boolean = true,
     val mode: SpatialMode = SpatialMode.HEADPHONES,

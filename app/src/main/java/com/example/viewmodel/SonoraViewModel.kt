@@ -206,6 +206,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _isLoudnessSupported = MutableStateFlow(true)
     val isLoudnessSupported: StateFlow<Boolean> = _isLoudnessSupported.asStateFlow()
 
+    private val _dspDiagnosticMessage = MutableStateFlow<String?>(null)
+    val dspDiagnosticMessage: StateFlow<String?> = _dspDiagnosticMessage.asStateFlow()
+
     private val _playbackSpeed = MutableStateFlow(preferences.playbackSpeed)
     val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
 
@@ -252,10 +255,22 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _matchNextSongEnabled = MutableStateFlow(preferences.matchNextSongEnabled)
     val matchNextSongEnabled: StateFlow<Boolean> = _matchNextSongEnabled.asStateFlow()
 
-    // Player Style System (9 Premium Styles)
+    // Player Style System (18+ Styles)
     private val playerStylePrefs = PlayerStylePreferences(application)
     private val _playerStyle = MutableStateFlow(preferences.playerStyle)
     val playerStyle: StateFlow<PlayerStyle> = _playerStyle.asStateFlow()
+
+    private val _miniPlayerStyle = MutableStateFlow(preferences.miniPlayerStyle)
+    val miniPlayerStyle: StateFlow<com.example.model.MiniPlayerStyle> = _miniPlayerStyle.asStateFlow()
+
+    private val _lockScreenStyle = MutableStateFlow(preferences.lockScreenStyle)
+    val lockScreenStyle: StateFlow<com.example.model.LockScreenStyle> = _lockScreenStyle.asStateFlow()
+
+    private val _playerAppearance = MutableStateFlow(preferences.playerAppearanceConfig)
+    val playerAppearance: StateFlow<com.example.model.PlayerAppearanceConfig> = _playerAppearance.asStateFlow()
+
+    private val _playerGestureConfig = MutableStateFlow(preferences.playerGestureConfig)
+    val playerGestureConfig: StateFlow<com.example.model.PlayerGestureConfig> = _playerGestureConfig.asStateFlow()
 
     fun setPlayerStyle(style: PlayerStyle) {
         _playerStyle.value = style
@@ -263,6 +278,66 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             playerStylePrefs.setPlayerStyle(style)
         }
+    }
+
+    fun cyclePlayerStyle() {
+        val list = PlayerStyle.entries
+        val nextIndex = (list.indexOf(_playerStyle.value) + 1) % list.size
+        setPlayerStyle(list[nextIndex])
+    }
+
+    fun setMiniPlayerStyle(style: com.example.model.MiniPlayerStyle) {
+        _miniPlayerStyle.value = style
+        preferences.miniPlayerStyle = style
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setMiniPlayerStyle(style)
+        }
+    }
+
+    fun setLockScreenStyle(style: com.example.model.LockScreenStyle) {
+        _lockScreenStyle.value = style
+        preferences.lockScreenStyle = style
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setLockScreenStyle(style)
+        }
+        syncNotification()
+    }
+
+    fun updatePlayerAppearance(transform: (com.example.model.PlayerAppearanceConfig) -> com.example.model.PlayerAppearanceConfig) {
+        val updated = transform(_playerAppearance.value)
+        _playerAppearance.value = updated
+        preferences.playerAppearanceConfig = updated
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setAppearanceConfig(updated)
+        }
+    }
+
+    fun resetPlayerAppearanceToDefault() {
+        val def = com.example.model.PlayerAppearanceConfig.DEFAULT
+        _playerAppearance.value = def
+        preferences.playerAppearanceConfig = def
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setAppearanceConfig(def)
+        }
+    }
+
+    fun updatePlayerGestureConfig(transform: (com.example.model.PlayerGestureConfig) -> com.example.model.PlayerGestureConfig) {
+        val updated = transform(_playerGestureConfig.value)
+        _playerGestureConfig.value = updated
+        _gesturesEnabled.value = updated.gesturesEnabled
+        _swipeArtworkToSkip.value = updated.swipeArtworkEnabled
+        _doubleTapToSeek.value = updated.doubleTapEnabled
+        _swipeDownToCollapse.value = updated.swipeDownToMinimizeEnabled
+        _miniPlayerGestures.value = updated.miniPlayerGesturesEnabled
+        preferences.playerGestureConfig = updated
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setGestureConfig(updated)
+        }
+    }
+
+    fun resetPlayerGestureConfigToDefault() {
+        val def = com.example.model.PlayerGestureConfig.DEFAULT
+        updatePlayerGestureConfig { def }
     }
 
     // Seekbar Style System (9 Premium Styles, default = BLOCKS)
@@ -660,6 +735,19 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 viewModelScope.launch {
                     eng.isLoudnessSupported.collect { _isLoudnessSupported.value = it }
                 }
+                viewModelScope.launch {
+                    eng.dspDiagnosticMessage.collect { _dspDiagnosticMessage.value = it }
+                }
+            }
+
+            pendingPlayRequest?.let { req ->
+                pendingPlayRequest = null
+                playSong(req.song, req.queue, req.index)
+            } ?: run {
+                if (pendingTogglePlayOnConnect) {
+                    pendingTogglePlayOnConnect = false
+                    togglePlayPause()
+                }
             }
         }
 
@@ -668,6 +756,15 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             isBound = false
         }
     }
+
+    private data class PendingPlayRequest(
+        val song: Song,
+        val queue: List<Song>?,
+        val index: Int
+    )
+
+    private var pendingPlayRequest: PendingPlayRequest? = null
+    private var pendingTogglePlayOnConnect: Boolean = false
 
     init {
         bindMusicService()
@@ -947,13 +1044,22 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             _currentTrackLyrics.value = lyrics
         }
 
-        val engine = musicService?.audioEngine ?: return
+        val engine = musicService?.audioEngine
+        if (engine == null) {
+            pendingPlayRequest = PendingPlayRequest(song, newQueue, idx)
+            if (!isBound) bindMusicService()
+            return
+        }
+        pendingPlayRequest = null
+        pendingTogglePlayOnConnect = false
+
         engine.prepareAndPlay(
             uri = song.uri,
+            fallbackPath = song.dataPath,
             onPrepared = {
                 _playbackInfo.value = _playbackInfo.value.copy(
                     isPlaying = true,
-                    durationMs = song.durationMs
+                    durationMs = engine.duration.coerceAtLeast(song.durationMs)
                 )
                 startProgressTracker()
                 syncNotification(song, true)
@@ -969,12 +1075,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             },
             onError = { errMsg ->
                 _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
+                _dspDiagnosticMessage.value = errMsg
             }
         )
     }
 
     fun togglePlayPause() {
-        val engine = musicService?.audioEngine ?: return
+        val engine = musicService?.audioEngine
+        if (engine == null) {
+            pendingTogglePlayOnConnect = true
+            if (!isBound) bindMusicService()
+            return
+        }
         if (engine.isPlaying) {
             engine.pause()
             _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
@@ -1408,28 +1520,23 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     // --- Gesture Settings Controls ---
 
     fun toggleGesturesEnabled(enabled: Boolean) {
-        _gesturesEnabled.value = enabled
-        preferences.gesturesEnabled = enabled
+        updatePlayerGestureConfig { it.copy(gesturesEnabled = enabled) }
     }
 
     fun toggleSwipeArtworkToSkip(enabled: Boolean) {
-        _swipeArtworkToSkip.value = enabled
-        preferences.swipeArtworkToSkip = enabled
+        updatePlayerGestureConfig { it.copy(swipeArtworkEnabled = enabled) }
     }
 
     fun toggleDoubleTapToSeek(enabled: Boolean) {
-        _doubleTapToSeek.value = enabled
-        preferences.doubleTapToSeek = enabled
+        updatePlayerGestureConfig { it.copy(doubleTapEnabled = enabled) }
     }
 
     fun toggleSwipeDownToCollapse(enabled: Boolean) {
-        _swipeDownToCollapse.value = enabled
-        preferences.swipeDownToCollapse = enabled
+        updatePlayerGestureConfig { it.copy(swipeDownToMinimizeEnabled = enabled) }
     }
 
     fun toggleMiniPlayerGestures(enabled: Boolean) {
-        _miniPlayerGestures.value = enabled
-        preferences.miniPlayerGestures = enabled
+        updatePlayerGestureConfig { it.copy(miniPlayerGesturesEnabled = enabled) }
     }
 
     // --- Automix & Song Matching Controls ---

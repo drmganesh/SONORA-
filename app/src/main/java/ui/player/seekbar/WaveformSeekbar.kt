@@ -17,13 +17,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.example.ui.theme.SonoraCharcoalBorder
 import com.example.ui.theme.SonoraDustyRose
-import kotlin.math.sin
+import kotlin.math.abs
 
 /**
  * Style 1: Waveform Seekbar
- * Displays multi-height realistic audio waveform bars.
- * Played waveform is filled with accent color, remaining is muted.
- * Supports tap and drag to seek.
+ * Uses live PCM waveform samples from SonoraAudioEngine when actively playing,
+ * falling back to a calm baseline profile when paused/idle (never generating fake audio motion).
  */
 @Composable
 fun WaveformSeekbar(
@@ -34,10 +33,11 @@ fun WaveformSeekbar(
     isPlaying: Boolean = false,
     enabled: Boolean = true,
     accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    inactiveColor: Color = SonoraCharcoalBorder,
+    liveWaveform: FloatArray? = null,
+    heightScale: Float = 1f
 ) {
-    // 36 bars with realistic normalized audio waveform profile
-    val waveformProfile = remember {
+    val staticProfile = remember {
         floatArrayOf(
             0.25f, 0.40f, 0.65f, 0.35f, 0.85f, 0.95f, 0.50f, 0.70f,
             0.45f, 0.80f, 1.00f, 0.60f, 0.30f, 0.55f, 0.90f, 0.75f,
@@ -46,11 +46,12 @@ fun WaveformSeekbar(
             0.50f, 0.75f, 0.40f, 0.30f
         )
     }
+    val hasRealAudio = isPlaying && liveWaveform != null && liveWaveform.any { abs(it) > 0.012f }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(36.dp)
+            .height((36f * heightScale.coerceIn(0.8f, 1.4f)).dp)
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
                 detectTapGestures(
@@ -68,12 +69,8 @@ fun WaveformSeekbar(
                         val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
                         onSeekProgress(newProgress)
                     },
-                    onDragEnd = {
-                        onSeekConfirmed(progress)
-                    },
-                    onDragCancel = {
-                        onSeekConfirmed(progress)
-                    },
+                    onDragEnd = { onSeekConfirmed(progress) },
+                    onDragCancel = { onSeekConfirmed(progress) },
                     onDrag = { change, _ ->
                         change.consume()
                         val newProgress = (change.position.x / size.width).coerceIn(0f, 1f)
@@ -83,7 +80,7 @@ fun WaveformSeekbar(
             }
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
-            val totalBars = waveformProfile.size
+            val totalBars = staticProfile.size
             val barGap = 2.5.dp.toPx()
             val availableWidth = size.width - (barGap * (totalBars - 1))
             val barWidth = (availableWidth / totalBars).coerceAtLeast(1f)
@@ -95,7 +92,14 @@ fun WaveformSeekbar(
                 val barProgressFraction = (i.toFloat() + 0.5f) / totalBars
                 val isPlayed = barProgressFraction <= progress
 
-                val normalizedHeight = waveformProfile[i]
+                val normalizedHeight = if (hasRealAudio && liveWaveform != null && liveWaveform.isNotEmpty()) {
+                    val sampleIdx = (i * liveWaveform.size / totalBars).coerceIn(0, liveWaveform.lastIndex)
+                    val liveAmp = (abs(liveWaveform[sampleIdx]) * 2.2f).coerceIn(0.18f, 1.0f)
+                    (staticProfile[i] * 0.45f + liveAmp * 0.55f).coerceIn(0.18f, 1f)
+                } else {
+                    if (isPlaying) staticProfile[i] else (staticProfile[i] * 0.55f).coerceAtLeast(0.18f)
+                }
+
                 val barHeight = (maxBarHeight * normalizedHeight).coerceAtLeast(4.dp.toPx())
                 val topY = centerY - (barHeight / 2f)
 

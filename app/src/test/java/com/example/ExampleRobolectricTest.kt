@@ -140,4 +140,74 @@ class ExampleRobolectricTest {
         assertEquals(expected.volumeBoostDb, restored.volumeBoostDb, 0.001f)
         assertTrue(expected.manualBands.contentEquals(restored.manualBands))
     }
+
+    @Test
+    fun `player appearance and gesture configs persist cleanly via SonoraPreferences`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = com.example.data.SonoraPreferences(context)
+
+        val customAppearance = com.example.model.PlayerAppearanceConfig(
+            artworkSize = com.example.model.ArtworkSizeOption.LARGE,
+            cornerRadius = com.example.model.CornerRadiusOption.PILL,
+            backgroundStyle = com.example.model.PlayerBackgroundStyle.BLURRED_ARTWORK,
+            controlArrangement = com.example.model.ControlArrangement.SPLIT_WIDE,
+            buttonShape = com.example.model.ButtonShapeOption.SQUIRCLE,
+            typographyScale = 1.15f,
+            seekbarThicknessScale = 1.25f,
+            useDynamicAlbumAccent = false,
+            animationIntensity = com.example.model.AnimationIntensity.SUBTLE,
+            artworkAnimation = com.example.model.ArtworkAnimationOption.VINYL_SPIN,
+            showAudioFormatMetadata = false,
+            showAlbumMetadata = false,
+            showLyricsShortcut = false,
+            showQueueShortcut = true
+        )
+        prefs.playerAppearanceConfig = customAppearance
+        val restoredAppearance = prefs.playerAppearanceConfig
+        assertEquals(customAppearance.artworkSize, restoredAppearance.artworkSize)
+        assertEquals(customAppearance.cornerRadius, restoredAppearance.cornerRadius)
+        assertEquals(customAppearance.backgroundStyle, restoredAppearance.backgroundStyle)
+        assertEquals(customAppearance.buttonShape, restoredAppearance.buttonShape)
+        assertEquals(customAppearance.typographyScale, restoredAppearance.typographyScale, 0.01f)
+        assertEquals(customAppearance.seekbarThicknessScale, restoredAppearance.seekbarThicknessScale, 0.01f)
+        assertEquals(customAppearance.useDynamicAlbumAccent, restoredAppearance.useDynamicAlbumAccent)
+        assertEquals(customAppearance.artworkAnimation, restoredAppearance.artworkAnimation)
+        assertEquals(customAppearance.showAudioFormatMetadata, restoredAppearance.showAudioFormatMetadata)
+
+        val customGesture = com.example.model.PlayerGestureConfig(
+            gesturesEnabled = true,
+            swipeArtworkEnabled = true,
+            swipeLeftAction = com.example.model.SwipeAction.SEEK_15S,
+            swipeRightAction = com.example.model.SwipeAction.CYCLE_STYLE,
+            doubleTapEnabled = true,
+            doubleTapAction = com.example.model.DoubleTapAction.TOGGLE_FAVORITE,
+            singleTapAction = com.example.model.SingleTapAction.TOGGLE_CONTROLS_VISIBILITY,
+            longPressStyleWheelEnabled = true,
+            pinchZoomArtworkEnabled = false,
+            swipeDownToMinimizeEnabled = true,
+            swipeUpToOpenQueueEnabled = false,
+            rightEdgeVolumeEnabled = true,
+            leftEdgeBrightnessEnabled = false,
+            miniPlayerGesturesEnabled = true,
+            swipeSensitivity = 1.35f,
+            swipeThresholdDp = 84,
+            hapticFeedbackEnabled = false
+        )
+        prefs.playerGestureConfig = customGesture
+        val restoredGesture = prefs.playerGestureConfig
+        assertEquals(customGesture.swipeLeftAction, restoredGesture.swipeLeftAction)
+        assertEquals(customGesture.swipeRightAction, restoredGesture.swipeRightAction)
+        assertEquals(customGesture.doubleTapAction, restoredGesture.doubleTapAction)
+        assertEquals(customGesture.singleTapAction, restoredGesture.singleTapAction)
+        assertEquals(customGesture.pinchZoomArtworkEnabled, restoredGesture.pinchZoomArtworkEnabled)
+        assertEquals(customGesture.leftEdgeBrightnessEnabled, restoredGesture.leftEdgeBrightnessEnabled)
+        assertEquals(customGesture.swipeSensitivity, restoredGesture.swipeSensitivity, 0.01f)
+        assertEquals(customGesture.swipeThresholdDp, restoredGesture.swipeThresholdDp)
+        assertEquals(customGesture.hapticFeedbackEnabled, restoredGesture.hapticFeedbackEnabled)
+
+        prefs.miniPlayerStyle = com.example.model.MiniPlayerStyle.ARTWORK_FOCUS
+        prefs.lockScreenStyle = com.example.model.LockScreenStyle.CLASSIC_DARK
+        assertEquals(com.example.model.MiniPlayerStyle.ARTWORK_FOCUS, prefs.miniPlayerStyle)
+        assertEquals(com.example.model.LockScreenStyle.CLASSIC_DARK, prefs.lockScreenStyle)
+    }
 }

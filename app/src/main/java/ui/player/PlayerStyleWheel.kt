@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +57,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.PlayerStyle
+import com.example.model.PlayerStyleCategory
+import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.player.components.PlayerStyleMiniPreview
@@ -62,22 +67,29 @@ import ui.theme.LocalReduceAnimations
 
 /**
  * Quick Style Switching: Style Wheel Modal
- * Displays all 9 player styles in an interactive horizontal wheel with miniature previews.
+ * Displays all 19 player styles in an interactive horizontal wheel with category filters
+ * and live album artwork previews without interrupting playback.
  */
 @Composable
 fun PlayerStyleWheel(
     currentStyle: PlayerStyle,
     onSelectStyle: (PlayerStyle) -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    song: Song? = null
 ) {
     val colors = LocalEditorialColors.current
     val reduceAnimations = LocalReduceAnimations.current
     val listState = rememberLazyListState()
     var dragY by remember { mutableFloatStateOf(0f) }
+    var selectedCategory by remember { mutableStateOf(PlayerStyleCategory.ALL) }
 
-    LaunchedEffect(currentStyle) {
-        val idx = PlayerStyle.entries.indexOf(currentStyle)
+    val visibleStyles = remember(selectedCategory) {
+        PlayerStyle.entries.filter { it.matchesCategory(selectedCategory) }
+    }
+
+    LaunchedEffect(currentStyle, selectedCategory) {
+        val idx = visibleStyles.indexOf(currentStyle)
         if (idx >= 0) {
             if (reduceAnimations) listState.scrollToItem(idx) else listState.animateScrollToItem(idx)
         }
@@ -157,7 +169,7 @@ fun PlayerStyleWheel(
                                 letterSpacing = 1.2.sp
                             )
                             Text(
-                                text = "Select from 9 bespoke layouts",
+                                text = "Select from 19 bespoke layouts",
                                 fontFamily = PlusJakartaFontFamily,
                                 color = colors.textSecondary,
                                 fontSize = 13.sp
@@ -170,7 +182,37 @@ fun PlayerStyleWheel(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PlayerStyleCategory.entries.forEach { category ->
+                        val selected = category == selectedCategory
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (selected) colors.accentStrong else colors.surfaceTinted,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { selectedCategory = category }
+                        ) {
+                            Text(
+                                text = category.displayName,
+                                fontFamily = PlusJakartaFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = if (selected) colors.onAccentStrong else colors.textSecondary,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 LazyRow(
                     state = listState,
@@ -178,7 +220,7 @@ fun PlayerStyleWheel(
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(PlayerStyle.entries) { style ->
+                    items(visibleStyles, key = { it.name }) { style ->
                         val isSelected = style == currentStyle
                         val cardScale by animateFloatAsState(
                             targetValue = if (isSelected) 1.04f else 0.96f,
@@ -188,7 +230,7 @@ fun PlayerStyleWheel(
 
                         Surface(
                             modifier = Modifier
-                                .width(132.dp)
+                                .width(136.dp)
                                 .scale(cardScale)
                                 .clip(RoundedCornerShape(22.dp))
                                 .border(
@@ -212,8 +254,9 @@ fun PlayerStyleWheel(
                             ) {
                                 PlayerStyleMiniPreview(
                                     style = style,
-                                    modifier = Modifier.size(72.dp),
-                                    isSelected = isSelected
+                                    isSelected = isSelected,
+                                    song = song,
+                                    modifier = Modifier.size(78.dp)
                                 )
 
                                 Spacer(modifier = Modifier.height(10.dp))
@@ -262,7 +305,7 @@ fun PlayerStyleWheel(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Tip: Long-press album artwork anytime to open the style wheel",
+                    text = "Tip: Long-press album artwork anytime to switch style seamlessly",
                     fontFamily = PlusJakartaFontFamily,
                     color = colors.textMuted,
                     fontSize = 11.sp,

@@ -41,10 +41,13 @@ class ExampleUnitTest {
   @Test
   fun testPlayerStyleSystemDefinitions() {
     val styles = com.example.model.PlayerStyle.entries
-    assertEquals(9, styles.size)
+    assertEquals(19, styles.size)
 
     val expectedIds = listOf(
-      "classic", "gesture", "editorial", "canvas", "bento", "sticker", "morph", "dial", "hero"
+      "classic", "minimal", "material_you", "glass",
+      "editorial", "canvas", "bento", "poster", "polaroid", "vinyl",
+      "dial", "morph", "sticker", "waveform", "spectrum", "orbit", "hero", "neon",
+      "gesture"
     )
     val actualIds = styles.map { it.id }
     assertEquals(expectedIds, actualIds)
@@ -53,17 +56,28 @@ class ExampleUnitTest {
     assertEquals(com.example.model.PlayerStyle.BENTO, com.example.model.PlayerStyle.fromId("bento"))
     assertEquals(com.example.model.PlayerStyle.DIAL, com.example.model.PlayerStyle.fromId("DIAL"))
     assertEquals(com.example.model.PlayerStyle.HERO, com.example.model.PlayerStyle.fromId("HeRo"))
+    assertEquals(com.example.model.PlayerStyle.MATERIAL_YOU, com.example.model.PlayerStyle.fromId("material_you"))
+    assertEquals(com.example.model.PlayerStyle.POLAROID, com.example.model.PlayerStyle.fromId("polaroid"))
+    assertEquals(com.example.model.PlayerStyle.ORBIT, com.example.model.PlayerStyle.fromId("orbit"))
     assertEquals(com.example.model.PlayerStyle.CLASSIC, com.example.model.PlayerStyle.fromId("non_existent"))
     assertEquals(com.example.model.PlayerStyle.CLASSIC, com.example.model.PlayerStyle.fromId(null))
+
+    // Verify category filters cover all 19 styles cleanly
+    assertEquals(19, styles.count { it.matchesCategory(com.example.model.PlayerStyleCategory.ALL) })
+    assertTrue(com.example.model.PlayerStyle.MINIMAL.matchesCategory(com.example.model.PlayerStyleCategory.MINIMAL))
+    assertTrue(com.example.model.PlayerStyle.VINYL.matchesCategory(com.example.model.PlayerStyleCategory.ARTISTIC))
+    assertTrue(com.example.model.PlayerStyle.GLASS.matchesCategory(com.example.model.PlayerStyleCategory.IMMERSIVE))
+    assertTrue(com.example.model.PlayerStyle.WAVEFORM.matchesCategory(com.example.model.PlayerStyleCategory.EXPERIMENTAL))
   }
 
   @Test
   fun testSeekbarStyleDefinitions() {
     val styles = ui.player.seekbar.SeekbarStyle.entries
-    assertEquals(9, styles.size)
+    assertEquals(10, styles.size)
 
     val expectedIds = listOf(
-      "blocks", "waveform", "wave_line", "classic", "dots", "gradient", "neon_glow", "material3", "m3_expressive"
+      "blocks", "waveform", "wave_line", "classic", "dots",
+      "gradient", "neon_glow", "material3", "m3_expressive", "circular_progress"
     )
     val actualIds = styles.map { it.id }
     assertEquals(expectedIds, actualIds)
@@ -75,8 +89,67 @@ class ExampleUnitTest {
     assertEquals(ui.player.seekbar.SeekbarStyle.WAVEFORM, ui.player.seekbar.SeekbarStyle.fromId("waveform"))
     assertEquals(ui.player.seekbar.SeekbarStyle.NEON_GLOW, ui.player.seekbar.SeekbarStyle.fromId("NEON_GLOW"))
     assertEquals(ui.player.seekbar.SeekbarStyle.M3_EXPRESSIVE, ui.player.seekbar.SeekbarStyle.fromId("m3_expressive"))
+    assertEquals(ui.player.seekbar.SeekbarStyle.CIRCULAR_PROGRESS, ui.player.seekbar.SeekbarStyle.fromId("circular_progress"))
     assertEquals(ui.player.seekbar.SeekbarStyle.BLOCKS, ui.player.seekbar.SeekbarStyle.fromId("unknown_style"))
     assertEquals(ui.player.seekbar.SeekbarStyle.BLOCKS, ui.player.seekbar.SeekbarStyle.fromId(null))
+  }
+
+  @Test
+  fun testPlayerCustomizationAndGestureDefaults() {
+    assertEquals(4, com.example.model.MiniPlayerStyle.entries.size)
+    assertEquals(3, com.example.model.LockScreenStyle.entries.size)
+    assertEquals(
+      com.example.model.MiniPlayerStyle.WAVE_MINI,
+      com.example.model.MiniPlayerStyle.fromId("wave_mini")
+    )
+    assertEquals(
+      com.example.model.LockScreenStyle.MINIMAL_PRIVATE,
+      com.example.model.LockScreenStyle.fromId("minimal_private")
+    )
+    assertEquals(
+      com.example.model.ArtworkSizeOption.LARGE,
+      com.example.model.ArtworkSizeOption.fromId("large")
+    )
+    assertEquals(
+      com.example.model.CornerRadiusOption.PILL,
+      com.example.model.CornerRadiusOption.fromId("pill")
+    )
+    assertEquals(
+      com.example.model.PlayerBackgroundStyle.BLURRED_ARTWORK,
+      com.example.model.PlayerBackgroundStyle.fromId("blurred_artwork")
+    )
+    assertEquals(
+      com.example.model.ControlArrangement.SPLIT_WIDE,
+      com.example.model.ControlArrangement.fromId("split_wide")
+    )
+    assertEquals(
+      com.example.model.ButtonShapeOption.SQUIRCLE,
+      com.example.model.ButtonShapeOption.fromId("squircle")
+    )
+    assertEquals(
+      com.example.model.SwipeAction.SEEK_15S,
+      com.example.model.SwipeAction.fromId("seek_15s")
+    )
+    assertEquals(
+      com.example.model.DoubleTapAction.TOGGLE_FAVORITE,
+      com.example.model.DoubleTapAction.fromId("toggle_favorite")
+    )
+    assertEquals(
+      com.example.model.SingleTapAction.TOGGLE_CONTROLS_VISIBILITY,
+      com.example.model.SingleTapAction.fromId("toggle_controls")
+    )
+
+    val defaultAppearance = com.example.model.PlayerAppearanceConfig.DEFAULT
+    assertTrue(defaultAppearance.useDynamicAlbumAccent)
+    assertEquals(1.0f, defaultAppearance.typographyScale, 0.001f)
+    assertEquals(1.0f, defaultAppearance.seekbarThicknessScale, 0.001f)
+
+    val defaultGesture = com.example.model.PlayerGestureConfig.DEFAULT
+    assertTrue(defaultGesture.gesturesEnabled)
+    assertTrue(defaultGesture.pinchZoomArtworkEnabled)
+    assertTrue(defaultGesture.rightEdgeVolumeEnabled)
+    assertTrue(defaultGesture.leftEdgeBrightnessEnabled)
+    assertEquals(64, defaultGesture.swipeThresholdDp)
   }
 
   @Test

@@ -357,16 +357,26 @@ class SonoraNotificationManager(
         mediaStyle.setShowCancelButton(true)
         mediaStyle.setCancelButtonIntent(dismissPendingIntent)
 
-        val hifiSubtext = buildHifiSubtext(song, deviceName)
+        val lockStyle = prefs.lockScreenStyle
+        val hifiSubtext = if (lockStyle == com.example.model.LockScreenStyle.MINIMAL_PRIVATE) {
+            null
+        } else {
+            buildHifiSubtext(song, deviceName)
+        }
+        val contentLine = if (lockStyle == com.example.model.LockScreenStyle.MINIMAL_PRIVATE) {
+            song.artist
+        } else {
+            "${song.artist} • ${song.album}"
+        }
 
         val builder = NotificationCompat.Builder(service, SonoraApplication.PLAYBACK_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notif_sonora_logo)
             .setContentTitle(song.title)
-            .setContentText("${song.artist} • ${song.album}")
-            .setSubText(hifiSubtext)
+            .setContentText(contentLine)
+            .apply { if (hifiSubtext != null) setSubText(hifiSubtext) }
             .setLargeIcon(artworkBitmap)
             .setColor(accentColor)
-            .setColorized(true)
+            .setColorized(lockStyle == com.example.model.LockScreenStyle.MEDIA_COLORED)
             .setVisibility(
                 if (prefs.showLockScreenControls) NotificationCompat.VISIBILITY_PUBLIC
                 else NotificationCompat.VISIBILITY_SECRET

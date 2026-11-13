@@ -203,6 +203,7 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                     if (currentSong != null) {
                         val gesturesEnabled by viewModel.gesturesEnabled.collectAsState()
                         val miniPlayerGestures by viewModel.miniPlayerGestures.collectAsState()
+                        val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsState()
 
                         FloatingMiniPlayer(
                             song = currentSong,
@@ -212,7 +213,8 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                             onPlayNext = { viewModel.playNext() },
                             onPlayPrevious = { viewModel.playPrevious() },
                             onClick = { isNowPlayingExpanded = true },
-                            gesturesEnabled = gesturesEnabled && miniPlayerGestures
+                            gesturesEnabled = gesturesEnabled && miniPlayerGestures,
+                            miniPlayerStyle = miniPlayerStyle
                         )
                     }
 
@@ -252,7 +254,7 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                 )
             }
 
-            // 5. Full Screen Now Playing Player Coordinator (All 9 Styles)
+            // 5. Full Screen Now Playing Player Coordinator (All 19 Styles)
             AnimatedVisibility(
                 visible = isNowPlayingExpanded,
                 enter = slideEnter,

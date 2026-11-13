@@ -2,15 +2,30 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.model.AnimationIntensity
+import com.example.model.ArtworkAnimationOption
+import com.example.model.ArtworkSizeOption
+import com.example.model.ButtonShapeOption
+import com.example.model.ControlArrangement
+import com.example.model.CornerRadiusOption
+import com.example.model.DoubleTapAction
+import com.example.model.LockScreenStyle
+import com.example.model.MiniPlayerStyle
+import com.example.model.PlayerAppearanceConfig
+import com.example.model.PlayerBackgroundStyle
+import com.example.model.PlayerGestureConfig
 import com.example.model.PlayerStyle
-import ui.player.seekbar.SeekbarStyle
 import com.example.model.RepeatMode
 import com.example.model.ShuffleMode
+import com.example.model.SingleTapAction
 import com.example.model.SortOption
 import com.example.model.SpatialAudioConfig
 import com.example.model.SpatialMode
+import com.example.model.SwipeAction
 import com.example.model.ThemeMode
 import org.json.JSONArray
+import org.json.JSONObject
+import ui.player.seekbar.SeekbarStyle
 
 class SonoraPreferences(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("sonora_app_settings", Context.MODE_PRIVATE)
@@ -38,7 +53,7 @@ class SonoraPreferences(context: Context) {
         }
         set(value) = prefs.edit().putString("theme_mode", value.name).apply()
 
-    // Player Style System (9 Premium Styles)
+    // Player Style System (18+ Styles)
     var playerStyle: PlayerStyle
         get() {
             val id = prefs.getString("player_style", PlayerStyle.DEFAULT.id)
@@ -46,7 +61,15 @@ class SonoraPreferences(context: Context) {
         }
         set(value) = prefs.edit().putString("player_style", value.id).apply()
 
-    // Seekbar Style System (9 Premium Styles, default = BLOCKS)
+    var miniPlayerStyle: MiniPlayerStyle
+        get() = MiniPlayerStyle.fromId(prefs.getString("mini_player_style", MiniPlayerStyle.DEFAULT.id))
+        set(value) = prefs.edit().putString("mini_player_style", value.id).apply()
+
+    var lockScreenStyle: LockScreenStyle
+        get() = LockScreenStyle.fromId(prefs.getString("lock_screen_style", LockScreenStyle.DEFAULT.id))
+        set(value) = prefs.edit().putString("lock_screen_style", value.id).apply()
+
+    // Seekbar Style System (10 Styles, default = BLOCKS)
     var seekbarStyle: SeekbarStyle
         get() {
             val id = prefs.getString("seekbar_style", SeekbarStyle.DEFAULT.id)
@@ -339,4 +362,133 @@ class SonoraPreferences(context: Context) {
     var showNotificationFormatBadge: Boolean
         get() = prefs.getBoolean("show_notification_format_badge", true)
         set(value) = prefs.edit().putBoolean("show_notification_format_badge", value).apply()
+
+    var playerAppearanceConfig: PlayerAppearanceConfig
+        get() = decodeAppearanceJson(prefs.getString("player_appearance_json", null))
+        set(value) = prefs.edit().putString("player_appearance_json", encodeAppearanceJson(value)).apply()
+
+    var playerGestureConfig: PlayerGestureConfig
+        get() {
+            val raw = prefs.getString("player_gesture_json", null)
+            val base = decodeGestureJson(raw)
+            return if (raw == null) {
+                base.copy(
+                    gesturesEnabled = gesturesEnabled,
+                    swipeArtworkEnabled = swipeArtworkToSkip,
+                    doubleTapEnabled = doubleTapToSeek,
+                    swipeDownToMinimizeEnabled = swipeDownToCollapse,
+                    miniPlayerGesturesEnabled = miniPlayerGestures,
+                    rightEdgeVolumeEnabled = volumeSlideGesture
+                )
+            } else {
+                base
+            }
+        }
+        set(value) {
+            prefs.edit()
+                .putString("player_gesture_json", encodeGestureJson(value))
+                .putBoolean("gestures_enabled", value.gesturesEnabled)
+                .putBoolean("gesture_swipe_artwork_skip", value.swipeArtworkEnabled)
+                .putBoolean("gesture_double_tap_seek", value.doubleTapEnabled)
+                .putBoolean("gesture_swipe_down_collapse", value.swipeDownToMinimizeEnabled)
+                .putBoolean("gesture_mini_player", value.miniPlayerGesturesEnabled)
+                .putBoolean("gesture_volume_slide", value.rightEdgeVolumeEnabled)
+                .apply()
+        }
+
+    companion object {
+        fun encodeAppearanceJson(config: PlayerAppearanceConfig): String {
+            return JSONObject().apply {
+                put("artworkSize", config.artworkSize.id)
+                put("cornerRadius", config.cornerRadius.id)
+                put("backgroundStyle", config.backgroundStyle.id)
+                put("controlArrangement", config.controlArrangement.id)
+                put("buttonShape", config.buttonShape.id)
+                put("typographyScale", config.typographyScale.toDouble())
+                put("seekbarThicknessScale", config.seekbarThicknessScale.toDouble())
+                put("useDynamicAlbumAccent", config.useDynamicAlbumAccent)
+                put("animationIntensity", config.animationIntensity.id)
+                put("artworkAnimation", config.artworkAnimation.id)
+                put("showAudioFormatMetadata", config.showAudioFormatMetadata)
+                put("showAlbumMetadata", config.showAlbumMetadata)
+                put("showLyricsShortcut", config.showLyricsShortcut)
+                put("showQueueShortcut", config.showQueueShortcut)
+            }.toString()
+        }
+
+        fun decodeAppearanceJson(raw: String?): PlayerAppearanceConfig {
+            if (raw.isNullOrBlank()) return PlayerAppearanceConfig.DEFAULT
+            return try {
+                val obj = JSONObject(raw)
+                PlayerAppearanceConfig(
+                    artworkSize = ArtworkSizeOption.fromId(obj.optString("artworkSize")),
+                    cornerRadius = CornerRadiusOption.fromId(obj.optString("cornerRadius")),
+                    backgroundStyle = PlayerBackgroundStyle.fromId(obj.optString("backgroundStyle")),
+                    controlArrangement = ControlArrangement.fromId(obj.optString("controlArrangement")),
+                    buttonShape = ButtonShapeOption.fromId(obj.optString("buttonShape")),
+                    typographyScale = obj.optDouble("typographyScale", 1.0).toFloat().coerceIn(0.85f, 1.25f),
+                    seekbarThicknessScale = obj.optDouble("seekbarThicknessScale", 1.0).toFloat().coerceIn(0.8f, 1.4f),
+                    useDynamicAlbumAccent = obj.optBoolean("useDynamicAlbumAccent", true),
+                    animationIntensity = AnimationIntensity.fromId(obj.optString("animationIntensity")),
+                    artworkAnimation = ArtworkAnimationOption.fromId(obj.optString("artworkAnimation")),
+                    showAudioFormatMetadata = obj.optBoolean("showAudioFormatMetadata", true),
+                    showAlbumMetadata = obj.optBoolean("showAlbumMetadata", true),
+                    showLyricsShortcut = obj.optBoolean("showLyricsShortcut", true),
+                    showQueueShortcut = obj.optBoolean("showQueueShortcut", true)
+                )
+            } catch (_: Exception) {
+                PlayerAppearanceConfig.DEFAULT
+            }
+        }
+
+        fun encodeGestureJson(config: PlayerGestureConfig): String {
+            return JSONObject().apply {
+                put("gesturesEnabled", config.gesturesEnabled)
+                put("swipeArtworkEnabled", config.swipeArtworkEnabled)
+                put("swipeLeftAction", config.swipeLeftAction.id)
+                put("swipeRightAction", config.swipeRightAction.id)
+                put("doubleTapEnabled", config.doubleTapEnabled)
+                put("doubleTapAction", config.doubleTapAction.id)
+                put("singleTapAction", config.singleTapAction.id)
+                put("longPressStyleWheelEnabled", config.longPressStyleWheelEnabled)
+                put("pinchZoomArtworkEnabled", config.pinchZoomArtworkEnabled)
+                put("swipeDownToMinimizeEnabled", config.swipeDownToMinimizeEnabled)
+                put("swipeUpToOpenQueueEnabled", config.swipeUpToOpenQueueEnabled)
+                put("rightEdgeVolumeEnabled", config.rightEdgeVolumeEnabled)
+                put("leftEdgeBrightnessEnabled", config.leftEdgeBrightnessEnabled)
+                put("miniPlayerGesturesEnabled", config.miniPlayerGesturesEnabled)
+                put("swipeSensitivity", config.swipeSensitivity.toDouble())
+                put("swipeThresholdDp", config.swipeThresholdDp)
+                put("hapticFeedbackEnabled", config.hapticFeedbackEnabled)
+            }.toString()
+        }
+
+        fun decodeGestureJson(raw: String?): PlayerGestureConfig {
+            if (raw.isNullOrBlank()) return PlayerGestureConfig.DEFAULT
+            return try {
+                val obj = JSONObject(raw)
+                PlayerGestureConfig(
+                    gesturesEnabled = obj.optBoolean("gesturesEnabled", true),
+                    swipeArtworkEnabled = obj.optBoolean("swipeArtworkEnabled", true),
+                    swipeLeftAction = SwipeAction.fromId(obj.optString("swipeLeftAction")),
+                    swipeRightAction = SwipeAction.fromId(obj.optString("swipeRightAction")),
+                    doubleTapEnabled = obj.optBoolean("doubleTapEnabled", true),
+                    doubleTapAction = DoubleTapAction.fromId(obj.optString("doubleTapAction")),
+                    singleTapAction = SingleTapAction.fromId(obj.optString("singleTapAction")),
+                    longPressStyleWheelEnabled = obj.optBoolean("longPressStyleWheelEnabled", true),
+                    pinchZoomArtworkEnabled = obj.optBoolean("pinchZoomArtworkEnabled", true),
+                    swipeDownToMinimizeEnabled = obj.optBoolean("swipeDownToMinimizeEnabled", true),
+                    swipeUpToOpenQueueEnabled = obj.optBoolean("swipeUpToOpenQueueEnabled", true),
+                    rightEdgeVolumeEnabled = obj.optBoolean("rightEdgeVolumeEnabled", true),
+                    leftEdgeBrightnessEnabled = obj.optBoolean("leftEdgeBrightnessEnabled", true),
+                    miniPlayerGesturesEnabled = obj.optBoolean("miniPlayerGesturesEnabled", true),
+                    swipeSensitivity = obj.optDouble("swipeSensitivity", 1.0).toFloat().coerceIn(0.5f, 1.8f),
+                    swipeThresholdDp = obj.optInt("swipeThresholdDp", 64).coerceIn(36, 120),
+                    hapticFeedbackEnabled = obj.optBoolean("hapticFeedbackEnabled", true)
+                )
+            } catch (_: Exception) {
+                PlayerGestureConfig.DEFAULT
+            }
+        }
+    }
 }

@@ -114,6 +114,7 @@ fun AudioEffectsStudioScreen(
     val isBassSupported by viewModel.isBassBoostSupported.collectAsState()
     val isVirtSupported by viewModel.isVirtualizerSupported.collectAsState()
     val isReverbSupported by viewModel.isReverbSupported.collectAsState()
+    val dspDiagnostic by viewModel.dspDiagnosticMessage.collectAsState()
 
     val activeEngineCount = listOf(
         !globalBypass && orbitEnabled,
@@ -262,15 +263,15 @@ fun AudioEffectsStudioScreen(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
-                                        text = if (globalBypass) "All Effects Bypassed" else "Studio DSP Active",
+                                        text = "All Effects Bypassed",
                                         fontFamily = OutfitFontFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 16.sp,
                                         color = colors.textPrimary
                                     )
                                     Text(
-                                        text = if (globalBypass) "Pure direct bit-stream output (bit-flat)"
-                                        else "EQ, 8D Orbit, 360° & hardware FX live",
+                                        text = if (globalBypass) "ON: Clean original audio plays (DSP bypassed)"
+                                        else "OFF: Individually enabled DSP effects applied",
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 12.sp,
                                         color = colors.textSecondary
@@ -278,8 +279,8 @@ fun AudioEffectsStudioScreen(
                                 }
                             }
                             Switch(
-                                checked = !globalBypass,
-                                onCheckedChange = { enabled -> viewModel.setGlobalEffectsBypass(!enabled) },
+                                checked = globalBypass,
+                                onCheckedChange = { bypass -> viewModel.setGlobalEffectsBypass(bypass) },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = colors.onAccentStrong,
                                     checkedTrackColor = colors.accentStrong
@@ -480,7 +481,7 @@ fun AudioEffectsStudioScreen(
                             ) {
                                 val modes = listOf(
                                     Triple(SpatialMode.HEADPHONES, "Binaural", Icons.Rounded.Headphones),
-                                    Triple(SpatialMode.CINEMA_360, "Dynamic 360", Icons.Rounded.SurroundSound),
+                                    Triple(SpatialMode.CINEMA_360, "Dynamic", Icons.Rounded.SurroundSound),
                                     Triple(SpatialMode.SPEAKERS, "Speakers", Icons.Rounded.Speaker)
                                 )
                                 modes.forEach { (mode, title, icon) ->
@@ -691,7 +692,7 @@ fun AudioEffectsStudioScreen(
                     }
                 }
 
-                // 6. Honest Engine Capability Banner
+                // 6. Real-Time Engine & Safety Fallback Status
                 item(key = "capability_note") {
                     Surface(
                         shape = RoundedCornerShape(20.dp),
@@ -711,7 +712,7 @@ fun AudioEffectsStudioScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Connected directly to SONORA's single hardware AudioSession. Effects automatically bypass cleanly if your output device disables an Android AudioEffect module.",
+                                text = dspDiagnostic ?: "Real-time stereo floating-point PCM DSP active on SONORA's single audio pipeline with automatic phase-cancellation protection and seamless bypass.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 color = colors.textSecondary

@@ -2,9 +2,7 @@ package ui.player
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,13 +23,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +42,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -58,8 +50,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.PlaybackInfo
-import com.example.model.RepeatMode
-import com.example.model.ShuffleMode
+import com.example.model.PlayerAppearanceConfig
+import com.example.model.PlayerGestureConfig
 import com.example.model.Song
 import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
@@ -67,6 +59,7 @@ import com.example.ui.theme.PlusJakartaFontFamily
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import ui.components.PlaybackControls
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -75,7 +68,6 @@ import ui.theme.LocalEditorialColors
  * Style 8: Dial
  * Circular vinyl artwork hub surrounded by an interactive rotary progress dial.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DialPlayer(
     song: Song?,
@@ -92,12 +84,19 @@ fun DialPlayer(
     onClose: () -> Unit,
     onArtworkLongPress: () -> Unit,
     seekbarStyle: SeekbarStyle = SeekbarStyle.DEFAULT,
+    appearance: PlayerAppearanceConfig = PlayerAppearanceConfig.DEFAULT,
+    gestureConfig: PlayerGestureConfig = PlayerGestureConfig.DEFAULT,
+    gestureController: PlayerGestureController = rememberPlayerGestureController(),
+    liveWaveform: FloatArray? = null,
+    onToggleFavorite: (() -> Unit)? = null,
+    onCyclePlayerStyle: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
     var isUserDraggingDial by remember { mutableStateOf(false) }
     var dialDragAngle by remember { mutableFloatStateOf(0f) }
     var showLinearSeeker by remember { mutableStateOf(false) }
+    val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
 
     val currentPos = if (isUserDraggingDial) {
         val frac = (dialDragAngle / 360f).coerceIn(0f, 1f)
@@ -204,7 +203,7 @@ fun DialPlayer(
                         }
                 ) {
                     val center = Offset(size.width / 2f, size.height / 2f)
-                    val strokeW = 10.dp.toPx()
+                    val strokeW = (10f * appearance.seekbarThicknessScale).coerceIn(6f, 16f).dp.toPx()
                     val radius = (size.minDimension / 2f) - (strokeW / 2f) - 6.dp.toPx()
 
                     drawCircle(
@@ -261,11 +260,27 @@ fun DialPlayer(
                 Box(
                     modifier = Modifier
                         .fillMaxSize(0.68f)
+                        .graphicsLayer {
+                            scaleX = gestureController.artworkZoomScale
+                            scaleY = gestureController.artworkZoomScale
+                        }
                         .clip(CircleShape)
                         .border(3.dp, colors.accentStrong.copy(alpha = 0.55f), CircleShape)
-                        .combinedClickable(
-                            onClick = onTogglePlayPause,
-                            onLongClick = onArtworkLongPress
+                        .playerArtworkGestures(
+                            config = gestureConfig,
+                            controller = gestureController,
+                            currentPositionMs = playbackInfo.currentPositionMs,
+                            durationMs = duration,
+                            isPlaying = playbackInfo.isPlaying,
+                            onTogglePlayPause = onTogglePlayPause,
+                            onPlayNext = onPlayNext,
+                            onPlayPrevious = onPlayPrevious,
+                            onSeekTo = onSeekTo,
+                            onOpenQueue = onOpenQueue,
+                            onClose = onClose,
+                            onArtworkLongPress = onArtworkLongPress,
+                            onToggleFavorite = onToggleFavorite,
+                            onCyclePlayerStyle = onCyclePlayerStyle
                         )
                         .testTag("player_artwork_box"),
                     contentAlignment = Alignment.Center
@@ -303,7 +318,7 @@ fun DialPlayer(
                     text = song?.title ?: "No Song Selected",
                     fontFamily = OutfitFontFamily,
                     color = colors.textPrimary,
-                    fontSize = 20.sp,
+                    fontSize = (20f * scale).sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -312,7 +327,7 @@ fun DialPlayer(
                     text = song?.artist ?: "Unknown Artist",
                     fontFamily = PlusJakartaFontFamily,
                     color = colors.textSecondary,
-                    fontSize = 14.sp,
+                    fontSize = (14f * scale).sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -331,58 +346,26 @@ fun DialPlayer(
                         isPlaying = playbackInfo.isPlaying,
                         style = seekbarStyle,
                         showTimestamps = false,
+                        liveWaveform = liveWaveform,
+                        thicknessScale = appearance.seekbarThicknessScale,
+                        hapticFeedbackEnabled = gestureConfig.hapticFeedbackEnabled,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onToggleShuffle, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.Default.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (playbackInfo.shuffleMode == ShuffleMode.ON) colors.accentStrong else colors.textMuted,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                IconButton(onClick = onPlayPrevious, modifier = Modifier.size(50.dp)) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = colors.textPrimary, modifier = Modifier.size(32.dp))
-                }
-
-                Surface(
-                    onClick = onTogglePlayPause,
-                    modifier = Modifier
-                        .size(66.dp)
-                        .testTag("play_pause_button"),
-                    shape = CircleShape,
-                    color = colors.accentStrong,
-                    shadowElevation = 6.dp
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (playbackInfo.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
-                            tint = colors.onAccentStrong,
-                            modifier = Modifier.size(34.dp)
-                        )
-                    }
-                }
-
-                IconButton(onClick = onPlayNext, modifier = Modifier.size(50.dp)) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = colors.textPrimary, modifier = Modifier.size(32.dp))
-                }
-
-                IconButton(onClick = onCycleRepeat, modifier = Modifier.size(48.dp)) {
-                    val icon = if (playbackInfo.repeatMode == RepeatMode.ONE) Icons.Default.RepeatOne else Icons.Default.Repeat
-                    val tint = if (playbackInfo.repeatMode != RepeatMode.OFF) colors.accentStrong else colors.textMuted
-                    Icon(icon, contentDescription = "Repeat", tint = tint, modifier = Modifier.size(22.dp))
-                }
-            }
+            PlaybackControls(
+                playbackInfo = playbackInfo,
+                onTogglePlayPause = onTogglePlayPause,
+                onPlayNext = onPlayNext,
+                onPlayPrevious = onPlayPrevious,
+                onToggleShuffle = onToggleShuffle,
+                onCycleRepeat = onCycleRepeat,
+                appearance = appearance,
+                accentColor = colors.accentStrong,
+                onAccentColor = colors.onAccentStrong,
+                primaryButtonSize = 66.dp
+            )
         }
     }
 }

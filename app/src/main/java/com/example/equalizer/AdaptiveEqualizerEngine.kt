@@ -62,6 +62,7 @@ class AdaptiveEqualizerEngine private constructor(
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var currentSessionId: Int = 0
     private var externalBypass: Boolean = false
+    private var useSoftwareDsp: Boolean = true
 
     private val _isHardwareEqSupported = MutableStateFlow(true)
     val isHardwareEqSupported: StateFlow<Boolean> = _isHardwareEqSupported.asStateFlow()
@@ -70,7 +71,14 @@ class AdaptiveEqualizerEngine private constructor(
         applySettings(_settings.value, persist = false)
     }
 
-    fun attachToAudioSession(sessionId: Int) {
+    fun attachToAudioSession(sessionId: Int, softwareDspHandled: Boolean = false) {
+        useSoftwareDsp = softwareDspHandled
+        if (softwareDspHandled) {
+            releaseHardwareEffects()
+            this.currentSessionId = sessionId
+            _isHardwareEqSupported.value = true
+            return
+        }
         if (sessionId == 0) return
         this.currentSessionId = sessionId
         try {
@@ -272,6 +280,7 @@ class AdaptiveEqualizerEngine private constructor(
     }
 
     private fun syncToHardware() {
+        if (useSoftwareDsp) return
         val settings = _settings.value
         val active = settings.isEnabled && !externalBypass
 
