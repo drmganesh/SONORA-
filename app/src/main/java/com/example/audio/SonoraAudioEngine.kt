@@ -34,7 +34,7 @@ class SonoraAudioEngine(private val context: Context) {
 
     private val tag = "SonoraAudioEngine"
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
     val adaptiveEqualizer = AdaptiveEqualizerEngine.getInstance(context)
     val dspProcessor = SonoraDspProcessor()
@@ -185,62 +185,78 @@ class SonoraAudioEngine(private val context: Context) {
 
     private fun setupAudioDeviceDetection() {
         checkCurrentAudioDevices()
+        val manager = audioManager ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val callback = object : AudioDeviceCallback() {
-                override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
-                    checkCurrentAudioDevices()
-                    onAudioRoutingChanged()
-                }
+            try {
+                val callback = object : AudioDeviceCallback() {
+                    override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                        checkCurrentAudioDevices()
+                        onAudioRoutingChanged()
+                    }
 
-                override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
-                    checkCurrentAudioDevices()
-                    onAudioRoutingChanged()
+                    override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                        checkCurrentAudioDevices()
+                        onAudioRoutingChanged()
+                    }
                 }
+                audioDeviceCallback = callback
+                manager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+            } catch (e: Throwable) {
+                Log.w(tag, "AudioDeviceCallback registration failed: ${e.message}")
             }
-            audioDeviceCallback = callback
-            audioManager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
         }
     }
 
     fun checkCurrentAudioDevices() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            var isBluetooth = false
-            var devName = "Phone Speaker"
+        val manager = audioManager
+        if (manager == null) {
+            _isTwsConnected.value = false
+            _connectedAudioDeviceName.value = "Phone Speaker"
+            pushDspSnapshot()
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val devices = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                var isBluetooth = false
+                var devName = "Phone Speaker"
 
-            for (dev in devices) {
-                when (dev.type) {
-                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> {
-                        isBluetooth = true
-                        devName = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth TWS"
-                        break
-                    }
-                    else -> {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            if (dev.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                                dev.type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
-                                dev.type == AudioDeviceInfo.TYPE_BLE_BROADCAST) {
-                                isBluetooth = true
-                                devName = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "BLE TWS Earbuds"
-                                break
-                            }
+                for (dev in devices) {
+                    when (dev.type) {
+                        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> {
+                            isBluetooth = true
+                            devName = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth TWS"
+                            break
                         }
-                        if (dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                            dev.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES) {
-                            devName = "Wired Headphones"
+                        else -> {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                if (dev.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                                    dev.type == AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                                    dev.type == AudioDeviceInfo.TYPE_BLE_BROADCAST) {
+                                    isBluetooth = true
+                                    devName = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "BLE TWS Earbuds"
+                                    break
+                                }
+                            }
+                            if (dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                                dev.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES) {
+                                devName = "Wired Headphones"
+                            }
                         }
                     }
                 }
-            }
 
-            _isTwsConnected.value = isBluetooth
-            _connectedAudioDeviceName.value = devName
-        } else {
-            @Suppress("DEPRECATION")
-            val isBt = audioManager.isBluetoothA2dpOn
-            _isTwsConnected.value = isBt
-            _connectedAudioDeviceName.value = if (isBt) "Bluetooth TWS" else "Built-in Speaker"
+                _isTwsConnected.value = isBluetooth
+                _connectedAudioDeviceName.value = devName
+            } else {
+                @Suppress("DEPRECATION")
+                val isBt = manager.isBluetoothA2dpOn
+                _isTwsConnected.value = isBt
+                _connectedAudioDeviceName.value = if (isBt) "Bluetooth TWS" else "Built-in Speaker"
+            }
+        } catch (e: Throwable) {
+            Log.w(tag, "Audio device query failed: ${e.message}")
         }
         pushDspSnapshot()
     }
@@ -746,7 +762,7 @@ class SonoraAudioEngine(private val context: Context) {
     fun release() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && audioDeviceCallback != null) {
             try {
-                audioManager.unregisterAudioDeviceCallback(audioDeviceCallback as AudioDeviceCallback)
+                audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback as AudioDeviceCallback)
             } catch (_: Exception) {
             }
             audioDeviceCallback = null

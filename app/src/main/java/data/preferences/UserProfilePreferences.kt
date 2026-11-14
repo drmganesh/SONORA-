@@ -2,27 +2,39 @@ package data.preferences
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 
-private val Context.userProfileDataStore: DataStore<Preferences> by preferencesDataStore(name = "sonora_user_profile")
+private const val PROFILE_PREFS_TAG = "UserProfilePreferences"
+
+private val Context.userProfileDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "sonora_user_profile",
+    corruptionHandler = ReplaceFileCorruptionHandler { ex ->
+        Log.e(PROFILE_PREFS_TAG, "Corrupted user profile DataStore recovered with defaults", ex)
+        emptyPreferences()
+    }
+)
 
 /**
  * DataStore-backed persistence for the user's personal SONORA profile and avatar URI.
@@ -30,7 +42,7 @@ private val Context.userProfileDataStore: DataStore<Preferences> by preferencesD
  */
 class UserProfilePreferences(private val context: Context) {
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     companion object {
         val KEY_DISPLAY_NAME = stringPreferencesKey("profile_display_name")
@@ -39,7 +51,16 @@ class UserProfilePreferences(private val context: Context) {
         private const val AVATAR_FILE_PREFIX = "sonora_profile_avatar_"
     }
 
-    val userProfileFlow: Flow<UserProfile> = context.userProfileDataStore.data.map { prefs ->
+    private val safeData: Flow<Preferences> = context.userProfileDataStore.data.catch { exception ->
+        if (exception is IOException) {
+            Log.e(PROFILE_PREFS_TAG, "IO error reading user profile DataStore, using defaults", exception)
+            emit(emptyPreferences())
+        } else {
+            throw exception
+        }
+    }
+
+    val userProfileFlow: Flow<UserProfile> = safeData.map { prefs ->
         val rawName = prefs[KEY_DISPLAY_NAME]?.trim().orEmpty()
         val rawUsername = prefs[KEY_USERNAME]?.trim().orEmpty()
         val rawAvatar = prefs[KEY_AVATAR_URI]?.trim()?.takeIf { it.isNotEmpty() }
@@ -53,38 +74,34 @@ class UserProfilePreferences(private val context: Context) {
     val userProfile: StateFlow<UserProfile> = userProfileFlow.stateIn(
         scope = scope,
         started = SharingStarted.Eagerly,
-        initialValue = runBlocking {
-            try {
-                val prefs = context.userProfileDataStore.data.first()
-                UserProfile(
-                    displayName = prefs[KEY_DISPLAY_NAME]?.trim()?.ifEmpty { UserProfile.DEFAULT_DISPLAY_NAME }
-                        ?: UserProfile.DEFAULT_DISPLAY_NAME,
-                    username = prefs[KEY_USERNAME]?.trim().orEmpty(),
-                    avatarUri = prefs[KEY_AVATAR_URI]?.trim()?.takeIf { it.isNotEmpty() }
-                )
-            } catch (_: Exception) {
-                UserProfile()
-            }
-        }
+        initialValue = UserProfile()
     )
 
     suspend fun saveProfileDetails(displayName: String, username: String) {
         val cleanName = displayName.trim().ifEmpty { UserProfile.DEFAULT_DISPLAY_NAME }
         val cleanUsername = username.trim().removePrefix("@")
-        context.userProfileDataStore.edit { prefs ->
-            prefs[KEY_DISPLAY_NAME] = cleanName
-            prefs[KEY_USERNAME] = cleanUsername
+        try {
+            context.userProfileDataStore.edit { prefs ->
+                prefs[KEY_DISPLAY_NAME] = cleanName
+                prefs[KEY_USERNAME] = cleanUsername
+            }
+        } catch (e: Exception) {
+            Log.e(PROFILE_PREFS_TAG, "Failed saving profile details", e)
         }
     }
 
     suspend fun saveAvatarUri(uriString: String?) {
-        context.userProfileDataStore.edit { prefs ->
-            val clean = uriString?.trim()?.takeIf { it.isNotEmpty() }
-            if (clean != null) {
-                prefs[KEY_AVATAR_URI] = clean
-            } else {
-                prefs.remove(KEY_AVATAR_URI)
+        try {
+            context.userProfileDataStore.edit { prefs ->
+                val clean = uriString?.trim()?.takeIf { it.isNotEmpty() }
+                if (clean != null) {
+                    prefs[KEY_AVATAR_URI] = clean
+                } else {
+                    prefs.remove(KEY_AVATAR_URI)
+                }
             }
+        } catch (e: Exception) {
+            Log.e(PROFILE_PREFS_TAG, "Failed saving avatar URI", e)
         }
     }
 
@@ -111,7 +128,8 @@ class UserProfilePreferences(private val context: Context) {
             } else {
                 null
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(PROFILE_PREFS_TAG, "Failed copying picked avatar into internal storage", e)
             null
         }
 
@@ -124,8 +142,12 @@ class UserProfilePreferences(private val context: Context) {
 
     suspend fun removeAvatar() = withContext(Dispatchers.IO) {
         deleteOldInternalAvatars(exceptFileName = null)
-        context.userProfileDataStore.edit { prefs ->
-            prefs.remove(KEY_AVATAR_URI)
+        try {
+            context.userProfileDataStore.edit { prefs ->
+                prefs.remove(KEY_AVATAR_URI)
+            }
+        } catch (e: Exception) {
+            Log.e(PROFILE_PREFS_TAG, "Failed removing avatar URI from DataStore", e)
         }
     }
 
@@ -140,8 +162,8 @@ class UserProfilePreferences(private val context: Context) {
                     file.delete()
                 }
             }
-        } catch (_: Exception) {
-            // Safe ignore
+        } catch (e: Exception) {
+            Log.w(PROFILE_PREFS_TAG, "Failed cleaning up old internal avatar files", e)
         }
     }
 }

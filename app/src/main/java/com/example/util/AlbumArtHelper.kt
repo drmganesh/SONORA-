@@ -7,14 +7,18 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.util.LruCache
 import android.util.Size
 import com.example.model.Song
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 object AlbumArtHelper {
+
+    private const val TAG = "AlbumArtHelper"
 
     // Memory cache for decoded album artwork bitmaps (max 50MB)
     private val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
@@ -39,6 +43,7 @@ object AlbumArtHelper {
         if (noArtCache.get(cacheKey) == true) return@withContext null
 
         var bitmap: Bitmap? = null
+        try {
 
         // WAV files do not contain embedded artwork recognized by MediaMetadataRetriever
         val isWav = song.mimeType.contains("wav", ignoreCase = true) ||
@@ -106,6 +111,13 @@ object AlbumArtHelper {
             } catch (_: Exception) {
                 // Extraction failed
             }
+        }
+
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed loading album artwork for song id=${song.id}", t)
+            bitmap = null
         }
 
         // Cache the decoded bitmap or record negative cache

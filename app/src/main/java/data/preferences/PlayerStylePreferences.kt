@@ -1,9 +1,12 @@
 package data.preferences
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.SonoraPreferences
@@ -13,9 +16,19 @@ import com.example.model.PlayerAppearanceConfig
 import com.example.model.PlayerGestureConfig
 import com.example.model.PlayerStyle
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 
-private val Context.playerStyleDataStore: DataStore<Preferences> by preferencesDataStore(name = "sonora_player_style")
+private const val PLAYER_STYLE_PREFS_TAG = "PlayerStylePreferences"
+
+private val Context.playerStyleDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "sonora_player_style",
+    corruptionHandler = ReplaceFileCorruptionHandler { ex ->
+        Log.e(PLAYER_STYLE_PREFS_TAG, "Corrupted player style DataStore recovered with defaults", ex)
+        emptyPreferences()
+    }
+)
 
 /**
  * DataStore Preferences implementation for persisting Player Style,
@@ -33,17 +46,26 @@ class PlayerStylePreferences(private val context: Context) {
         val KEY_PLAYER_GESTURES = stringPreferencesKey("key_player_gestures_json")
     }
 
-    val playerStyleFlow: Flow<PlayerStyle> = context.playerStyleDataStore.data.map { preferences ->
+    private val safeData: Flow<Preferences> = context.playerStyleDataStore.data.catch { exception ->
+        if (exception is IOException) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "IO error reading player style DataStore, using defaults", exception)
+            emit(emptyPreferences())
+        } else {
+            throw exception
+        }
+    }
+
+    val playerStyleFlow: Flow<PlayerStyle> = safeData.map { preferences ->
         val styleId = preferences[KEY_PLAYER_STYLE] ?: sonoraPrefs.playerStyle.id
         PlayerStyle.fromId(styleId)
     }
 
-    val miniPlayerStyleFlow: Flow<MiniPlayerStyle> = context.playerStyleDataStore.data.map { preferences ->
+    val miniPlayerStyleFlow: Flow<MiniPlayerStyle> = safeData.map { preferences ->
         val id = preferences[KEY_MINI_PLAYER_STYLE] ?: sonoraPrefs.miniPlayerStyle.id
         MiniPlayerStyle.fromId(id)
     }
 
-    val lockScreenStyleFlow: Flow<LockScreenStyle> = context.playerStyleDataStore.data.map { preferences ->
+    val lockScreenStyleFlow: Flow<LockScreenStyle> = safeData.map { preferences ->
         val id = preferences[KEY_LOCK_SCREEN_STYLE] ?: sonoraPrefs.lockScreenStyle.id
         LockScreenStyle.fromId(id)
     }
@@ -56,36 +78,56 @@ class PlayerStylePreferences(private val context: Context) {
 
     suspend fun setPlayerStyle(style: PlayerStyle) {
         sonoraPrefs.playerStyle = style
-        context.playerStyleDataStore.edit { preferences ->
-            preferences[KEY_PLAYER_STYLE] = style.id
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_PLAYER_STYLE] = style.id
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving player style", e)
         }
     }
 
     suspend fun setMiniPlayerStyle(style: MiniPlayerStyle) {
         sonoraPrefs.miniPlayerStyle = style
-        context.playerStyleDataStore.edit { preferences ->
-            preferences[KEY_MINI_PLAYER_STYLE] = style.id
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_MINI_PLAYER_STYLE] = style.id
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving mini-player style", e)
         }
     }
 
     suspend fun setLockScreenStyle(style: LockScreenStyle) {
         sonoraPrefs.lockScreenStyle = style
-        context.playerStyleDataStore.edit { preferences ->
-            preferences[KEY_LOCK_SCREEN_STYLE] = style.id
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_LOCK_SCREEN_STYLE] = style.id
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving lock screen style", e)
         }
     }
 
     suspend fun setAppearanceConfig(config: PlayerAppearanceConfig) {
         sonoraPrefs.playerAppearanceConfig = config
-        context.playerStyleDataStore.edit { preferences ->
-            preferences[KEY_PLAYER_APPEARANCE] = SonoraPreferences.encodeAppearanceJson(config)
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_PLAYER_APPEARANCE] = SonoraPreferences.encodeAppearanceJson(config)
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving appearance config", e)
         }
     }
 
     suspend fun setGestureConfig(config: PlayerGestureConfig) {
         sonoraPrefs.playerGestureConfig = config
-        context.playerStyleDataStore.edit { preferences ->
-            preferences[KEY_PLAYER_GESTURES] = SonoraPreferences.encodeGestureJson(config)
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_PLAYER_GESTURES] = SonoraPreferences.encodeGestureJson(config)
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving gesture config", e)
         }
     }
 }

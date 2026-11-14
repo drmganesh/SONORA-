@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
+import android.util.Log
 import android.util.LruCache
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -89,44 +90,49 @@ class SonoraNotificationManager(
     }
 
     private fun setupMediaSession() {
-        mediaSession = MediaSessionCompat(service, "SonoraMediaSession").apply {
-            setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() {
-                    service.playbackCallback?.onRemotePlay()
-                }
-
-                override fun onPause() {
-                    service.playbackCallback?.onRemotePause()
-                }
-
-                override fun onSkipToNext() {
-                    service.playbackCallback?.onRemoteNext()
-                }
-
-                override fun onSkipToPrevious() {
-                    service.playbackCallback?.onRemotePrev()
-                }
-
-                override fun onSeekTo(pos: Long) {
-                    service.playbackCallback?.onRemoteSeek(pos)
-                }
-
-                override fun onSetShuffleMode(shuffleMode: Int) {
-                    service.playbackCallback?.onRemoteShuffle()
-                }
-
-                override fun onSetRepeatMode(repeatMode: Int) {
-                    service.playbackCallback?.onRemoteRepeat()
-                }
-
-                override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
-                    when (action) {
-                        ACTION_SHUFFLE -> service.playbackCallback?.onRemoteShuffle()
-                        ACTION_REPEAT -> service.playbackCallback?.onRemoteRepeat()
+        try {
+            mediaSession = MediaSessionCompat(service, "SonoraMediaSession").apply {
+                setCallback(object : MediaSessionCompat.Callback() {
+                    override fun onPlay() {
+                        service.playbackCallback?.onRemotePlay()
                     }
-                }
-            })
-            isActive = true
+
+                    override fun onPause() {
+                        service.playbackCallback?.onRemotePause()
+                    }
+
+                    override fun onSkipToNext() {
+                        service.playbackCallback?.onRemoteNext()
+                    }
+
+                    override fun onSkipToPrevious() {
+                        service.playbackCallback?.onRemotePrev()
+                    }
+
+                    override fun onSeekTo(pos: Long) {
+                        service.playbackCallback?.onRemoteSeek(pos)
+                    }
+
+                    override fun onSetShuffleMode(shuffleMode: Int) {
+                        service.playbackCallback?.onRemoteShuffle()
+                    }
+
+                    override fun onSetRepeatMode(repeatMode: Int) {
+                        service.playbackCallback?.onRemoteRepeat()
+                    }
+
+                    override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
+                        when (action) {
+                            ACTION_SHUFFLE -> service.playbackCallback?.onRemoteShuffle()
+                            ACTION_REPEAT -> service.playbackCallback?.onRemoteRepeat()
+                        }
+                    }
+                })
+                isActive = true
+            }
+        } catch (e: Exception) {
+            Log.e("SonoraNotifManager", "Failed initializing MediaSessionCompat", e)
+            mediaSession = null
         }
     }
 
@@ -515,9 +521,13 @@ class SonoraNotificationManager(
 
     private fun createRoundedBitmap(source: Bitmap, cornerRadiusPx: Float): Bitmap {
         val size = 512
-        val scaled = Bitmap.createScaledBitmap(source, size, size, true)
         val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
+        if (source.isRecycled || source.width <= 0 || source.height <= 0) {
+            canvas.drawColor(0xFF18112C.toInt())
+            return output
+        }
+        val scaled = Bitmap.createScaledBitmap(source, size, size, true)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         val rect = Rect(0, 0, size, size)
         val rectF = RectF(rect)

@@ -9,6 +9,8 @@ import android.media.AudioManager
 import android.os.Binder
 import android.os.IBinder
 import android.support.v4.media.session.MediaSessionCompat
+import android.util.Log
+import androidx.core.content.ContextCompat
 import com.example.audio.SonoraAudioEngine
 import com.example.model.RepeatMode
 import com.example.model.Song
@@ -19,6 +21,7 @@ import kotlinx.coroutines.Job
 class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     companion object {
+        private const val TAG = "SonoraMusicService"
         const val ACTION_PLAY = SonoraNotificationManager.ACTION_PLAY
         const val ACTION_PAUSE = SonoraNotificationManager.ACTION_PAUSE
         const val ACTION_NEXT = SonoraNotificationManager.ACTION_NEXT
@@ -44,12 +47,13 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         private set
 
     val mediaSession: MediaSessionCompat?
-        get() = notificationManager.mediaSession
+        get() = if (::notificationManager.isInitialized) notificationManager.mediaSession else null
 
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
 
     private var audioManager: AudioManager? = null
+    private var isNoisyReceiverRegistered = false
     var playbackCallback: ServicePlaybackCallback? = null
         private set
 
@@ -79,11 +83,21 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     override fun onCreate() {
         super.onCreate()
         audioEngine = SonoraAudioEngine(applicationContext)
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         notificationManager = SonoraNotificationManager(this, serviceScope)
 
         val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
-        registerReceiver(noisyReceiver, filter)
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                noisyReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            isNoisyReceiverRegistered = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed registering noisy audio receiver", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -144,13 +158,21 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            unregisterReceiver(noisyReceiver)
-        } catch (e: Exception) {
-            // Ignored
+        if (isNoisyReceiverRegistered) {
+            try {
+                unregisterReceiver(noisyReceiver)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed unregistering noisy receiver cleanly", e)
+            } finally {
+                isNoisyReceiverRegistered = false
+            }
         }
-        notificationManager.release()
-        audioEngine.release()
+        if (::notificationManager.isInitialized) {
+            notificationManager.release()
+        }
+        if (::audioEngine.isInitialized) {
+            audioEngine.release()
+        }
         serviceJob.cancel()
     }
 }

@@ -1,6 +1,7 @@
 package ui.components
 
 import android.net.Uri
+import android.util.Log
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -70,13 +71,19 @@ fun UserProfileAvatar(
         if (raw.isEmpty()) {
             null
         } else {
-            val parsed = runCatching { Uri.parse(raw) }.getOrNull()
-            if (parsed?.scheme == "file") {
-                val path = parsed.path
-                if (path != null && File(path).exists()) parsed else null
-            } else {
-                parsed
-            }
+            runCatching {
+                val parsed = Uri.parse(raw)
+                when (parsed.scheme) {
+                    "file" -> {
+                        val path = parsed.path
+                        if (!path.isNullOrBlank() && File(path).exists()) parsed else null
+                    }
+                    "content", "android.resource", "http", "https" -> parsed
+                    else -> null
+                }
+            }.onFailure { err ->
+                Log.w("UserProfileAvatar", "Invalid avatar URI ignored: $raw", err)
+            }.getOrNull()
         }
     }
 
@@ -119,11 +126,19 @@ fun UserProfileAvatar(
         contentAlignment = Alignment.Center
     ) {
         if (validAvatarUri != null) {
-            SubcomposeAsyncImage(
-                model = ImageRequest.Builder(context)
+            val imageRequest = remember(validAvatarUri, reduceAnimations, context) {
+                ImageRequest.Builder(context)
                     .data(validAvatarUri)
                     .crossfade(!reduceAnimations)
-                    .build(),
+                    .listener(
+                        onError = { _, result ->
+                            Log.w("UserProfileAvatar", "Failed loading avatar URI: $validAvatarUri", result.throwable)
+                        }
+                    )
+                    .build()
+            }
+            SubcomposeAsyncImage(
+                model = imageRequest,
                 contentDescription = "Profile avatar for ${userProfile.displayName}",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.media.audiofx.PresetReverb
 import android.os.IBinder
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.SonoraAudioEngine
@@ -43,6 +44,7 @@ import com.example.model.SpatialMode
 import com.example.model.ThemeMode
 import com.example.model.VisualizerStyle
 import com.example.service.SonoraMusicService
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -50,6 +52,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -57,6 +60,10 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 class SonoraViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        private const val TAG = "SonoraViewModel"
+    }
 
     val preferences = SonoraPreferences(application)
 
@@ -67,7 +74,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private var musicService: SonoraMusicService? = null
     private var isBound = false
 
-    val folderFilterPreferences by lazy { data.preferences.FolderFilterPreferences(getApplication()) }
+    val folderFilterPreferences = data.preferences.FolderFilterPreferences(application)
     val folderFilterSettings: StateFlow<domain.model.FolderFilterSettings>
         get() = folderFilterPreferences.settings
 
@@ -580,63 +587,79 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun updateDynamicThemeForSong(song: Song?) {
         paletteExtractionJob?.cancel()
         paletteExtractionJob = viewModelScope.launch(Dispatchers.Default) {
-            val enabled = _dynamicColorsEnabled.value
-            val mode = _dynamicThemeMode.value
-            val appMode = _dynamicAppearanceMode.value
-            val intensity = _dynamicColorIntensity.value
-            val gradEnabled = _dynamicGradientEnabled.value
-            val customAccent = _homeCustomAccentArgb.value?.let { androidx.compose.ui.graphics.Color(it) }
-            val sysDark = currentSystemIsDark
+            try {
+                val enabled = _dynamicColorsEnabled.value
+                val mode = _dynamicThemeMode.value
+                val appMode = _dynamicAppearanceMode.value
+                val intensity = _dynamicColorIntensity.value
+                val gradEnabled = _dynamicGradientEnabled.value
+                val customAccent = _homeCustomAccentArgb.value?.let { androidx.compose.ui.graphics.Color(it) }
+                val sysDark = currentSystemIsDark
 
-            if (!enabled || mode == DynamicThemeMode.STATIC_THEME || song == null) {
+                if (!enabled || mode == DynamicThemeMode.STATIC_THEME || song == null) {
+                    _dynamicPalette.value = DynamicThemeGenerator.generate(
+                        rawPalette = domain.color.AlbumArtPalette.default(),
+                        mode = mode,
+                        enabled = enabled,
+                        appearanceMode = appMode,
+                        intensity = intensity,
+                        gradientEnabled = gradEnabled,
+                        customAccentColor = customAccent,
+                        systemIsDark = sysDark
+                    )
+                    return@launch
+                }
+
+                val artKey = "song_${song.id}_${song.albumId}"
+                val cachedPalette = AlbumColorCache.get(artKey)
+                if (cachedPalette != null) {
+                    _dynamicPalette.value = DynamicThemeGenerator.generate(
+                        rawPalette = cachedPalette,
+                        mode = mode,
+                        enabled = enabled,
+                        appearanceMode = appMode,
+                        intensity = intensity,
+                        gradientEnabled = gradEnabled,
+                        customAccentColor = customAccent,
+                        systemIsDark = sysDark
+                    )
+                    return@launch
+                }
+
+                val bitmap = withContext(Dispatchers.IO) {
+                    AlbumArtHelper.loadAlbumArt(getApplication(), song)
+                }
+
+                if (!isActive) return@launch
+
+                val rawPalette = AlbumArtColorExtractor.extractPalette(bitmap, artKey)
+                if (!isActive) return@launch
+
+                _dynamicPalette.value = DynamicThemeGenerator.generate(
+                    rawPalette = rawPalette,
+                    mode = mode,
+                    enabled = enabled,
+                    appearanceMode = appMode,
+                    intensity = intensity,
+                    gradientEnabled = gradEnabled,
+                    customAccentColor = customAccent,
+                    systemIsDark = sysDark
+                )
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed updating dynamic theme for song=${song?.id}", e)
                 _dynamicPalette.value = DynamicThemeGenerator.generate(
                     rawPalette = domain.color.AlbumArtPalette.default(),
-                    mode = mode,
-                    enabled = enabled,
-                    appearanceMode = appMode,
-                    intensity = intensity,
-                    gradientEnabled = gradEnabled,
-                    customAccentColor = customAccent,
-                    systemIsDark = sysDark
+                    mode = _dynamicThemeMode.value,
+                    enabled = _dynamicColorsEnabled.value,
+                    appearanceMode = _dynamicAppearanceMode.value,
+                    intensity = _dynamicColorIntensity.value,
+                    gradientEnabled = _dynamicGradientEnabled.value,
+                    customAccentColor = _homeCustomAccentArgb.value?.let { androidx.compose.ui.graphics.Color(it) },
+                    systemIsDark = currentSystemIsDark
                 )
-                return@launch
             }
-
-            val artKey = "song_${song.id}_${song.albumId}"
-            val cachedPalette = AlbumColorCache.get(artKey)
-            if (cachedPalette != null) {
-                _dynamicPalette.value = DynamicThemeGenerator.generate(
-                    rawPalette = cachedPalette,
-                    mode = mode,
-                    enabled = enabled,
-                    appearanceMode = appMode,
-                    intensity = intensity,
-                    gradientEnabled = gradEnabled,
-                    customAccentColor = customAccent,
-                    systemIsDark = sysDark
-                )
-                return@launch
-            }
-
-            val bitmap = withContext(Dispatchers.IO) {
-                AlbumArtHelper.loadAlbumArt(getApplication(), song)
-            }
-
-            if (!isActive) return@launch
-
-            val rawPalette = AlbumArtColorExtractor.extractPalette(bitmap, artKey)
-            if (!isActive) return@launch
-
-            _dynamicPalette.value = DynamicThemeGenerator.generate(
-                rawPalette = rawPalette,
-                mode = mode,
-                enabled = enabled,
-                appearanceMode = appMode,
-                intensity = intensity,
-                gradientEnabled = gradEnabled,
-                customAccentColor = customAccent,
-                systemIsDark = sysDark
-            )
         }
     }
 
@@ -803,11 +826,21 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            val binder = service as SonoraMusicService.SonoraBinder
-            musicService = binder.service
+            val binder = service as? SonoraMusicService.SonoraBinder
+            if (binder == null) {
+                Log.w(TAG, "onServiceConnected ignored null or incompatible binder: $service")
+                return
+            }
+            val connectedService = try {
+                binder.service
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed retrieving SonoraMusicService from binder", e)
+                return
+            }
+            musicService = connectedService
             isBound = true
 
-            musicService?.setPlaybackCallback(object : SonoraMusicService.ServicePlaybackCallback {
+            connectedService.setPlaybackCallback(object : SonoraMusicService.ServicePlaybackCallback {
                 override fun onRemotePlay() = togglePlayPause()
                 override fun onRemotePause() = togglePlayPause()
                 override fun onRemoteNext() = playNext()
@@ -818,7 +851,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             })
 
             // Bind audio visualizer & bands flows from AudioEngine
-            val engine = musicService?.audioEngine
+            val engine = connectedService.audioEngine
             engine?.let { eng ->
                 // Apply restored settings to audio engine
                 eng.setBassBoost(_bassBoost.value)
@@ -909,6 +942,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             combine(_rawScannedSongs, folderFilterPreferences.settingsFlow) { raw, settings ->
                 domain.filter.MusicFolderFilter.filterSongs(raw, settings)
+            }.catch { e ->
+                Log.e(TAG, "Folder filtering stream failed", e)
             }.collect { filtered ->
                 _allSongs.value = filtered
             }
@@ -916,29 +951,39 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun bindMusicService() {
-        val intent = Intent(getApplication(), SonoraMusicService::class.java)
-        getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        try {
+            val intent = Intent(getApplication(), SonoraMusicService::class.java)
+            getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to bind SonoraMusicService", e)
+        }
     }
 
     fun loadLocalSongs() {
         viewModelScope.launch(Dispatchers.IO) {
-            val songs = scanner.scanSongs()
-            _rawScannedSongs.value = songs
-            val filteredInitial = domain.filter.MusicFolderFilter.filterSongs(songs, folderFilterPreferences.settings.value)
-            _allSongs.value = filteredInitial
-            if (_queue.value.isEmpty() && filteredInitial.isNotEmpty()) {
-                val lastId = preferences.lastPlayedSongId
-                val savedSong = if (lastId != -1L) filteredInitial.find { it.id == lastId } else null
-                val targetSong = savedSong ?: filteredInitial.first()
-                val targetIndex = if (savedSong != null) filteredInitial.indexOf(savedSong).coerceAtLeast(0) else 0
+            try {
+                val songs = scanner.scanSongs()
+                _rawScannedSongs.value = songs
+                val filteredInitial = domain.filter.MusicFolderFilter.filterSongs(songs, folderFilterPreferences.settings.value)
+                _allSongs.value = filteredInitial
+                if (_queue.value.isEmpty() && filteredInitial.isNotEmpty()) {
+                    val lastId = preferences.lastPlayedSongId
+                    val savedSong = if (lastId != -1L) filteredInitial.find { it.id == lastId } else null
+                    val targetSong = savedSong ?: filteredInitial.first()
+                    val targetIndex = if (savedSong != null) filteredInitial.indexOf(savedSong).coerceAtLeast(0) else 0
 
-                _queue.value = filteredInitial
-                _queueIndex.value = targetIndex
-                _currentSong.value = targetSong
-                _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
+                    _queue.value = filteredInitial
+                    _queueIndex.value = targetIndex
+                    _currentSong.value = targetSong
+                    _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
+                }
+                generateDailyMixes(filteredInitial)
+                updateDailyAnalytics()
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed loading local songs", e)
             }
-            generateDailyMixes(filteredInitial)
-            updateDailyAnalytics()
         }
     }
 
@@ -1013,6 +1058,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         coverArtUri = entity.coverArtUri
                     )
                 }
+            }.catch { e ->
+                Log.e(TAG, "Playlist observation failed", e)
             }.collect { enriched ->
                 _playlists.value = enriched
             }

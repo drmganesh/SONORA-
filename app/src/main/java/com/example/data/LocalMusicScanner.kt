@@ -5,27 +5,22 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
 import com.example.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class LocalMusicScanner(
     private val context: Context,
     private val dao: SonoraDao
 ) {
 
+    companion object {
+        private const val TAG = "LocalMusicScanner"
+    }
+
     suspend fun scanSongs(): List<Song> = withContext(Dispatchers.IO) {
         val songsList = mutableListOf<Song>()
-        val metadataMap = mutableMapOf<Long, SongMetadataEntity>()
-
-        try {
-            // Pre-fetch metadata from Room
-            val daoList = dao.getAllMetadataFlow()
-            // We can fetch directly or populate as we query
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
 
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -87,7 +82,12 @@ class LocalMusicScanner(
                         id
                     )
 
-                    val savedMetadata = dao.getMetadata(id)
+                    val savedMetadata = try {
+                        dao.getMetadata(id)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed reading Room metadata for track id=$id", e)
+                        null
+                    }
 
                     val finalTitle = savedMetadata?.customTitle ?: rawTitle
                     val finalArtist = savedMetadata?.customArtist ?: (if (rawArtist == "<unknown>") "Unknown Artist" else rawArtist)
@@ -126,8 +126,10 @@ class LocalMusicScanner(
                     )
                 }
             }
+        } catch (se: SecurityException) {
+            Log.w(TAG, "Audio storage permission not granted yet during media scan", se)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error scanning MediaStore audio tracks", e)
         }
 
         // If no physical media found on this device or emulator, synthesize audiophile test master tracks
@@ -215,44 +217,53 @@ class LocalMusicScanner(
         )
 
         for (cfg in trackConfigs) {
-            val file = WavSynthesizer.getOrGenerateDemoTrack(
-                context = context,
-                filename = "demo_track_${cfg.id}.wav",
-                durationSeconds = cfg.durationSec,
-                baseFrequencies = cfg.baseFreqs,
-                patternType = cfg.panPattern
-            )
-
-            val uri = Uri.fromFile(file)
-            val savedMetadata = dao.getMetadata(cfg.id)
-
-            demoSongs.add(
-                Song(
-                    id = cfg.id,
-                    title = savedMetadata?.customTitle ?: cfg.title,
-                    artist = savedMetadata?.customArtist ?: cfg.artist,
-                    album = savedMetadata?.customAlbum ?: cfg.album,
-                    albumId = cfg.id,
-                    durationMs = cfg.durationSec * 1000L,
-                    uri = uri,
-                    dataPath = file.absolutePath,
-                    mimeType = "audio/wav",
-                    sizeBytes = file.length(),
-                    trackNumber = (trackConfigs.indexOf(cfg) + 1),
-                    year = cfg.year,
-                    genre = savedMetadata?.customGenre ?: cfg.genre,
-                    composer = cfg.composer,
-                    bitrateKbps = 1411,
-                    sampleRateHz = 44100,
-                    bitDepth = 16,
-                    dateAdded = System.currentTimeMillis() - (trackConfigs.indexOf(cfg) * 86400000L),
-                    isFavorite = savedMetadata?.isFavorite ?: (cfg.id == -101L),
-                    playCount = savedMetadata?.playCount ?: (12 - trackConfigs.indexOf(cfg) * 3),
-                    lastPlayedTimestamp = savedMetadata?.lastPlayedTimestamp ?: (System.currentTimeMillis() - 3600000L),
-                    lyrics = savedMetadata?.customLyrics ?: cfg.lyrics,
-                    isDemoTrack = true
+            try {
+                val file = WavSynthesizer.getOrGenerateDemoTrack(
+                    context = context,
+                    filename = "demo_track_${cfg.id}.wav",
+                    durationSeconds = cfg.durationSec,
+                    baseFrequencies = cfg.baseFreqs,
+                    patternType = cfg.panPattern
                 )
-            )
+
+                val uri = Uri.fromFile(file)
+                val savedMetadata = try {
+                    dao.getMetadata(cfg.id)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed reading Room metadata for demo track id=${cfg.id}", e)
+                    null
+                }
+
+                demoSongs.add(
+                    Song(
+                        id = cfg.id,
+                        title = savedMetadata?.customTitle ?: cfg.title,
+                        artist = savedMetadata?.customArtist ?: cfg.artist,
+                        album = savedMetadata?.customAlbum ?: cfg.album,
+                        albumId = cfg.id,
+                        durationMs = cfg.durationSec * 1000L,
+                        uri = uri,
+                        dataPath = file.absolutePath,
+                        mimeType = "audio/wav",
+                        sizeBytes = file.length(),
+                        trackNumber = (trackConfigs.indexOf(cfg) + 1),
+                        year = cfg.year,
+                        genre = savedMetadata?.customGenre ?: cfg.genre,
+                        composer = cfg.composer,
+                        bitrateKbps = 1411,
+                        sampleRateHz = 44100,
+                        bitDepth = 16,
+                        dateAdded = System.currentTimeMillis() - (trackConfigs.indexOf(cfg) * 86400000L),
+                        isFavorite = savedMetadata?.isFavorite ?: (cfg.id == -101L),
+                        playCount = savedMetadata?.playCount ?: (12 - trackConfigs.indexOf(cfg) * 3),
+                        lastPlayedTimestamp = savedMetadata?.lastPlayedTimestamp ?: (System.currentTimeMillis() - 3600000L),
+                        lyrics = savedMetadata?.customLyrics ?: cfg.lyrics,
+                        isDemoTrack = true
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed generating demo track ${cfg.id}", e)
+            }
         }
 
         return demoSongs
