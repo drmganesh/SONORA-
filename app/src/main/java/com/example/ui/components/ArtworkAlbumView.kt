@@ -62,35 +62,39 @@ fun ArtworkAlbumView(
 
     val palette = ui.theme.LocalDynamicColorPalette.current
 
-    val infiniteTransition = rememberInfiniteTransition(label = "artwork_anim")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(12000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rotation"
-    )
-
-    val breathingScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (isPlaying) 1.02f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "breathingScale"
-    )
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = if (isPlaying) 0.65f else 0.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
+    val (rotation, breathingScale, glowAlpha) = if (isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "artwork_anim")
+        val rot by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(12000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "rotation"
+        )
+        val scale by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.02f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(3200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "breathingScale"
+        )
+        val alpha by infiniteTransition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 0.65f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(3200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "glowAlpha"
+        )
+        Triple(rot, scale, alpha)
+    } else {
+        Triple(0f, 1f, 0.25f)
+    }
 
     val shape = if (isVinylRotating) CircleShape else RoundedCornerShape(cornerRadius)
 
@@ -112,10 +116,11 @@ fun ArtworkAlbumView(
             .border(1.dp, palette.cardBorder, shape),
         contentAlignment = Alignment.Center
     ) {
-        if (artworkBitmap != null) {
+        val loadedBitmap = artworkBitmap
+        if (loadedBitmap != null) {
             // Real Album Artwork (Extracted from embedded ID3/FLAC or MediaStore)
             Image(
-                bitmap = artworkBitmap!!.asImageBitmap(),
+                bitmap = loadedBitmap.asImageBitmap(),
                 contentDescription = "${song?.album ?: "Album"} Artwork",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

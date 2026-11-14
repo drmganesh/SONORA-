@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Equalizer
@@ -36,7 +37,6 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SpatialAudio
@@ -1461,7 +1461,7 @@ private fun QuickToolsEditorialStrip(
         Triple("15-Band EQ", Icons.Rounded.Tune, onOpenEqualizer),
         Triple("Audio Studio", Icons.Rounded.SpatialAudio, onOpenAudioStudio),
         Triple("Playlists ($playlistCount)", Icons.Rounded.LibraryMusic, onOpenPlaylists),
-        Triple("Up Next Queue", Icons.Rounded.QueueMusic, onOpenQueue)
+        Triple("Up Next Queue", Icons.AutoMirrored.Rounded.QueueMusic, onOpenQueue)
     )
 
     LazyRow(

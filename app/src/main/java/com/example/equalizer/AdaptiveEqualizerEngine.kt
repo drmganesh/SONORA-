@@ -7,7 +7,7 @@ import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,7 +30,7 @@ class AdaptiveEqualizerEngine private constructor(
     }
     private val tag = "AdaptiveEqualizerEngine"
     private val prefs = EqualizerPreferences(context)
-    private val scope = CoroutineScope(Dispatchers.Default + Job())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val _settings = MutableStateFlow(prefs.loadSettings())
     val settings: StateFlow<AdaptiveEqualizerSettings> = _settings.asStateFlow()
@@ -274,7 +274,11 @@ class AdaptiveEqualizerEngine private constructor(
 
         if (persist) {
             scope.launch {
-                prefs.saveSettings(newSettings)
+                try {
+                    prefs.saveSettings(newSettings)
+                } catch (e: Throwable) {
+                    Log.e(tag, "Failed saving equalizer settings", e)
+                }
             }
         }
     }

@@ -2,6 +2,7 @@ package ui.player
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.media.AudioManager
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -16,6 +17,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -117,8 +119,14 @@ class PlayerGestureController(
         accumulatedVolumeDelta = 0f
     }
 
+    private tailrec fun Context.findActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext?.findActivity()
+        else -> null
+    }
+
     fun adjustScreenBrightness(deltaY: Float, totalHeightPx: Float) {
-        val activity = context as? Activity ?: return
+        val activity = context.findActivity() ?: return
         val window = activity.window ?: return
         val lp = window.attributes
         if (activeBrightness < 0f) {
@@ -175,8 +183,22 @@ fun Modifier.playerArtworkGestures(
     val effectiveHorizontalThreshold = (baseThresholdPx / config.swipeSensitivity.coerceIn(0.5f, 1.8f)).coerceAtLeast(36f)
     val effectiveVerticalThreshold = (baseThresholdPx * 1.25f / config.swipeSensitivity.coerceIn(0.5f, 1.8f)).coerceAtLeast(56f)
 
+    val latestConfig by rememberUpdatedState(config)
+    val latestPositionMs by rememberUpdatedState(currentPositionMs)
+    val latestDurationMs by rememberUpdatedState(durationMs)
+    val latestIsPlaying by rememberUpdatedState(isPlaying)
+    val latestTogglePlayPause by rememberUpdatedState(onTogglePlayPause)
+    val latestPlayNext by rememberUpdatedState(onPlayNext)
+    val latestPlayPrevious by rememberUpdatedState(onPlayPrevious)
+    val latestSeekTo by rememberUpdatedState(onSeekTo)
+    val latestOpenQueue by rememberUpdatedState(onOpenQueue)
+    val latestClose by rememberUpdatedState(onClose)
+    val latestArtworkLongPress by rememberUpdatedState(onArtworkLongPress)
+    val latestToggleFavorite by rememberUpdatedState(onToggleFavorite)
+    val latestCycleStyle by rememberUpdatedState(onCyclePlayerStyle)
+
     fun triggerHaptic(type: HapticFeedbackType = HapticFeedbackType.TextHandleMove) {
-        if (config.hapticFeedbackEnabled) haptic.performHapticFeedback(type)
+        if (latestConfig.hapticFeedbackEnabled) haptic.performHapticFeedback(type)
     }
 
     fun dispatchSwipe(action: SwipeAction, isLeftSwipe: Boolean) {
@@ -184,33 +206,35 @@ fun Modifier.playerArtworkGestures(
             SwipeAction.SKIP_TRACK -> {
                 triggerHaptic()
                 if (isLeftSwipe) {
-                    onPlayNext()
+                    latestPlayNext()
                     controller.showHud(GestureHudState(GestureHudType.NEXT_TRACK, "Next Track"))
                 } else {
-                    onPlayPrevious()
+                    latestPlayPrevious()
                     controller.showHud(GestureHudState(GestureHudType.PREVIOUS_TRACK, "Previous Track"))
                 }
             }
             SwipeAction.SEEK_15S -> {
                 triggerHaptic()
+                val pos = latestPositionMs
+                val dur = latestDurationMs
                 if (isLeftSwipe) {
-                    val target = (currentPositionMs + 15_000L).coerceAtMost(durationMs.coerceAtLeast(currentPositionMs))
-                    onSeekTo(target)
+                    val target = (pos + 15_000L).coerceAtMost(dur.coerceAtLeast(pos))
+                    latestSeekTo(target)
                     controller.showHud(GestureHudState(GestureHudType.SEEK_FORWARD, "Forward +15s"))
                 } else {
-                    val target = (currentPositionMs - 15_000L).coerceAtLeast(0L)
-                    onSeekTo(target)
+                    val target = (pos - 15_000L).coerceAtLeast(0L)
+                    latestSeekTo(target)
                     controller.showHud(GestureHudState(GestureHudType.SEEK_BACKWARD, "Rewind -15s"))
                 }
             }
             SwipeAction.CYCLE_STYLE -> {
                 triggerHaptic()
-                onCyclePlayerStyle?.invoke()
+                latestCycleStyle?.invoke()
                 controller.showHud(GestureHudState(GestureHudType.STYLE_CHANGED, "Style Switched"))
             }
             SwipeAction.OPEN_QUEUE -> {
                 triggerHaptic()
-                onOpenQueue()
+                latestOpenQueue()
             }
             SwipeAction.NONE -> Unit
         }
@@ -222,30 +246,29 @@ fun Modifier.playerArtworkGestures(
             config.singleTapAction,
             config.doubleTapEnabled,
             config.doubleTapAction,
-            config.longPressStyleWheelEnabled,
-            currentPositionMs,
-            durationMs,
-            isPlaying
+            config.longPressStyleWheelEnabled
         ) {
             detectTapGestures(
                 onTap = {
+                    val curConfig = latestConfig
                     if (controller.artworkZoomScale > 1.05f) {
                         controller.resetZoom()
                         return@detectTapGestures
                     }
-                    if (!config.gesturesEnabled) {
-                        onTogglePlayPause()
+                    if (!curConfig.gesturesEnabled) {
+                        latestTogglePlayPause()
                         return@detectTapGestures
                     }
-                    when (config.singleTapAction) {
+                    when (curConfig.singleTapAction) {
                         SingleTapAction.TOGGLE_PLAY_PAUSE -> {
                             triggerHaptic()
-                            onTogglePlayPause()
+                            val wasPlaying = latestIsPlaying
+                            latestTogglePlayPause()
                             controller.showHud(
                                 GestureHudState(
                                     GestureHudType.PLAY_PAUSE,
-                                    if (isPlaying) "Paused" else "Playing",
-                                    isPlaying = !isPlaying
+                                    if (wasPlaying) "Paused" else "Playing",
+                                    isPlaying = !wasPlaying
                                 ),
                                 durationMs = 750L
                             )
@@ -258,40 +281,45 @@ fun Modifier.playerArtworkGestures(
                     }
                 },
                 onLongPress = {
-                    if (!config.gesturesEnabled || config.longPressStyleWheelEnabled) {
+                    val curConfig = latestConfig
+                    if (!curConfig.gesturesEnabled || curConfig.longPressStyleWheelEnabled) {
                         triggerHaptic(HapticFeedbackType.LongPress)
-                        onArtworkLongPress()
+                        latestArtworkLongPress()
                     }
                 },
                 onDoubleTap = { offset ->
-                    if (!config.gesturesEnabled || !config.doubleTapEnabled) return@detectTapGestures
-                    when (config.doubleTapAction) {
+                    val curConfig = latestConfig
+                    if (!curConfig.gesturesEnabled || !curConfig.doubleTapEnabled) return@detectTapGestures
+                    when (curConfig.doubleTapAction) {
                         DoubleTapAction.SEEK_10S -> {
                             triggerHaptic()
+                            val pos = latestPositionMs
+                            val dur = latestDurationMs
                             if (offset.x < size.width / 2f) {
-                                val nextPos = (currentPositionMs - 10_000L).coerceAtLeast(0L)
-                                onSeekTo(nextPos)
+                                val nextPos = (pos - 10_000L).coerceAtLeast(0L)
+                                latestSeekTo(nextPos)
                                 controller.showHud(GestureHudState(GestureHudType.SEEK_BACKWARD, "Rewind -10s"))
                             } else {
-                                val nextPos = (currentPositionMs + 10_000L).coerceAtMost(durationMs.coerceAtLeast(currentPositionMs))
-                                onSeekTo(nextPos)
+                                val nextPos = (pos + 10_000L).coerceAtMost(dur.coerceAtLeast(pos))
+                                latestSeekTo(nextPos)
                                 controller.showHud(GestureHudState(GestureHudType.SEEK_FORWARD, "Forward +10s"))
                             }
                         }
                         DoubleTapAction.PLAY_PAUSE -> {
                             triggerHaptic()
-                            onTogglePlayPause()
+                            val wasPlaying = latestIsPlaying
+                            latestTogglePlayPause()
                             controller.showHud(
                                 GestureHudState(
                                     GestureHudType.PLAY_PAUSE,
-                                    if (isPlaying) "Paused" else "Playing",
-                                    isPlaying = !isPlaying
+                                    if (wasPlaying) "Paused" else "Playing",
+                                    isPlaying = !wasPlaying
                                 )
                             )
                         }
                         DoubleTapAction.TOGGLE_FAVORITE -> {
                             triggerHaptic()
-                            onToggleFavorite?.invoke()
+                            latestToggleFavorite?.invoke()
                             controller.showHud(GestureHudState(GestureHudType.FAVORITE, "Favorite Updated"))
                         }
                         DoubleTapAction.NONE -> Unit

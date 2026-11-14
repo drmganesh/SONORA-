@@ -544,6 +544,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun setAudioFocusEnabled(enabled: Boolean) {
         _audioFocusEnabled.value = enabled
         preferences.audioFocusEnabled = enabled
+        musicService?.updateAudioPolicySettings(enabled, _headsetAutoPlayPause.value)
     }
 
     fun setResumeOnLaunch(enabled: Boolean) {
@@ -554,6 +555,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun setHeadsetAutoPlayPause(enabled: Boolean) {
         _headsetAutoPlayPause.value = enabled
         preferences.headsetAutoPlayPause = enabled
+        musicService?.updateAudioPolicySettings(_audioFocusEnabled.value, enabled)
     }
 
     fun setShowLockScreenControls(enabled: Boolean) {
@@ -823,6 +825,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     private var progressTrackingJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private var serviceCollectorsJob: Job? = null
+    private var originalQueueBeforeShuffle: List<Song>? = null
+    private val dateKeyFormatter = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -840,15 +845,20 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             musicService = connectedService
             isBound = true
 
+            connectedService.updateAudioPolicySettings(_audioFocusEnabled.value, _headsetAutoPlayPause.value)
             connectedService.setPlaybackCallback(object : SonoraMusicService.ServicePlaybackCallback {
-                override fun onRemotePlay() = togglePlayPause()
-                override fun onRemotePause() = togglePlayPause()
+                override fun onRemotePlay() = resumePlayback()
+                override fun onRemotePause() = pausePlayback()
                 override fun onRemoteNext() = playNext()
                 override fun onRemotePrev() = playPrevious()
                 override fun onRemoteShuffle() = toggleShuffle()
                 override fun onRemoteRepeat() = cycleRepeatMode()
                 override fun onRemoteSeek(positionMs: Long) = seekTo(positionMs)
             })
+
+            serviceCollectorsJob?.cancel()
+            serviceCollectorsJob = kotlinx.coroutines.SupervisorJob()
+            val collectorScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + serviceCollectorsJob!!)
 
             // Bind audio visualizer & bands flows from AudioEngine
             val engine = connectedService.audioEngine
@@ -863,16 +873,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 eng.update8dOrbitConfig(_orbit8dEnabled.value, _orbit8dSpeed.value, _orbit8dDepth.value)
                 eng.setPlaybackSpeed(_playbackSpeed.value)
 
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.visualizerFrequencies.collect { _visualizerFrequencies.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.waveformSamples.collect { _waveformSamples.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.isTwsConnected.collect { _isTwsConnected.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.connectedAudioDeviceName.collect {
                         _connectedAudioDeviceName.value = it
                         if (_currentSong.value != null) {
@@ -880,22 +890,22 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.orbitAzimuthRad.collect { _orbitAzimuthRad.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.isBassBoostSupported.collect { _isBassBoostSupported.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.isVirtualizerSupported.collect { _isVirtualizerSupported.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.isReverbSupported.collect { _isReverbSupported.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.isLoudnessSupported.collect { _isLoudnessSupported.value = it }
                 }
-                viewModelScope.launch {
+                collectorScope.launch {
                     eng.dspDiagnosticMessage.collect { _dspDiagnosticMessage.value = it }
                 }
             }
@@ -912,6 +922,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            serviceCollectorsJob?.cancel()
+            serviceCollectorsJob = null
             musicService = null
             isBound = false
         }
@@ -959,6 +971,15 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun ensureServiceStarted() {
+        try {
+            val intent = Intent(getApplication(), SonoraMusicService::class.java)
+            getApplication<Application>().startService(intent)
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not elevate SonoraMusicService with startService: ${e.message}")
+        }
+    }
+
     fun loadLocalSongs() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -967,12 +988,20 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 val filteredInitial = domain.filter.MusicFolderFilter.filterSongs(songs, folderFilterPreferences.settings.value)
                 _allSongs.value = filteredInitial
                 if (_queue.value.isEmpty() && filteredInitial.isNotEmpty()) {
+                    val byId = filteredInitial.associateBy { it.id }
+                    val savedIds = preferences.lastQueueSongIds
+                    val restoredQueue = savedIds.mapNotNull { byId[it] }.ifEmpty { filteredInitial }
                     val lastId = preferences.lastPlayedSongId
-                    val savedSong = if (lastId != -1L) filteredInitial.find { it.id == lastId } else null
-                    val targetSong = savedSong ?: filteredInitial.first()
-                    val targetIndex = if (savedSong != null) filteredInitial.indexOf(savedSong).coerceAtLeast(0) else 0
+                    val savedIdx = preferences.lastQueueIndex
+                    val targetIndex = when {
+                        lastId != -1L -> restoredQueue.indexOfFirst { it.id == lastId }
+                            .takeIf { it >= 0 }
+                            ?: savedIdx.coerceIn(0, restoredQueue.lastIndex)
+                        else -> savedIdx.coerceIn(0, restoredQueue.lastIndex)
+                    }
+                    val targetSong = restoredQueue[targetIndex]
 
-                    _queue.value = filteredInitial
+                    _queue.value = restoredQueue
                     _queueIndex.value = targetIndex
                     _currentSong.value = targetSong
                     _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
@@ -1197,8 +1226,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     // --- Playback Controls ---
 
     fun playSong(song: Song, newQueue: List<Song>? = null, startIndex: Int = -1) {
+        isCrossfadingNext = false
         val q = newQueue ?: _queue.value
         val idx = if (startIndex >= 0) startIndex else q.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+        if (newQueue != null && _playbackInfo.value.shuffleMode == ShuffleMode.OFF) {
+            originalQueueBeforeShuffle = newQueue
+        }
 
         _queue.value = q
         _queueIndex.value = idx
@@ -1227,6 +1260,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         pendingPlayRequest = null
         pendingTogglePlayOnConnect = false
 
+        ensureServiceStarted()
+        if (musicService?.requestAudioFocusIfNeeded() == false) {
+            _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
+            return
+        }
+
         engine.prepareAndPlay(
             uri = song.uri,
             fallbackPath = song.dataPath,
@@ -1248,10 +1287,48 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 handleTrackCompletion()
             },
             onError = { errMsg ->
+                isCrossfadingNext = false
                 _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
                 _dspDiagnosticMessage.value = errMsg
+                syncNotification(_currentSong.value, false)
             }
         )
+    }
+
+    fun resumePlayback() {
+        val engine = musicService?.audioEngine
+        if (engine == null) {
+            pendingTogglePlayOnConnect = true
+            if (!isBound) bindMusicService()
+            return
+        }
+        if (engine.isPlaying) return
+        val cur = _currentSong.value
+        if (cur != null) {
+            if (engine.isPrepared) {
+                ensureServiceStarted()
+                if (musicService?.requestAudioFocusIfNeeded() == false) return
+                engine.play()
+                _playbackInfo.value = _playbackInfo.value.copy(isPlaying = true)
+                startProgressTracker()
+                syncNotification(cur, true)
+            } else {
+                playSong(cur)
+            }
+        } else if (_allSongs.value.isNotEmpty()) {
+            playSong(_allSongs.value.first())
+        }
+    }
+
+    fun pausePlayback() {
+        isCrossfadingNext = false
+        val engine = musicService?.audioEngine
+        if (engine != null && engine.isPlaying) {
+            engine.pause()
+        }
+        musicService?.abandonAudioFocus()
+        _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
+        syncNotification(_currentSong.value, false)
     }
 
     fun togglePlayPause() {
@@ -1262,23 +1339,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         if (engine.isPlaying) {
-            engine.pause()
-            _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
-            syncNotification(_currentSong.value, false)
+            pausePlayback()
         } else {
-            val cur = _currentSong.value
-            if (cur != null) {
-                if (engine.isPrepared) {
-                    engine.play()
-                    _playbackInfo.value = _playbackInfo.value.copy(isPlaying = true)
-                    startProgressTracker()
-                    syncNotification(cur, true)
-                } else {
-                    playSong(cur)
-                }
-            } else if (_allSongs.value.isNotEmpty()) {
-                playSong(_allSongs.value.first())
-            }
+            resumePlayback()
         }
     }
 
@@ -1321,13 +1384,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         val q = _queue.value
         if (q.isEmpty()) return
 
-        // Choose next track: Automix match if enabled and nextMatchedSong is in queue, or next in queue
-        val targetSong = if (_automixEnabled.value && _matchNextSongEnabled.value && _nextMatchedSong.value != null) {
-            _nextMatchedSong.value!!
+        val matched = _nextMatchedSong.value
+        val targetSong = if (_automixEnabled.value && _matchNextSongEnabled.value && matched != null && q.any { it.id == matched.id }) {
+            matched
         } else {
             var nextIdx = _queueIndex.value + 1
             if (nextIdx >= q.size) {
-                if (_playbackInfo.value.repeatMode == RepeatMode.ALL) nextIdx = 0 else return
+                if (_playbackInfo.value.repeatMode == RepeatMode.ALL) {
+                    nextIdx = 0
+                } else {
+                    isCrossfadingNext = false
+                    return
+                }
             }
             q[nextIdx]
         }
@@ -1347,6 +1415,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playPrevious() {
+        isCrossfadingNext = false
         val engine = musicService?.audioEngine
         if (engine != null && engine.currentPosition > 3000) {
             seekTo(0)
@@ -1379,13 +1448,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         preferences.shuffleMode = newMode
         if (newMode == ShuffleMode.ON) {
             val cur = _currentSong.value
-            val shuffled = _queue.value.shuffled()
-            val finalQueue = if (cur != null) listOf(cur) + (shuffled - cur) else shuffled
+            val currentQ = _queue.value
+            if (currentQ.isNotEmpty()) {
+                originalQueueBeforeShuffle = currentQ
+            }
+            val shuffled = currentQ.shuffled()
+            val finalQueue = if (cur != null) listOf(cur) + shuffled.filter { it.id != cur.id } else shuffled
             _queue.value = finalQueue
             _queueIndex.value = 0
         } else {
-            _queue.value = _allSongs.value
-            _queueIndex.value = _queue.value.indexOfFirst { it.id == _currentSong.value?.id }.coerceAtLeast(0)
+            val restored = originalQueueBeforeShuffle?.takeIf { it.isNotEmpty() } ?: _allSongs.value
+            _queue.value = restored
+            _queueIndex.value = restored.indexOfFirst { it.id == _currentSong.value?.id }.coerceAtLeast(0)
         }
         syncNotification()
     }
@@ -1469,8 +1543,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun recordListeningSecond() {
-        val format = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-        val todayKey = format.format(java.util.Date())
+        val todayKey = synchronized(dateKeyFormatter) { dateKeyFormatter.format(java.util.Date()) }
         preferences.addListeningTime(1, todayKey)
         // Refresh live analytics state
         val todaySec = preferences.getListeningTime(todayKey)
@@ -1484,8 +1557,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleFavorite(song: Song) {
         viewModelScope.launch(Dispatchers.IO) {
             val newFav = !song.isFavorite
-            dao.updateFavorite(song.id, newFav)
+            dao.upsertFavorite(song.id, newFav)
             _allSongs.value = _allSongs.value.map {
+                if (it.id == song.id) it.copy(isFavorite = newFav) else it
+            }
+            _queue.value = _queue.value.map {
                 if (it.id == song.id) it.copy(isFavorite = newFav) else it
             }
             if (_currentSong.value?.id == song.id) {
@@ -1497,7 +1573,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private fun incrementPlayCount(song: Song) {
         viewModelScope.launch(Dispatchers.IO) {
             val now = System.currentTimeMillis()
-            dao.incrementPlayCount(song.id, now)
+            dao.upsertIncrementPlayCount(song.id, now)
             _allSongs.value = _allSongs.value.map {
                 if (it.id == song.id) it.copy(playCount = it.playCount + 1, lastPlayedTimestamp = now) else it
             }
@@ -1809,10 +1885,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 remaining--
                 _playbackInfo.value = _playbackInfo.value.copy(sleepTimerMinutesRemaining = if (remaining > 0) remaining else null)
             }
-            // Timer expired -> pause playback
-            musicService?.audioEngine?.pause()
-            _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false, sleepTimerMinutesRemaining = null)
-            syncNotification(_currentSong.value, false)
+            // Timer expired -> pause playback cleanly
+            pausePlayback()
+            _playbackInfo.value = _playbackInfo.value.copy(sleepTimerMinutesRemaining = null)
         }
     }
 
@@ -1825,9 +1900,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         lyrics: String?
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            val existing = dao.getMetadata(songId)
             dao.upsertMetadata(
                 SongMetadataEntity(
                     id = songId,
+                    isFavorite = existing?.isFavorite ?: false,
+                    playCount = existing?.playCount ?: 0,
+                    lastPlayedTimestamp = existing?.lastPlayedTimestamp ?: 0L,
                     customTitle = newTitle,
                     customArtist = newArtist,
                     customAlbum = newAlbum,
@@ -1835,8 +1914,19 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     customLyrics = lyrics
                 )
             )
-            // Update in-memory songs
+            // Update in-memory songs and active queue
             _allSongs.value = _allSongs.value.map {
+                if (it.id == songId) {
+                    it.copy(
+                        title = newTitle,
+                        artist = newArtist,
+                        album = newAlbum,
+                        genre = newGenre,
+                        lyrics = lyrics
+                    )
+                } else it
+            }
+            _queue.value = _queue.value.map {
                 if (it.id == songId) {
                     it.copy(
                         title = newTitle,
@@ -1914,6 +2004,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
+        serviceCollectorsJob?.cancel()
         progressTrackingJob?.cancel()
         sleepTimerJob?.cancel()
         if (isBound) {

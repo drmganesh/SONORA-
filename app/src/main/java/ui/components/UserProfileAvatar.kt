@@ -37,7 +37,6 @@ import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.example.model.UserProfile
 import ui.theme.EditorialColors
-import java.io.File
 
 /**
  * Circular User Profile Avatar displaying the user's uploaded photo or a clean,
@@ -74,10 +73,7 @@ fun UserProfileAvatar(
             runCatching {
                 val parsed = Uri.parse(raw)
                 when (parsed.scheme) {
-                    "file" -> {
-                        val path = parsed.path
-                        if (!path.isNullOrBlank() && File(path).exists()) parsed else null
-                    }
+                    "file" -> if (!parsed.path.isNullOrBlank()) parsed else null
                     "content", "android.resource", "http", "https" -> parsed
                     else -> null
                 }

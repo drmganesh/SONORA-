@@ -136,9 +136,10 @@ private fun DailyMixEditorialCard(
             )
             .testTag("daily_mix_card_${mix.id}")
     ) {
-        if (bitmap != null) {
+        val loadedBitmap = bitmap
+        if (loadedBitmap != null) {
             Image(
-                bitmap = bitmap!!.asImageBitmap(),
+                bitmap = loadedBitmap.asImageBitmap(),
                 contentDescription = "${mix.title} artwork",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

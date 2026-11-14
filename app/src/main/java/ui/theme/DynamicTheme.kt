@@ -9,8 +9,8 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import com.example.model.ThemeMode
 import com.example.ui.theme.Typography
@@ -18,21 +18,16 @@ import com.example.ui.theme.Typography
 /**
  * CompositionLocal providing access to the current active DynamicColorPalette.
  */
-val LocalDynamicColorPalette = staticCompositionLocalOf {
+val LocalDynamicColorPalette = compositionLocalOf {
     DynamicColorPalette.default()
 }
 
-/**
- * Animated Dynamic Theme wrapper for SONORA.
- * Smoothly interpolates all interface colors (600ms default) when track or album art changes.
- */
 @Composable
-fun DynamicTheme(
+fun rememberAnimatedDynamicPalette(
     palette: DynamicColorPalette,
-    themeMode: ThemeMode = ThemeMode.AMOLED_BLACK,
-    animationDurationMs: Int = 600,
-    content: @Composable () -> Unit
-) {
+    animationDurationMs: Int = 600
+): DynamicColorPalette {
+    if (animationDurationMs <= 0) return palette
     val animSpec = tween<Color>(durationMillis = animationDurationMs, easing = FastOutSlowInEasing)
 
     val animPrimary by animateColorAsState(targetValue = palette.primary, animationSpec = animSpec, label = "dynPrimary")
@@ -66,7 +61,7 @@ fun DynamicTheme(
     val animTextMuted by animateColorAsState(targetValue = palette.textMuted, animationSpec = animSpec, label = "dynTextMuted")
     val animSubtleTint by animateColorAsState(targetValue = palette.subtleTint, animationSpec = animSpec, label = "dynSubtleTint")
 
-    val animatedPalette = DynamicColorPalette(
+    return DynamicColorPalette(
         primary = animPrimary,
         onPrimary = animOnPrimary,
         secondary = animSecondary,
@@ -100,45 +95,59 @@ fun DynamicTheme(
         isDarkPalette = palette.isDarkPalette,
         gradientEnabled = palette.gradientEnabled
     )
+}
+
+/**
+ * Animated Dynamic Theme wrapper for SONORA.
+ * Smoothly interpolates all interface colors (600ms default) when track or album art changes.
+ */
+@Composable
+fun DynamicTheme(
+    palette: DynamicColorPalette,
+    themeMode: ThemeMode = ThemeMode.AMOLED_BLACK,
+    animationDurationMs: Int = 600,
+    content: @Composable () -> Unit
+) {
+    val animatedPalette = rememberAnimatedDynamicPalette(palette, animationDurationMs)
 
     val useLight = !palette.isDarkPalette || themeMode == ThemeMode.LIGHT
     val m3ColorScheme: ColorScheme = if (useLight) {
         lightColorScheme(
-            primary = animPrimary,
-            onPrimary = animOnPrimary,
-            primaryContainer = animSecondarySurface,
-            onPrimaryContainer = animTextPrimary,
-            secondary = animSecondary,
-            onSecondary = animOnSecondary,
-            tertiary = animTertiary,
-            onTertiary = animOnTertiary,
-            background = animBackground,
-            onBackground = animOnBackground,
-            surface = animSurface,
-            onSurface = animOnSurface,
-            surfaceVariant = animSurfaceVariant,
-            onSurfaceVariant = animTextSecondary,
-            surfaceContainer = animElevatedSurface,
-            outline = animOutline
+            primary = animatedPalette.primary,
+            onPrimary = animatedPalette.onPrimary,
+            primaryContainer = animatedPalette.secondarySurface,
+            onPrimaryContainer = animatedPalette.textPrimary,
+            secondary = animatedPalette.secondary,
+            onSecondary = animatedPalette.onSecondary,
+            tertiary = animatedPalette.tertiary,
+            onTertiary = animatedPalette.onTertiary,
+            background = animatedPalette.background,
+            onBackground = animatedPalette.onBackground,
+            surface = animatedPalette.surface,
+            onSurface = animatedPalette.onSurface,
+            surfaceVariant = animatedPalette.surfaceVariant,
+            onSurfaceVariant = animatedPalette.textSecondary,
+            surfaceContainer = animatedPalette.elevatedSurface,
+            outline = animatedPalette.outline
         )
     } else {
         darkColorScheme(
-            primary = animPrimary,
-            onPrimary = animOnPrimary,
-            primaryContainer = animCardBg,
-            onPrimaryContainer = animSecondary,
-            secondary = animSecondary,
-            onSecondary = animOnSecondary,
-            tertiary = animTertiary,
-            onTertiary = animOnTertiary,
-            background = animBackground,
-            onBackground = animOnBackground,
-            surface = animSurface,
-            onSurface = animOnSurface,
-            surfaceVariant = animSurfaceVariant,
-            onSurfaceVariant = animTextSecondary,
-            surfaceContainer = animElevatedSurface,
-            outline = animOutline
+            primary = animatedPalette.primary,
+            onPrimary = animatedPalette.onPrimary,
+            primaryContainer = animatedPalette.cardBackground,
+            onPrimaryContainer = animatedPalette.secondary,
+            secondary = animatedPalette.secondary,
+            onSecondary = animatedPalette.onSecondary,
+            tertiary = animatedPalette.tertiary,
+            onTertiary = animatedPalette.onTertiary,
+            background = animatedPalette.background,
+            onBackground = animatedPalette.onBackground,
+            surface = animatedPalette.surface,
+            onSurface = animatedPalette.onSurface,
+            surfaceVariant = animatedPalette.surfaceVariant,
+            onSurfaceVariant = animatedPalette.textSecondary,
+            surfaceContainer = animatedPalette.elevatedSurface,
+            outline = animatedPalette.outline
         )
     }
 

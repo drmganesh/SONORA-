@@ -510,36 +510,36 @@ class SonoraDspProcessor {
                 }
             }
 
+            val eqOnlyWet = smoothedEqWet
+            var mixedL = (dryL + eqOnlyWet * (l.toFloat() - dryL)).toDouble()
+            var mixedR = (dryR + eqOnlyWet * (r.toFloat() - dryR)).toDouble()
+
             if (bassActive) {
-                val outL = bassB0 * l + bassZ1L
-                val n1L = bassB1 * l - bassA1 * outL + bassZ2L
-                val n2L = bassB2 * l - bassA2 * outL
+                val outL = bassB0 * mixedL + bassZ1L
+                val n1L = bassB1 * mixedL - bassA1 * outL + bassZ2L
+                val n2L = bassB2 * mixedL - bassA2 * outL
                 if (outL.isFinite() && n1L.isFinite() && n2L.isFinite()) {
                     bassZ1L = if (abs(n1L) < 1e-20) 0.0 else n1L
                     bassZ2L = if (abs(n2L) < 1e-20) 0.0 else n2L
-                    l = outL
+                    mixedL = outL
                 } else {
                     bassZ1L = 0.0; bassZ2L = 0.0
                 }
 
-                val outR = bassB0 * r + bassZ1R
-                val n1R = bassB1 * r - bassA1 * outR + bassZ2R
-                val n2R = bassB2 * r - bassA2 * outR
+                val outR = bassB0 * mixedR + bassZ1R
+                val n1R = bassB1 * mixedR - bassA1 * outR + bassZ2R
+                val n2R = bassB2 * mixedR - bassA2 * outR
                 if (outR.isFinite() && n1R.isFinite() && n2R.isFinite()) {
                     bassZ1R = if (abs(n1R) < 1e-20) 0.0 else n1R
                     bassZ2R = if (abs(n2R) < 1e-20) 0.0 else n2R
-                    r = outR
+                    mixedR = outR
                 } else {
                     bassZ1R = 0.0; bassZ2R = 0.0
                 }
             }
 
-            // Smooth crossfade for EQ section enable/disable; Bass Shelf always follows bassStrength
-            val eqOnlyWet = smoothedEqWet
-            val eqMixedL = dryL + eqOnlyWet * (l.toFloat() - dryL)
-            val eqMixedR = dryR + eqOnlyWet * (r.toFloat() - dryR)
-            buffer[lIdx] = eqMixedL
-            buffer[rIdx] = eqMixedR
+            buffer[lIdx] = mixedL.toFloat()
+            buffer[rIdx] = mixedR.toFloat()
         }
     }
 

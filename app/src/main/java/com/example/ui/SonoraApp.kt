@@ -125,35 +125,35 @@ fun SonoraApp(viewModel: SonoraViewModel) {
         val subtleEnter = if (reduceAnimations) EnterTransition.None else slideInVertically(initialOffsetY = { it / 6 }) + fadeIn()
         val subtleExit = if (reduceAnimations) ExitTransition.None else slideOutVertically(targetOffsetY = { it / 6 }) + fadeOut()
 
-        // Ordered back-stack dismissal matching visual Z-order (topmost overlay first)
-        BackHandler(enabled = showQueueScreen) {
-            showQueueScreen = false
-        }
-        BackHandler(enabled = showFolderManagementScreen && !showQueueScreen) {
-            showFolderManagementScreen = false
-        }
-        BackHandler(enabled = showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        // Ordered back-stack dismissal matching exact visual Z-order (topmost overlay first)
+        BackHandler(enabled = showPlayerStyleScreen) {
             showPlayerStyleScreen = false
         }
-        BackHandler(enabled = showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showDynamicThemeScreen && !showPlayerStyleScreen) {
             showDynamicThemeScreen = false
         }
-        BackHandler(enabled = showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
+            showQueueScreen = false
+        }
+        BackHandler(enabled = showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
+            showFolderManagementScreen = false
+        }
+        BackHandler(enabled = showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
             showAudioStudioScreen = false
         }
-        BackHandler(enabled = showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
             showEqualizerScreen = false
         }
-        BackHandler(enabled = isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
             isNowPlayingExpanded = false
         }
-        BackHandler(enabled = showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
             showPlaylistsScreen = false
         }
-        BackHandler(enabled = showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
             showSettingsScreen = false
         }
-        BackHandler(enabled = currentTab != 0 && !showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = currentTab != 0 && !showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showPlayerStyleScreen) {
             currentTab = 0
         }
 

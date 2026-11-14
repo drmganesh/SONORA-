@@ -399,5 +399,53 @@ class SonoraDspProcessorTest {
         assertTrue("First sample after seek must ramp smoothly from ~0 (was ${buf[0]})", abs(buf[0]) < 0.05f)
         assertValidAudibleStereo(buf, 1024, minRms = 0.15f)
     }
-}
 
+    @Test
+    fun `test Audio Studio Bass Boost operates independently when 15-band EQ master switch is OFF`() {
+        val dsp = SonoraDspProcessor()
+        val sr = 48000
+        val frames = 4096
+        dsp.configureSampleRate(sr)
+
+        // Pure 60Hz sub-bass sine wave
+        val dryLow = generateStereoSineBuffer(frames, sr, leftFreq = 60.0, rightFreq = 60.0, amplitude = 0.25f)
+        val (dryRmsL, _) = computeChannelRms(dryLow, frames)
+
+        // EQ master switch OFF, Bass Boost strength = 900, Global Bypass = OFF -> Bass Boost MUST still boost 60Hz
+        dsp.updateSnapshot(
+            SonoraDspSnapshot(
+                globalBypass = false,
+                eqEnabled = false,
+                eqGainsDb = FloatArray(15) { -8.0f },
+                bassBoostStrength = 900
+            )
+        )
+        val bassBuf = dryLow.copyOf()
+        dsp.processStereoBuffer(bassBuf, frames)
+        assertValidAudibleStereo(bassBuf, frames, minRms = 0.15f)
+        val (boostRmsL, _) = computeChannelRms(bassBuf, frames)
+        assertTrue(
+            "Bass boost must boost sub-bass even when 15-band EQ is OFF (dry=$dryRmsL, boosted=$boostRmsL)",
+            boostRmsL > dryRmsL * 1.15f
+        )
+
+        // Global Bypass ON -> smooth 10ms ramp settles to bit-exact dry pass-through even with bassBoostStrength = 900
+        dsp.updateSnapshot(
+            SonoraDspSnapshot(
+                globalBypass = true,
+                eqEnabled = false,
+                bassBoostStrength = 900
+            )
+        )
+        repeat(3) {
+            dsp.processStereoBuffer(dryLow.copyOf(), frames)
+        }
+        val bypassedBuf = dryLow.copyOf()
+        dsp.processStereoBuffer(bypassedBuf, frames)
+        val (bypassRmsL, _) = computeChannelRms(bypassedBuf, frames)
+        assertTrue(
+            "Global bypass ON must bypass Bass Boost (dry=$dryRmsL, bypassed=$bypassRmsL)",
+            abs(bypassRmsL - dryRmsL) < 1e-4f
+        )
+    }
+}

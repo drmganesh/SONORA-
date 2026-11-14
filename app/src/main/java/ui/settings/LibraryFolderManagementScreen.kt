@@ -28,10 +28,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.CompareArrows
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.CompareArrows
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOff
@@ -426,7 +426,7 @@ fun LibraryFolderManagementScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.CompareArrows, contentDescription = null, tint = colors.accentStrong)
+                                Icon(Icons.AutoMirrored.Rounded.CompareArrows, contentDescription = null, tint = colors.accentStrong)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Whitelist vs Blacklist Precedence",

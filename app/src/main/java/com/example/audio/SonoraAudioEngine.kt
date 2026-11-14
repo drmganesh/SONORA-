@@ -50,6 +50,12 @@ class SonoraAudioEngine(private val context: Context) {
         onAzimuthChanged = { azimuth ->
             _orbitAzimuthRad.value = azimuth
             _dspDiagnosticMessage.value = dspProcessor.lastDspError
+        },
+        onAudioSessionChanged = { newSessionId ->
+            if (!usingFallbackPlayer && newSessionId != 0) {
+                currentSessionId = newSessionId
+                adaptiveEqualizer.attachToAudioSession(newSessionId, softwareDspHandled = true)
+            }
         }
     )
 
@@ -113,6 +119,8 @@ class SonoraAudioEngine(private val context: Context) {
     private var loudnessGainMb = 300 // millibels
     private var spatialConfig = SpatialAudioConfig()
     private var currentPlaybackSpeed = 1.0f
+    val playbackSpeed: Float
+        get() = currentPlaybackSpeed
 
     private var globalEffectsBypass = false
     private var orbit8dEnabled = false
@@ -139,6 +147,9 @@ class SonoraAudioEngine(private val context: Context) {
 
     private var crossfadeJob: Job? = null
     private var currentVolumeScale = 1.0f
+    @Volatile
+    internal var focusDuckScale = 1.0f
+        private set
     private var fallbackOrbitJob: Job? = null
     private var visualizerDecayJob: Job? = null
     private var eqObserverJob: Job? = null
@@ -178,9 +189,19 @@ class SonoraAudioEngine(private val context: Context) {
                 orbit8dEnabled = orbit8dEnabled,
                 orbit8dSpeed = orbit8dSpeed,
                 orbit8dDepth = orbit8dDepth,
-                volumeScale = currentVolumeScale.coerceIn(0f, 1f)
+                volumeScale = (currentVolumeScale * focusDuckScale).coerceIn(0f, 1f)
             )
         )
+    }
+
+    fun setFocusDuckScale(scale: Float) {
+        val target = scale.coerceIn(0.15f, 1.0f)
+        if (abs(focusDuckScale - target) < 0.01f) return
+        focusDuckScale = target
+        pushDspSnapshot()
+        if (usingFallbackPlayer) {
+            applyFallbackVolumeBalance()
+        }
     }
 
     private fun setupAudioDeviceDetection() {
@@ -278,6 +299,7 @@ class SonoraAudioEngine(private val context: Context) {
         crossfadeJob?.cancel()
         crossfadeJob = null
         currentVolumeScale = 1.0f
+        focusDuckScale = 1.0f
         pushDspSnapshot()
 
         stopFallbackMediaPlayer()
@@ -752,8 +774,27 @@ class SonoraAudioEngine(private val context: Context) {
                         _waveformSamples.value = simulatedWave
                     }
                 } else {
-                    _visualizerFrequencies.value = _visualizerFrequencies.value.map { (it * 0.82f).coerceAtLeast(0f) }.toFloatArray()
-                    _waveformSamples.value = _waveformSamples.value.map { it * 0.82f }.toFloatArray()
+                    val curFreq = _visualizerFrequencies.value
+                    val curWave = _waveformSamples.value
+                    val freqActive = curFreq.any { abs(it) > 0.002f }
+                    val waveActive = curWave.any { abs(it) > 0.002f }
+                    if (freqActive) {
+                        val decayedFreq = FloatArray(curFreq.size) { i ->
+                            val v = curFreq[i] * 0.82f
+                            if (v > 0.002f) v else 0f
+                        }
+                        _visualizerFrequencies.value = decayedFreq
+                    }
+                    if (waveActive) {
+                        val decayedWave = FloatArray(curWave.size) { i ->
+                            val v = curWave[i] * 0.82f
+                            if (abs(v) > 0.002f) v else 0f
+                        }
+                        _waveformSamples.value = decayedWave
+                    }
+                    if (!freqActive && !waveActive) {
+                        delay(180L)
+                    }
                 }
             }
         }
@@ -762,7 +803,9 @@ class SonoraAudioEngine(private val context: Context) {
     fun release() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && audioDeviceCallback != null) {
             try {
-                audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback as AudioDeviceCallback)
+                (audioDeviceCallback as? AudioDeviceCallback)?.let { cb ->
+                    audioManager?.unregisterAudioDeviceCallback(cb)
+                }
             } catch (_: Exception) {
             }
             audioDeviceCallback = null

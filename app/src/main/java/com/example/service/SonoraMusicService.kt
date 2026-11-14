@@ -5,8 +5,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.support.v4.media.session.MediaSessionCompat
 import android.util.Log
@@ -54,13 +57,21 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private var audioManager: AudioManager? = null
     private var isNoisyReceiverRegistered = false
+    private var focusRequestObj: Any? = null
+    private var hasAudioFocus = false
+    private var resumeOnAudioFocusGain = false
+    @Volatile
+    private var audioFocusEnabled = true
+    @Volatile
+    private var headsetAutoPlayPause = true
     var playbackCallback: ServicePlaybackCallback? = null
         private set
 
     // Headphone unplug listener
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && headsetAutoPlayPause) {
+                resumeOnAudioFocusGain = false
                 playbackCallback?.onRemotePause()
             }
         }
@@ -78,6 +89,75 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     fun setPlaybackCallback(callback: ServicePlaybackCallback?) {
         this.playbackCallback = callback
+    }
+
+    fun updateAudioPolicySettings(focusEnabled: Boolean, headsetPauseEnabled: Boolean) {
+        audioFocusEnabled = focusEnabled
+        headsetAutoPlayPause = headsetPauseEnabled
+        if (!focusEnabled) {
+            abandonAudioFocus()
+        }
+    }
+
+    fun requestAudioFocusIfNeeded(): Boolean {
+        if (!audioFocusEnabled) return true
+        val am = audioManager ?: return true
+        if (hasAudioFocus) {
+            if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
+            return true
+        }
+        return try {
+            val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(attrs)
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener(this)
+                    .build()
+                focusRequestObj = req
+                am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    this,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                )
+            }
+            hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+            if (hasAudioFocus && ::audioEngine.isInitialized) {
+                audioEngine.setFocusDuckScale(1.0f)
+            }
+            result != AudioManager.AUDIOFOCUS_REQUEST_FAILED
+        } catch (e: Throwable) {
+            Log.w(TAG, "Audio focus request failed: ${e.message}")
+            true
+        }
+    }
+
+    fun abandonAudioFocus() {
+        resumeOnAudioFocusGain = false
+        hasAudioFocus = false
+        if (::audioEngine.isInitialized) {
+            audioEngine.setFocusDuckScale(1.0f)
+        }
+        val am = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                (focusRequestObj as? AudioFocusRequest)?.let { req ->
+                    am.abandonAudioFocusRequest(req)
+                }
+                focusRequestObj = null
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(this)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Audio focus abandon failed: ${e.message}")
+        }
     }
 
     override fun onCreate() {
@@ -138,18 +218,29 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     override fun onAudioFocusChange(focusChange: Int) {
+        if (!audioFocusEnabled) return
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> {
+                hasAudioFocus = false
+                resumeOnAudioFocusGain = false
+                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
                 playbackCallback?.onRemotePause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                resumeOnAudioFocusGain = ::audioEngine.isInitialized && audioEngine.isPlaying
+                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
                 playbackCallback?.onRemotePause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                // Duck volume if desired
+                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(0.25f)
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                playbackCallback?.onRemotePlay()
+                hasAudioFocus = true
+                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
+                if (resumeOnAudioFocusGain) {
+                    resumeOnAudioFocusGain = false
+                    playbackCallback?.onRemotePlay()
+                }
             }
         }
     }
@@ -158,6 +249,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        abandonAudioFocus()
         if (isNoisyReceiverRegistered) {
             try {
                 unregisterReceiver(noisyReceiver)

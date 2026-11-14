@@ -252,9 +252,10 @@ class SonoraNotificationManager(
             }
         ).build()
 
+        val speed = if (isPlaying) service.audioEngine.playbackSpeed else 0f
         val stateBuilder = PlaybackStateCompat.Builder()
             .setActions(actions)
-            .setState(state, positionMs.coerceAtLeast(0L), 1.0f, SystemClock.elapsedRealtime())
+            .setState(state, positionMs.coerceAtLeast(0L), speed, SystemClock.elapsedRealtime())
             .addCustomAction(shuffleCustomAction)
             .addCustomAction(repeatCustomAction)
 
@@ -424,12 +425,13 @@ class SonoraNotificationManager(
             deviceName = deviceName
         )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val hasPerm = ContextCompat.checkSelfPermission(
+        val hasNotificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
                 service,
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
-            if (!hasPerm) return
+        } else {
+            true
         }
 
         if (!isForegroundActive) {
@@ -446,15 +448,17 @@ class SonoraNotificationManager(
                 }
                 isForegroundActive = true
             } catch (e: Throwable) {
-                try {
-                    NotificationManagerCompat.from(service).notify(NOTIFICATION_ID, notification)
-                } catch (_: Throwable) {}
+                Log.w("SonoraNotifManager", "startForeground failed: ${e.message}")
+                if (hasNotificationPermission) {
+                    try {
+                        NotificationManagerCompat.from(service).notify(NOTIFICATION_ID, notification)
+                    } catch (_: Throwable) {}
+                }
             }
-        } else {
+        } else if (hasNotificationPermission) {
             try {
                 NotificationManagerCompat.from(service).notify(NOTIFICATION_ID, notification)
-            } catch (e: Throwable) {
-                // Ignored
+            } catch (_: Throwable) {
             }
         }
     }

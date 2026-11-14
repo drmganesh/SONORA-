@@ -5,8 +5,8 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -182,8 +182,8 @@ data class EditorialColors(
     }
 }
 
-val LocalEditorialColors = staticCompositionLocalOf { EditorialColors.default() }
-val LocalReduceAnimations = staticCompositionLocalOf { false }
+val LocalEditorialColors = compositionLocalOf { EditorialColors.default() }
+val LocalReduceAnimations = compositionLocalOf { false }
 
 private fun blendColors(c1: Color, c2: Color, ratio: Float): Color {
     val r = ratio.coerceIn(0f, 1f)

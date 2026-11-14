@@ -41,7 +41,8 @@ class PcmTrackPlayer(
     private val context: Context,
     private val dspProcessor: SonoraDspProcessor,
     private val onVisualizerFrame: (fftBins: FloatArray, waveformSamples: FloatArray) -> Unit,
-    private val onAzimuthChanged: (Float) -> Unit
+    private val onAzimuthChanged: (Float) -> Unit,
+    private val onAudioSessionChanged: (Int) -> Unit = {}
 ) {
     private val tag = "PcmTrackPlayer"
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -75,6 +76,9 @@ class PcmTrackPlayer(
 
     @Volatile
     private var playbackPitch: Float = 1.0f
+
+    @Volatile
+    private var customPlaybackParamsApplied: Boolean = false
 
     private var workerThread: Thread? = null
 
@@ -189,6 +193,7 @@ class PcmTrackPlayer(
             durationAtomicMs.set(durMs)
 
             val isRawPcm = mime.equals("audio/raw", ignoreCase = true)
+            var decoder: MediaCodec? = null
             if (!isRawPcm) {
                 // Ensure ample input buffer size for high-bitrate FLAC/MP3/AAC packets
                 try {
@@ -203,9 +208,11 @@ class PcmTrackPlayer(
                 } catch (_: Throwable) {
                 }
 
-                codec = MediaCodec.createDecoderByType(mime)
-                codec.configure(trackFormat, null, null, 0)
-                codec.start()
+                decoder = MediaCodec.createDecoderByType(mime).also {
+                    codec = it
+                    it.configure(trackFormat, null, null, 0)
+                    it.start()
+                }
             }
 
             if (stopRequested.get() || activeGeneration.get() != generation) {
@@ -227,7 +234,7 @@ class PcmTrackPlayer(
                 }
             }
 
-            if (isRawPcm) {
+            if (isRawPcm || decoder == null) {
                 val track = createAndStartStereoTrack(initialSampleRate, generation)
                 audioTrack = track
                 dspProcessor.configureSampleRate(initialSampleRate)
@@ -246,7 +253,7 @@ class PcmTrackPlayer(
                 streamCodecLoop(
                     generation = generation,
                     extractor = extractor,
-                    codec = codec!!,
+                    codec = decoder,
                     initialSampleRate = initialSampleRate,
                     initialChannels = initialChannels,
                     initialPcmEncoding = initialEncoding,
@@ -546,10 +553,11 @@ class PcmTrackPlayer(
                         currentChannels = readIntSafe(outFmt, MediaFormat.KEY_CHANNEL_COUNT, currentChannels).coerceAtLeast(1)
                         currentEncoding = readPcmEncodingSafe(outFmt, currentEncoding)
 
-                        if (track != null && newSr != currentSampleRate) {
+                        val currentTrack = track
+                        if (currentTrack != null && newSr != currentSampleRate) {
                             currentSampleRate = newSr
                             dspProcessor.configureSampleRate(newSr)
-                            val rebuilt = rebuildAudioTrack(track!!, newSr)
+                            val rebuilt = rebuildAudioTrack(currentTrack, newSr)
                             track = rebuilt
                             onTrackAllocated(rebuilt)
                         } else {
@@ -647,10 +655,12 @@ class PcmTrackPlayer(
         val newTrack = createStereoAudioTrack(sampleRate)
         activeAudioTrack = newTrack
         audioSessionId = newTrack.audioSessionId
+        customPlaybackParamsApplied = false
         applyPlaybackParams(newTrack, playbackSpeed, playbackPitch)
         if (!isPausedState && activeGeneration.get() == generation && !stopRequested.get()) {
             newTrack.play()
         }
+        mainHandler.post { onAudioSessionChanged(newTrack.audioSessionId) }
         return newTrack
     }
 
@@ -739,10 +749,12 @@ class PcmTrackPlayer(
         val newTrack = createStereoAudioTrack(sampleRate)
         activeAudioTrack = newTrack
         audioSessionId = newTrack.audioSessionId
+        customPlaybackParamsApplied = false
         applyPlaybackParams(newTrack, playbackSpeed, playbackPitch)
         if (!isPausedState && !stopRequested.get()) {
             newTrack.play()
         }
+        mainHandler.post { onAudioSessionChanged(newTrack.audioSessionId) }
         return newTrack
     }
 
@@ -793,10 +805,14 @@ class PcmTrackPlayer(
     private fun applyPlaybackParams(track: AudioTrack, speed: Float, pitch: Float) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
-                if (speed == 1.0f && pitch == 1.0f) return
+                val targetSpeed = speed.coerceIn(0.5f, 2.0f)
+                val targetPitch = pitch.coerceIn(0.5f, 2.0f)
+                val isUnity = kotlin.math.abs(targetSpeed - 1.0f) < 0.005f && kotlin.math.abs(targetPitch - 1.0f) < 0.005f
+                if (isUnity && !customPlaybackParamsApplied) return
                 track.playbackParams = PlaybackParams()
-                    .setSpeed(speed.coerceIn(0.5f, 2.0f))
-                    .setPitch(pitch.coerceIn(0.5f, 2.0f))
+                    .setSpeed(targetSpeed)
+                    .setPitch(targetPitch)
+                customPlaybackParamsApplied = !isUnity
             } catch (t: Throwable) {
                 Log.w(tag, "PlaybackParams unsupported: ${t.message}")
             }

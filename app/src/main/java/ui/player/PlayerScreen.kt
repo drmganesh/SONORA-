@@ -183,14 +183,20 @@ fun PlayerScreen(
         showStyleWheel = false
     }
 
-    val openEqualizerAction: () -> Unit = {
-        if (onOpenEqualizer != null) onOpenEqualizer() else showEqualizerModal = true
+    val openEqualizerAction: () -> Unit = remember(onOpenEqualizer) {
+        {
+            if (onOpenEqualizer != null) onOpenEqualizer() else showEqualizerModal = true
+        }
     }
-    val openAudioStudioAction: () -> Unit = {
-        if (onOpenAudioStudio != null) onOpenAudioStudio() else showAudioEffectsModal = true
+    val openAudioStudioAction: () -> Unit = remember(onOpenAudioStudio) {
+        {
+            if (onOpenAudioStudio != null) onOpenAudioStudio() else showAudioEffectsModal = true
+        }
     }
-    val openQueueAction: () -> Unit = {
-        if (onOpenQueueScreen != null) onOpenQueueScreen() else showQueueSheet = true
+    val openQueueAction: () -> Unit = remember(onOpenQueueScreen) {
+        {
+            if (onOpenQueueScreen != null) onOpenQueueScreen() else showQueueSheet = true
+        }
     }
 
     val renderState = remember(

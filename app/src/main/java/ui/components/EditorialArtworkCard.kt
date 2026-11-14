@@ -105,9 +105,10 @@ fun EditorialArtworkCard(
                 .border(0.75.dp, colors.cardBorder, shape),
             contentAlignment = Alignment.Center
         ) {
-            if (bitmap != null) {
+            val loadedBitmap = bitmap
+            if (loadedBitmap != null) {
                 Image(
-                    bitmap = bitmap!!.asImageBitmap(),
+                    bitmap = loadedBitmap.asImageBitmap(),
                     contentDescription = "$title artwork",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

@@ -25,6 +25,32 @@ interface SonoraDao {
     @Query("UPDATE song_metadata SET playCount = playCount + 1, lastPlayedTimestamp = :timestamp WHERE id = :id")
     suspend fun incrementPlayCount(id: Long, timestamp: Long = System.currentTimeMillis())
 
+    @Transaction
+    suspend fun upsertFavorite(id: Long, isFavorite: Boolean) {
+        val existing = getMetadata(id)
+        if (existing == null) {
+            upsertMetadata(SongMetadataEntity(id = id, isFavorite = isFavorite))
+        } else {
+            updateFavorite(id, isFavorite)
+        }
+    }
+
+    @Transaction
+    suspend fun upsertIncrementPlayCount(id: Long, timestamp: Long = System.currentTimeMillis()) {
+        val existing = getMetadata(id)
+        if (existing == null) {
+            upsertMetadata(
+                SongMetadataEntity(
+                    id = id,
+                    playCount = 1,
+                    lastPlayedTimestamp = timestamp
+                )
+            )
+        } else {
+            incrementPlayCount(id, timestamp)
+        }
+    }
+
     @Query("SELECT * FROM playlists ORDER BY createdAt DESC")
     fun getAllPlaylistsFlow(): Flow<List<PlaylistEntity>>
 

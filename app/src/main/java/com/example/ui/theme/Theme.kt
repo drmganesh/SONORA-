@@ -154,21 +154,20 @@ fun SonoraTheme(
 
     if (editorialColors != null) {
         val m3Scheme = editorialToColorScheme(editorialColors)
-        ui.theme.DynamicTheme(
+        val animatedDynamicPalette = ui.theme.rememberAnimatedDynamicPalette(
             palette = dynamicPalette ?: DynamicColorPalette.default(),
-            themeMode = if (editorialColors.isDark) ThemeMode.AMOLED_BLACK else ThemeMode.LIGHT,
             animationDurationMs = if (reduceAnimations) 0 else 600
+        )
+        CompositionLocalProvider(
+            LocalDynamicColorPalette provides animatedDynamicPalette,
+            LocalEditorialColors provides editorialColors,
+            LocalReduceAnimations provides reduceAnimations
         ) {
-            CompositionLocalProvider(
-                LocalEditorialColors provides editorialColors,
-                LocalReduceAnimations provides reduceAnimations
-            ) {
-                MaterialTheme(
-                    colorScheme = m3Scheme,
-                    typography = Typography,
-                    content = content
-                )
-            }
+            MaterialTheme(
+                colorScheme = m3Scheme,
+                typography = Typography,
+                content = content
+            )
         }
         return
     }

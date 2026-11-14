@@ -92,9 +92,10 @@ fun WaveformSeekbar(
                 val barProgressFraction = (i.toFloat() + 0.5f) / totalBars
                 val isPlayed = barProgressFraction <= progress
 
-                val normalizedHeight = if (hasRealAudio && liveWaveform != null && liveWaveform.isNotEmpty()) {
-                    val sampleIdx = (i * liveWaveform.size / totalBars).coerceIn(0, liveWaveform.lastIndex)
-                    val liveAmp = (abs(liveWaveform[sampleIdx]) * 2.2f).coerceIn(0.18f, 1.0f)
+                val wave = liveWaveform
+                val normalizedHeight = if (isPlaying && wave != null && wave.isNotEmpty() && hasRealAudio) {
+                    val sampleIdx = (i * wave.size / totalBars).coerceIn(0, wave.lastIndex)
+                    val liveAmp = (abs(wave[sampleIdx]) * 2.2f).coerceIn(0.18f, 1.0f)
                     (staticProfile[i] * 0.45f + liveAmp * 0.55f).coerceIn(0.18f, 1f)
                 } else {
                     if (isPlaying) staticProfile[i] else (staticProfile[i] * 0.55f).coerceAtLeast(0.18f)
