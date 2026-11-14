@@ -712,11 +712,12 @@ class SonoraAudioEngine(private val context: Context) {
                         spatialConfig.spatialIntensity.multiplier.coerceIn(0.5f, 1.05f)
                     val leftGain = (1f - (pan.coerceAtLeast(0f) * 0.45f)).coerceIn(0.45f, 1f)
                     val rightGain = (1f - ((-pan).coerceAtLeast(0f) * 0.45f)).coerceIn(0.45f, 1f)
-                    val floor = if (currentVolumeScale > 0.05f) 0.42f * currentVolumeScale else 0f
+                    val effectiveVol = (currentVolumeScale * focusDuckScale).coerceIn(0f, 1f)
+                    val floor = if (effectiveVol > 0.05f) 0.42f * effectiveVol else 0f
                     try {
                         fallbackMediaPlayer?.setVolume(
-                            (leftGain * currentVolumeScale).coerceIn(floor, 1f),
-                            (rightGain * currentVolumeScale).coerceIn(floor, 1f)
+                            (leftGain * effectiveVol).coerceIn(floor, 1f),
+                            (rightGain * effectiveVol).coerceIn(floor, 1f)
                         )
                     } catch (_: Throwable) {
                     }
@@ -734,11 +735,12 @@ class SonoraAudioEngine(private val context: Context) {
             left = left.coerceAtLeast(0.95f)
             right = right.coerceAtLeast(0.95f)
         }
-        val floor = if (currentVolumeScale > 0.05f) 0.40f * currentVolumeScale else 0f
+        val effectiveVol = (currentVolumeScale * focusDuckScale).coerceIn(0f, 1f)
+        val floor = if (effectiveVol > 0.05f) 0.40f * effectiveVol else 0f
         try {
             fallbackMediaPlayer?.setVolume(
-                (left * currentVolumeScale).coerceIn(floor, 1f),
-                (right * currentVolumeScale).coerceIn(floor, 1f)
+                (left * effectiveVol).coerceIn(floor, 1f),
+                (right * effectiveVol).coerceIn(floor, 1f)
             )
         } catch (e: Throwable) {
             Log.w(tag, "Fallback balance error: ${e.message}")

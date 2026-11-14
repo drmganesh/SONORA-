@@ -1422,11 +1422,12 @@ private fun AudioOutputDeviceSheet(
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val raw = am?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)?.toList().orEmpty()
         val mapped = raw.mapNotNull { dev ->
-            when (dev.type) {
-                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                AudioDeviceInfo.TYPE_BLE_HEADSET,
-                AudioDeviceInfo.TYPE_BLE_SPEAKER,
-                AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> {
+            when {
+                dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                    dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
+                        (dev.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                            dev.type == AudioDeviceInfo.TYPE_BLE_SPEAKER)) -> {
                     val label = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth Audio"
                     OutputRouteItem(
                         name = label,
@@ -1435,8 +1436,8 @@ private fun AudioOutputDeviceSheet(
                         isActive = connectedDeviceName.contains(label, ignoreCase = true) || isTwsConnected
                     )
                 }
-                AudioDeviceInfo.TYPE_WIRED_HEADSET,
-                AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> {
+                dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    dev.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> {
                     val label = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Wired Headphones"
                     OutputRouteItem(
                         name = label,
@@ -1445,9 +1446,9 @@ private fun AudioOutputDeviceSheet(
                         isActive = connectedDeviceName.contains("Wired", ignoreCase = true)
                     )
                 }
-                AudioDeviceInfo.TYPE_USB_DEVICE,
-                AudioDeviceInfo.TYPE_USB_HEADSET,
-                AudioDeviceInfo.TYPE_USB_ACCESSORY -> {
+                dev.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+                    dev.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                    dev.type == AudioDeviceInfo.TYPE_USB_ACCESSORY -> {
                     val label = dev.productName?.toString()?.takeIf { it.isNotBlank() } ?: "USB DAC / Audio"
                     OutputRouteItem(
                         name = label,
@@ -1456,7 +1457,7 @@ private fun AudioOutputDeviceSheet(
                         isActive = connectedDeviceName.contains("USB", ignoreCase = true)
                     )
                 }
-                AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> {
+                dev.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> {
                     OutputRouteItem(
                         name = "Phone Speaker",
                         subtitle = "Built-in Stereo Speaker",

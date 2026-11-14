@@ -470,9 +470,7 @@ class SonoraNotificationManager(
             try {
                 ServiceCompat.stopForeground(service, ServiceCompat.STOP_FOREGROUND_REMOVE)
             } catch (e: Throwable) {
-                try {
-                    service.stopForeground(true)
-                } catch (_: Throwable) {}
+                Log.w("SonoraNotifManager", "stopForeground failed: ${e.message}")
             }
             isForegroundActive = false
         } else {
@@ -542,7 +540,7 @@ class SonoraNotificationManager(
         return output
     }
 
-    private fun getFallbackArtworkBitmap(): Bitmap {
+    private val cachedFallbackArtwork: Bitmap by lazy {
         val size = 512
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -553,8 +551,10 @@ class SonoraNotificationManager(
         } else {
             canvas.drawColor(0xFF18112C.toInt())
         }
-        return createRoundedBitmap(bitmap, 32f)
+        createRoundedBitmap(bitmap, 32f)
     }
+
+    private fun getFallbackArtworkBitmap(): Bitmap = cachedFallbackArtwork
 
     fun release() {
         artworkLoadingJob?.cancel()

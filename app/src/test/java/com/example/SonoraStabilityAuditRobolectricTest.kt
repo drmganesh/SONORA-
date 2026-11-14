@@ -14,6 +14,8 @@ import com.example.model.ShuffleMode
 import com.example.model.Song
 import com.example.service.SonoraMusicService
 import com.example.viewmodel.SonoraViewModel
+import android.app.NotificationManager
+import com.example.data.LocalMusicScanner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -48,6 +50,34 @@ class SonoraStabilityAuditRobolectricTest {
     @After
     fun tearDown() {
         inMemoryDb.close()
+    }
+
+    @Test
+    fun `application registers playback notification channel and scanner + notification manager work cleanly`(): Unit = runBlocking {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = nm.getNotificationChannel(SonoraApplication.PLAYBACK_CHANNEL_ID)
+        assertNotNull("Playback notification channel must exist on API 26+", channel)
+
+        val scanner = LocalMusicScanner(context, dao)
+        val scanned = scanner.scanSongs()
+        assertTrue("LocalMusicScanner should safely return tracks or demo fallback", scanned.isNotEmpty())
+
+        val controller = Robolectric.buildService(SonoraMusicService::class.java)
+            .create()
+            .startCommand(0, 0)
+        val service = controller.get()
+
+        service.notificationManager.updateNotification(
+            song = scanned.first(),
+            isPlaying = true,
+            isShuffle = false,
+            deviceName = "Speaker"
+        )
+        assertNotNull(service.notificationManager.mediaSession)
+
+        service.notificationManager.clearNotification()
+        controller.destroy()
+        Unit
     }
 
     @Test

@@ -721,23 +721,12 @@ class PcmTrackPlayer(
         bufferSize: Int
     ): AudioTrack? {
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                AudioTrack.Builder()
-                    .setAudioAttributes(attrs)
-                    .setAudioFormat(format)
-                    .setBufferSizeInBytes(bufferSize)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setSessionId(AudioManager.AUDIO_SESSION_ID_GENERATE)
-                    .build()
-            } else {
-                AudioTrack(
-                    attrs,
-                    format,
-                    bufferSize,
-                    AudioTrack.MODE_STREAM,
-                    AudioManager.AUDIO_SESSION_ID_GENERATE
-                )
-            }
+            AudioTrack.Builder()
+                .setAudioAttributes(attrs)
+                .setAudioFormat(format)
+                .setBufferSizeInBytes(bufferSize)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
         } catch (t: Throwable) {
             Log.w(tag, "AudioTrack build failed: ${t.message}")
             null

@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import com.example.model.Song
@@ -40,6 +41,17 @@ class LocalMusicScanner(
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} >= 10000"
         val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
 
+        val storageState = try {
+            Environment.getExternalStorageState()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unable to read external storage state", t)
+            Environment.MEDIA_MOUNTED
+        }
+        if (storageState != Environment.MEDIA_MOUNTED && storageState != Environment.MEDIA_MOUNTED_READ_ONLY) {
+            Log.w(TAG, "External storage unavailable ($storageState); using built-in demo audio")
+            return@withContext generateMasterDemoTracks()
+        }
+
         try {
             val cursor = context.contentResolver.query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
@@ -50,32 +62,36 @@ class LocalMusicScanner(
             )
 
             cursor?.use {
-                val idCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-                val titleCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-                val artistCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
-                val albumCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
-                val albumIdCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
-                val durationCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
-                val dataCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
-                val mimeCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.MIME_TYPE)
-                val sizeCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
-                val trackCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
-                val yearCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
-                val dateAddedCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
+                val idCol = it.getColumnIndex(MediaStore.Audio.Media._ID)
+                if (idCol < 0) {
+                    Log.w(TAG, "MediaStore cursor missing _ID column; falling back")
+                    return@use
+                }
+                val titleCol = it.getColumnIndex(MediaStore.Audio.Media.TITLE)
+                val artistCol = it.getColumnIndex(MediaStore.Audio.Media.ARTIST)
+                val albumCol = it.getColumnIndex(MediaStore.Audio.Media.ALBUM)
+                val albumIdCol = it.getColumnIndex(MediaStore.Audio.Media.ALBUM_ID)
+                val durationCol = it.getColumnIndex(MediaStore.Audio.Media.DURATION)
+                val dataCol = it.getColumnIndex(MediaStore.Audio.Media.DATA)
+                val mimeCol = it.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
+                val sizeCol = it.getColumnIndex(MediaStore.Audio.Media.SIZE)
+                val trackCol = it.getColumnIndex(MediaStore.Audio.Media.TRACK)
+                val yearCol = it.getColumnIndex(MediaStore.Audio.Media.YEAR)
+                val dateAddedCol = it.getColumnIndex(MediaStore.Audio.Media.DATE_ADDED)
 
                 while (it.moveToNext()) {
                     val id = it.getLong(idCol)
-                    val rawTitle = it.getString(titleCol) ?: "Unknown Title"
-                    val rawArtist = it.getString(artistCol) ?: "Unknown Artist"
-                    val rawAlbum = it.getString(albumCol) ?: "Unknown Album"
-                    val albumId = it.getLong(albumIdCol)
-                    val durationMs = it.getLong(durationCol)
-                    val dataPath = it.getString(dataCol) ?: ""
-                    val mimeType = it.getString(mimeCol) ?: "audio/mpeg"
-                    val sizeBytes = it.getLong(sizeCol)
-                    val trackNumber = it.getInt(trackCol)
-                    val year = it.getInt(yearCol)
-                    val dateAdded = it.getLong(dateAddedCol)
+                    val rawTitle = if (titleCol >= 0) it.getString(titleCol) ?: "Unknown Title" else "Unknown Title"
+                    val rawArtist = if (artistCol >= 0) it.getString(artistCol) ?: "Unknown Artist" else "Unknown Artist"
+                    val rawAlbum = if (albumCol >= 0) it.getString(albumCol) ?: "Unknown Album" else "Unknown Album"
+                    val albumId = if (albumIdCol >= 0) it.getLong(albumIdCol) else 0L
+                    val durationMs = if (durationCol >= 0) it.getLong(durationCol) else 0L
+                    val dataPath = if (dataCol >= 0) it.getString(dataCol) ?: "" else ""
+                    val mimeType = if (mimeCol >= 0) it.getString(mimeCol) ?: "audio/mpeg" else "audio/mpeg"
+                    val sizeBytes = if (sizeCol >= 0) it.getLong(sizeCol) else 0L
+                    val trackNumber = if (trackCol >= 0) it.getInt(trackCol) else 0
+                    val year = if (yearCol >= 0) it.getInt(yearCol) else 0
+                    val dateAdded = if (dateAddedCol >= 0) it.getLong(dateAddedCol) else 0L
 
                     val contentUri = ContentUris.withAppendedId(
                         MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,

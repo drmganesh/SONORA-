@@ -972,9 +972,17 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun ensureServiceStarted() {
+        val app = getApplication<Application>()
+        val intent = Intent(app, SonoraMusicService::class.java)
         try {
-            val intent = Intent(getApplication(), SonoraMusicService::class.java)
-            getApplication<Application>().startService(intent)
+            app.startService(intent)
+        } catch (ise: IllegalStateException) {
+            try {
+                androidx.core.content.ContextCompat.startForegroundService(app, intent)
+                _currentSong.value?.let { syncNotification(it, _playbackInfo.value.isPlaying) }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed starting foreground SonoraMusicService on API ${android.os.Build.VERSION.SDK_INT}", e)
+            }
         } catch (e: Throwable) {
             Log.w(TAG, "Could not elevate SonoraMusicService with startService: ${e.message}")
         }
@@ -1265,6 +1273,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
             return
         }
+        syncNotification(song, true)
 
         engine.prepareAndPlay(
             uri = song.uri,
