@@ -153,7 +153,7 @@ fun SearchScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .testTag("search_screen"),
         contentAlignment = Alignment.TopCenter

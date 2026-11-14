@@ -64,6 +64,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -86,6 +87,7 @@ import ui.components.CollectionDetailSheet
 import ui.components.EditorialArtworkCard
 import ui.components.EditorialPlaylistPickerDialog
 import ui.components.MusicContextMenuSheet
+import ui.profile.UserProfileSheet
 import ui.theme.EditorialAccentSwatches
 import ui.theme.EditorialColors
 import ui.theme.HomeThemeMode
@@ -113,6 +115,8 @@ fun HomeScreen(
     onOpenAudioStudio: () -> Unit = {},
     onOpenPlaylists: () -> Unit = {},
     onOpenQueue: () -> Unit = {},
+    onOpenDynamicColors: () -> Unit = {},
+    onOpenPlayerStyles: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val allSongs by viewModel.allSongs.collectAsState()
@@ -131,6 +135,11 @@ fun HomeScreen(
     val playlists by viewModel.playlists.collectAsState()
     val homeThemeMode by viewModel.homeThemeMode.collectAsState()
     val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsState()
+    val userProfile by viewModel.userProfile.collectAsState()
+    val reduceAnimations by viewModel.reduceAnimations.collectAsState()
+    val appearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
+    val colorIntensity by viewModel.dynamicColorIntensity.collectAsState()
+    val playerStyle by viewModel.playerStyle.collectAsState()
 
     val greeting = remember { HomeDiscoveryEngine.currentGreeting() }
     val haptic = LocalHapticFeedback.current
@@ -141,6 +150,7 @@ fun HomeScreen(
     var playlistPickerSong by remember { mutableStateOf<Song?>(null) }
     var activeCollection by remember { mutableStateOf<ActiveCollectionModal?>(null) }
     var showDiscoverySheet by remember { mutableStateOf(false) }
+    var showProfileSheet by remember { mutableStateOf(false) }
 
     // Derived collage songs (distinct albums for artistic collage variety)
     val collageSongs = remember(allSongs, yourMixSongs) {
@@ -177,7 +187,7 @@ fun HomeScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .testTag("home_screen"),
         contentAlignment = Alignment.TopCenter
@@ -202,17 +212,14 @@ fun HomeScreen(
                 contentPadding = PaddingValues(top = 4.dp, bottom = 184.dp),
                 verticalArrangement = Arrangement.spacedBy(26.dp)
             ) {
-                // 1. Top Greeting Header
+                // 1. Top Greeting Header with Permanent User Profile Avatar
                 item(key = "greeting_header") {
                     GreetingHeader(
                         greeting = greeting,
-                        featuredSong = currentSong ?: collageSongs.firstOrNull(),
-                        isPlaying = playbackInfo.isPlaying,
+                        userProfile = userProfile,
                         colors = colors,
-                        onAvatarClick = {
-                            if (currentSong != null) onOpenNowPlaying()
-                            else if (allSongs.isNotEmpty()) viewModel.playSong(allSongs.first(), allSongs)
-                        },
+                        reduceAnimations = reduceAnimations,
+                        onAvatarClick = { showProfileSheet = true },
                         onDiscoveryClick = { showDiscoverySheet = true },
                         onSettingsClick = onOpenSettings
                     )
@@ -547,6 +554,26 @@ fun HomeScreen(
             },
             onSelectThemeMode = { mode -> viewModel.setHomeThemeMode(mode) },
             onSelectAccent = { argb -> viewModel.setHomeCustomAccentArgb(argb) }
+        )
+    }
+
+    // Personal User Profile & Personalization Sheet (tapping top-left avatar)
+    if (showProfileSheet) {
+        UserProfileSheet(
+            userProfile = userProfile,
+            colors = colors,
+            appearanceMode = appearanceMode,
+            colorIntensity = colorIntensity,
+            playerStyle = playerStyle,
+            reduceAnimations = reduceAnimations,
+            onDismiss = { showProfileSheet = false },
+            onPickPhotoUri = { uri -> viewModel.updateUserProfilePhoto(uri) },
+            onRemovePhoto = { viewModel.removeUserProfilePhoto() },
+            onSaveProfileDetails = { name, handle -> viewModel.updateUserProfileDetails(name, handle) },
+            onToggleReduceAnimations = { reduce -> viewModel.setReduceAnimations(reduce) },
+            onOpenDynamicColors = onOpenDynamicColors,
+            onOpenPlayerStyles = onOpenPlayerStyles,
+            onOpenSettings = onOpenSettings
         )
     }
 }
@@ -1410,7 +1437,7 @@ private fun DiscoveryAndThemeSheet(
                             Icon(
                                 imageVector = Icons.Rounded.Check,
                                 contentDescription = name,
-                                tint = Color(0xFF15151C),
+                                tint = if (Color(argb).luminance() > 0.45f) Color(0xFF15151C) else Color.White,
                                 modifier = Modifier.size(18.dp)
                             )
                         }

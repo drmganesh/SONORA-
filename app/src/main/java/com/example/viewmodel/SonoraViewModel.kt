@@ -365,7 +365,35 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _dynamicThemeMode = MutableStateFlow(preferences.dynamicThemeMode)
     val dynamicThemeMode: StateFlow<DynamicThemeMode> = _dynamicThemeMode.asStateFlow()
 
-    private val _dynamicPalette = MutableStateFlow(DynamicColorPalette.default())
+    private val _dynamicAppearanceMode = MutableStateFlow(preferences.dynamicAppearanceMode)
+    val dynamicAppearanceMode: StateFlow<com.example.model.DynamicAppearanceMode> = _dynamicAppearanceMode.asStateFlow()
+
+    private val _dynamicColorIntensity = MutableStateFlow(preferences.dynamicColorIntensity)
+    val dynamicColorIntensity: StateFlow<com.example.model.DynamicColorIntensity> = _dynamicColorIntensity.asStateFlow()
+
+    private val _dynamicGradientEnabled = MutableStateFlow(preferences.dynamicGradientEnabled)
+    val dynamicGradientEnabled: StateFlow<Boolean> = _dynamicGradientEnabled.asStateFlow()
+
+    private var currentSystemIsDark: Boolean = true
+
+    private val _homeThemeMode = MutableStateFlow(preferences.homeThemeMode)
+    val homeThemeMode: StateFlow<ui.theme.HomeThemeMode> = _homeThemeMode.asStateFlow()
+
+    private val _homeCustomAccentArgb = MutableStateFlow<Long?>(preferences.homeCustomAccentArgb.takeIf { it != -1L })
+    val homeCustomAccentArgb: StateFlow<Long?> = _homeCustomAccentArgb.asStateFlow()
+
+    private val _dynamicPalette = MutableStateFlow(
+        DynamicThemeGenerator.generate(
+            rawPalette = domain.color.AlbumArtPalette.default(),
+            mode = preferences.dynamicThemeMode,
+            enabled = preferences.dynamicColorsEnabled,
+            appearanceMode = preferences.dynamicAppearanceMode,
+            intensity = preferences.dynamicColorIntensity,
+            gradientEnabled = preferences.dynamicGradientEnabled,
+            customAccentColor = preferences.homeCustomAccentArgb.takeIf { it != -1L }?.let { androidx.compose.ui.graphics.Color(it) },
+            systemIsDark = true
+        )
+    )
     val dynamicPalette: StateFlow<DynamicColorPalette> = _dynamicPalette.asStateFlow()
 
     private var paletteExtractionJob: Job? = null
@@ -373,6 +401,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun setDynamicColorsEnabled(enabled: Boolean) {
         _dynamicColorsEnabled.value = enabled
         preferences.dynamicColorsEnabled = enabled
+        if (enabled && _homeThemeMode.value != ui.theme.HomeThemeMode.DYNAMIC_ALBUM_ART) {
+            setHomeThemeMode(ui.theme.HomeThemeMode.DYNAMIC_ALBUM_ART)
+        }
         viewModelScope.launch(Dispatchers.IO) {
             themePrefs.setDynamicColorsEnabled(enabled)
         }
@@ -388,15 +419,67 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         updateDynamicThemeForSong(_currentSong.value)
     }
 
-    // Editorial Home Theme Mode & Custom Accent
-    private val _homeThemeMode = MutableStateFlow(preferences.homeThemeMode)
-    val homeThemeMode: StateFlow<ui.theme.HomeThemeMode> = _homeThemeMode.asStateFlow()
+    fun setDynamicAppearanceMode(mode: com.example.model.DynamicAppearanceMode) {
+        _dynamicAppearanceMode.value = mode
+        preferences.dynamicAppearanceMode = mode
+        if (_homeThemeMode.value != ui.theme.HomeThemeMode.DYNAMIC_ALBUM_ART && _dynamicColorsEnabled.value) {
+            setHomeThemeMode(ui.theme.HomeThemeMode.DYNAMIC_ALBUM_ART)
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            themePrefs.setDynamicAppearanceMode(mode)
+        }
+        updateDynamicThemeForSong(_currentSong.value)
+    }
 
-    private val _homeCustomAccentArgb = MutableStateFlow<Long?>(preferences.homeCustomAccentArgb.takeIf { it != -1L })
-    val homeCustomAccentArgb: StateFlow<Long?> = _homeCustomAccentArgb.asStateFlow()
+    fun setDynamicColorIntensity(intensity: com.example.model.DynamicColorIntensity) {
+        _dynamicColorIntensity.value = intensity
+        preferences.dynamicColorIntensity = intensity
+        viewModelScope.launch(Dispatchers.IO) {
+            themePrefs.setDynamicColorIntensity(intensity)
+        }
+        updateDynamicThemeForSong(_currentSong.value)
+    }
+
+    fun setDynamicGradientEnabled(enabled: Boolean) {
+        _dynamicGradientEnabled.value = enabled
+        preferences.dynamicGradientEnabled = enabled
+        viewModelScope.launch(Dispatchers.IO) {
+            themePrefs.setDynamicGradientEnabled(enabled)
+        }
+        updateDynamicThemeForSong(_currentSong.value)
+    }
+
+    fun updateSystemDarkTheme(isDark: Boolean) {
+        if (currentSystemIsDark != isDark) {
+            currentSystemIsDark = isDark
+            updateDynamicThemeForSong(_currentSong.value)
+        }
+    }
 
     private val _reduceAnimations = MutableStateFlow(preferences.reduceAnimations)
     val reduceAnimations: StateFlow<Boolean> = _reduceAnimations.asStateFlow()
+
+    // Dedicated User Profile state & DataStore persistence (strictly separate from song artwork)
+    private val userProfilePrefs = data.preferences.UserProfilePreferences(application)
+    val userProfile: StateFlow<com.example.model.UserProfile> = userProfilePrefs.userProfile
+
+    fun updateUserProfileDetails(displayName: String, username: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            userProfilePrefs.saveProfileDetails(displayName, username)
+        }
+    }
+
+    fun updateUserProfilePhoto(pickedUri: android.net.Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            userProfilePrefs.persistPickedAvatar(pickedUri)
+        }
+    }
+
+    fun removeUserProfilePhoto() {
+        viewModelScope.launch(Dispatchers.IO) {
+            userProfilePrefs.removeAvatar()
+        }
+    }
 
     private val _recentSearches = MutableStateFlow(preferences.recentSearches)
     val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
@@ -424,6 +507,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun setHomeCustomAccentArgb(argb: Long?) {
         _homeCustomAccentArgb.value = argb
         preferences.homeCustomAccentArgb = argb ?: -1L
+        updateDynamicThemeForSong(_currentSong.value)
     }
 
     fun setReduceAnimations(reduce: Boolean) {
@@ -476,8 +560,21 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun resetDynamicThemeToDefault() {
-        setDynamicColorsEnabled(true)
-        setDynamicThemeMode(DynamicThemeMode.DEFAULT)
+        setHomeThemeMode(ui.theme.HomeThemeMode.DEFAULT)
+        _dynamicColorsEnabled.value = true
+        preferences.dynamicColorsEnabled = true
+        _dynamicThemeMode.value = DynamicThemeMode.DEFAULT
+        preferences.dynamicThemeMode = DynamicThemeMode.DEFAULT
+        _dynamicAppearanceMode.value = com.example.model.DynamicAppearanceMode.DEFAULT
+        preferences.dynamicAppearanceMode = com.example.model.DynamicAppearanceMode.DEFAULT
+        _dynamicColorIntensity.value = com.example.model.DynamicColorIntensity.DEFAULT
+        preferences.dynamicColorIntensity = com.example.model.DynamicColorIntensity.DEFAULT
+        _dynamicGradientEnabled.value = true
+        preferences.dynamicGradientEnabled = true
+        viewModelScope.launch(Dispatchers.IO) {
+            themePrefs.resetToDefault()
+        }
+        updateDynamicThemeForSong(_currentSong.value)
     }
 
     fun updateDynamicThemeForSong(song: Song?) {
@@ -485,20 +582,42 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         paletteExtractionJob = viewModelScope.launch(Dispatchers.Default) {
             val enabled = _dynamicColorsEnabled.value
             val mode = _dynamicThemeMode.value
+            val appMode = _dynamicAppearanceMode.value
+            val intensity = _dynamicColorIntensity.value
+            val gradEnabled = _dynamicGradientEnabled.value
+            val customAccent = _homeCustomAccentArgb.value?.let { androidx.compose.ui.graphics.Color(it) }
+            val sysDark = currentSystemIsDark
+
             if (!enabled || mode == DynamicThemeMode.STATIC_THEME || song == null) {
-                _dynamicPalette.value = DynamicColorPalette.default()
+                _dynamicPalette.value = DynamicThemeGenerator.generate(
+                    rawPalette = domain.color.AlbumArtPalette.default(),
+                    mode = mode,
+                    enabled = enabled,
+                    appearanceMode = appMode,
+                    intensity = intensity,
+                    gradientEnabled = gradEnabled,
+                    customAccentColor = customAccent,
+                    systemIsDark = sysDark
+                )
                 return@launch
             }
 
             val artKey = "song_${song.id}_${song.albumId}"
-            // Check in-memory cache first
             val cachedPalette = AlbumColorCache.get(artKey)
             if (cachedPalette != null) {
-                _dynamicPalette.value = DynamicThemeGenerator.generate(cachedPalette, mode, enabled)
+                _dynamicPalette.value = DynamicThemeGenerator.generate(
+                    rawPalette = cachedPalette,
+                    mode = mode,
+                    enabled = enabled,
+                    appearanceMode = appMode,
+                    intensity = intensity,
+                    gradientEnabled = gradEnabled,
+                    customAccentColor = customAccent,
+                    systemIsDark = sysDark
+                )
                 return@launch
             }
 
-            // Decode artwork asynchronously on IO dispatcher
             val bitmap = withContext(Dispatchers.IO) {
                 AlbumArtHelper.loadAlbumArt(getApplication(), song)
             }
@@ -508,8 +627,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             val rawPalette = AlbumArtColorExtractor.extractPalette(bitmap, artKey)
             if (!isActive) return@launch
 
-            val dynamicPalette = DynamicThemeGenerator.generate(rawPalette, mode, enabled)
-            _dynamicPalette.value = dynamicPalette
+            _dynamicPalette.value = DynamicThemeGenerator.generate(
+                rawPalette = rawPalette,
+                mode = mode,
+                enabled = enabled,
+                appearanceMode = appMode,
+                intensity = intensity,
+                gradientEnabled = gradEnabled,
+                customAccentColor = customAccent,
+                systemIsDark = sysDark
+            )
         }
     }
 
@@ -1418,6 +1545,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         musicService?.audioEngine?.updateSpatialAudioConfig(config)
     }
 
+    fun setSpatialProfile(profile: com.example.model.SpatialProfile) {
+        val updated = _spatialConfig.value.copy(spatialProfile = profile, isEnabled = true)
+        updateSpatialConfig(updated)
+    }
+
+    fun setSpatialIntensity(intensity: com.example.model.SpatialIntensity) {
+        val updated = _spatialConfig.value.copy(spatialIntensity = intensity)
+        updateSpatialConfig(updated)
+    }
+
     fun selectSpatialPreset(index: Int) {
         if (index !in spatialPresets.indices) return
         _selectedSpatialPresetIndex.value = index
@@ -1430,7 +1567,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             soundstageWidth = p.soundstageWidth,
             stereoWidening = p.stereoWidening,
             listenerX = p.listenerX,
-            listenerY = p.listenerY
+            listenerY = p.listenerY,
+            spatialProfile = p.profile
         )
         updateSpatialConfig(updatedConfig)
         if (p.reverbPreset != PresetReverb.PRESET_NONE) {

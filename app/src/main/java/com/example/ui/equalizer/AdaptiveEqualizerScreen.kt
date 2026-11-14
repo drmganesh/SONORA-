@@ -125,7 +125,7 @@ fun AdaptiveEqualizerScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("adaptive_equalizer_screen"),

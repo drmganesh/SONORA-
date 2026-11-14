@@ -49,3 +49,90 @@ enum class DynamicThemeMode(
         }
     }
 }
+
+/**
+ * Global appearance modes governing how dynamic album-art colors theme the entire SONORA app.
+ */
+enum class DynamicAppearanceMode(
+    val id: String,
+    val displayName: String,
+    val subtitle: String
+) {
+    FOLLOW_ALBUM_ART(
+        id = "follow_album_art",
+        displayName = "Follow Album Art",
+        subtitle = "Adapts light or atmospheric dark surfaces to each cover"
+    ),
+    FIXED_ACCENT(
+        id = "fixed_accent",
+        displayName = "Fixed Accent Colour",
+        subtitle = "Uses your signature accent hue across every screen"
+    ),
+    AMOLED_DARK(
+        id = "amoled_dark",
+        displayName = "AMOLED Dark",
+        subtitle = "True OLED black backgrounds with artwork highlights"
+    ),
+    LIGHT_THEME(
+        id = "light_theme",
+        displayName = "Light Theme",
+        subtitle = "Crisp editorial light surfaces tinted by playing art"
+    ),
+    AUTO_THEME(
+        id = "auto_theme",
+        displayName = "Auto Theme",
+        subtitle = "Follows system dark/light theme with dynamic accents"
+    );
+
+    companion object {
+        val DEFAULT = FOLLOW_ALBUM_ART
+
+        fun fromId(id: String?): DynamicAppearanceMode {
+            if (id == null) return DEFAULT
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: DEFAULT
+        }
+    }
+}
+
+/**
+ * Intensity presets controlling saturation and tonal tint strength of dynamic album colors.
+ */
+enum class DynamicColorIntensity(
+    val id: String,
+    val displayName: String,
+    val description: String,
+    val saturationScale: Float,
+    val surfaceTintScale: Float
+) {
+    SUBTLE(
+        id = "subtle",
+        displayName = "Subtle",
+        description = "Soft pastel washes & gentle accents",
+        saturationScale = 0.65f,
+        surfaceTintScale = 0.55f
+    ),
+    BALANCED(
+        id = "balanced",
+        displayName = "Balanced",
+        description = "Rich tonal harmony & crisp readability",
+        saturationScale = 1.0f,
+        surfaceTintScale = 1.0f
+    ),
+    VIBRANT(
+        id = "vibrant",
+        displayName = "Vibrant",
+        description = "Expressive saturation & deeper gradients",
+        saturationScale = 1.28f,
+        surfaceTintScale = 1.40f
+    );
+
+    companion object {
+        val DEFAULT = BALANCED
+
+        fun fromId(id: String?): DynamicColorIntensity {
+            if (id == null) return DEFAULT
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: DEFAULT
+        }
+    }
+}
+

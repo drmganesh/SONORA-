@@ -123,7 +123,7 @@ fun LibraryFolderManagementScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .testTag("library_folder_management_screen"),
         contentAlignment = Alignment.TopCenter

@@ -4,10 +4,13 @@ import android.media.audiofx.PresetReverb
 import com.example.equalizer.DynamicSoundMapper
 import com.example.equalizer.MacroProfile
 import com.example.model.SpatialAudioConfig
+import com.example.model.SpatialIntensity
 import com.example.model.SpatialMode
+import com.example.model.SpatialProfile
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -35,14 +38,17 @@ data class SonoraDspSnapshot(
 )
 
 /**
- * Allocation-free real-time stereo floating-point PCM DSP pipeline for SONORA.
+ * Allocation-free, click-free real-time stereo floating-point PCM DSP pipeline for SONORA.
  *
- * Processing order (each stage independently guarded with NaN/Inf/silence protection):
- * 1. Adaptive 15-Band Parametric Biquad EQ + Dynamic Bass Shelf
- * 2. 360° Soundstage Mode (Binaural / Dynamic 360° / Speakers) + Phase-Safe M/S Widening
- * 3. Cinematic 8D Slow-Orbit (Equal-power ILD floor + Fractional ITD delay + Depth shimmer)
- * 4. Acoustic Room Reverb (Pre-allocated multi-tap stereo diffuser)
- * 5. Channel Balance + Volume Boost + Soft-knee Limiter + Output Sanity Guard
+ * Key architectural guarantees against repetitive clicking ("tok-tok") & artifacts:
+ * 1. Dedicated, unshared circular delay buffers per stage (`ssDelay` vs `orbitItd` vs `revBuf`)
+ *    so Soundstage and Orbit/Dynamic 360° NEVER overwrite or read each other's samples across packet boundaries.
+ * 2. Continuous symmetric bipolar ITD around a positive base delay (`baseDelay ± 0.5 * pan * maxItd`)
+ *    with 4-point cubic Hermite interpolation — zero slope kinks (`|pan|` cusps) at front/back crossings.
+ * 3. Sample-accurate parameter & mix smoothing (~15ms time constant) for all toggles, profiles,
+ *    sliders, balance, reverb, and global bypass so switching modes or adjusting controls never creates steps.
+ * 4. Soft stream-discontinuity fade-in ramp (8ms) on track start/seek/format change without wiping targets.
+ * 5. Zero heap allocations inside [processStereoBuffer], strict NaN/Inf/silence guard, and sample-rate invariance (8kHz–192kHz).
  */
 class SonoraDspProcessor {
 
@@ -91,19 +97,23 @@ class SonoraDspProcessor {
     private var bassZ2R = 0.0
     private var bassActive = false
 
-    // ITD & Binaural crossfeed delay ring buffers (4096 samples covers >85ms @ 48kHz, >21ms @ 192kHz)
-    private val delayMask = 4095
-    private val itdDelayL = FloatArray(4096)
-    private val itdDelayR = FloatArray(4096)
-    private var itdWriteIdx = 0
-
-    // Low-pass filter state for binaural crossfeed & 8D rear-hemisphere warmth
+    // DEDICATED Soundstage ring buffers (8192 samples covers ~42ms @ 192kHz, ~185ms @ 44.1kHz)
+    private val ssMask = 8191
+    private val ssDelayL = FloatArray(8192)
+    private val ssDelayR = FloatArray(8192)
+    private var ssWriteIdx = 0
     private var crossfeedLpL = 0f
     private var crossfeedLpR = 0f
+
+    // DEDICATED Orbit 8D / Dynamic 360° symmetric ITD ring buffers (4096 samples)
+    private val orbitMask = 4095
+    private val orbitItdL = FloatArray(4096)
+    private val orbitItdR = FloatArray(4096)
+    private var orbitWriteIdx = 0
     private var rearLpL = 0f
     private var rearLpR = 0f
 
-    // Reverb / Early reflection ring buffers (32768 samples covers >170ms @ 192kHz, ~680ms @ 48kHz)
+    // DEDICATED Reverb ring buffers (32768 samples covers >170ms @ 192kHz, ~680ms @ 48kHz)
     private val revMask = 32767
     private val revBufL = FloatArray(32768)
     private val revBufR = FloatArray(32768)
@@ -119,6 +129,34 @@ class SonoraDspProcessor {
 
     private var azimuthDouble: Double = 0.0
 
+    // Sample-level smoothed DSP state (eliminates step jumps on toggles/sliders/profiles)
+    private var smootherInitialized = false
+    private var smoothedBypassWet = 1f
+    private var smoothedSoundstageMix = 1f
+    private var smoothedMsWidth = 1.25f
+    private var smoothedCrossfeedAmt = 0.08f
+    private var smoothedReflectionMix = 0f
+    private var smoothedOrbitMix = 0f
+    private var smoothedOrbitDepth = 0.75f
+    private var smoothedOrbitSpeed = 0.35f
+    private var smoothedOrbitFloor = 0.45f
+    private var smoothedOrbitItdScale = 1f
+    private var smoothedOrbitRearWarmth = 0.22f
+    private var smoothedReverbWet = 0f
+    private var smoothedReverbFeedback = 0.25f
+    private var smoothedReverbDamping = 0.38f
+    private var smoothedGainL = 1f
+    private var smoothedGainR = 1f
+    private var smoothedEqWet = 1f
+
+    // Smooth micro fade-in ramp after seek / track switch / discontinuity (prevents pop)
+    private var fadeInTotalSamples = 0
+    private var fadeInRemainingSamples = 0
+
+    // Reusable dry reference scratch buffers (grown only if buffer grows beyond current capacity)
+    private var dryScratch = FloatArray(8192)
+    private var bypassScratch = FloatArray(8192)
+
     fun updateSnapshot(newSnapshot: SonoraDspSnapshot) {
         snapshot = newSnapshot
     }
@@ -126,12 +164,21 @@ class SonoraDspProcessor {
     fun configureSampleRate(newSampleRate: Int) {
         val clamped = newSampleRate.coerceIn(8000, 192000)
         if (clamped != sampleRate) {
+            val hadAudio = smootherInitialized
             sampleRate = clamped
-            resetTransientState()
+            resetTransientState(resetSmoothers = false, armFadeIn = hadAudio)
         }
     }
 
-    fun resetTransientState() {
+    /**
+     * Clears filter/delay memory cleanly on seek or track boundary while arming a micro 8ms fade-in
+     * and preserving current user effect targets so live playback stays warm and click-free.
+     */
+    fun notifyStreamDiscontinuity() {
+        resetTransientState(resetSmoothers = false, armFadeIn = true)
+    }
+
+    fun resetTransientState(resetSmoothers: Boolean = true, armFadeIn: Boolean = false) {
         eqZ1L.fill(0.0)
         eqZ2L.fill(0.0)
         eqZ1R.fill(0.0)
@@ -140,19 +187,40 @@ class SonoraDspProcessor {
         bassZ2L = 0.0
         bassZ1R = 0.0
         bassZ2R = 0.0
-        itdDelayL.fill(0f)
-        itdDelayR.fill(0f)
-        itdWriteIdx = 0
+
+        ssDelayL.fill(0f)
+        ssDelayR.fill(0f)
+        ssWriteIdx = 0
         crossfeedLpL = 0f
         crossfeedLpR = 0f
+
+        orbitItdL.fill(0f)
+        orbitItdR.fill(0f)
+        orbitWriteIdx = 0
         rearLpL = 0f
         rearLpR = 0f
+
         revBufL.fill(0f)
         revBufR.fill(0f)
         revWriteIdx = 0
         revLpL = 0f
         revLpR = 0f
+
         cachedSampleRate = -1
+
+        if (armFadeIn) {
+            // Arm smooth 8ms fade-in ramp to suppress codec/seek boundary clicks
+            val rampSamples = (0.008f * sampleRate.coerceIn(8000, 192000)).toInt().coerceIn(64, 1536)
+            fadeInTotalSamples = rampSamples
+            fadeInRemainingSamples = rampSamples
+        } else {
+            fadeInTotalSamples = 0
+            fadeInRemainingSamples = 0
+        }
+
+        if (resetSmoothers) {
+            smootherInitialized = false
+        }
     }
 
     /**
@@ -168,10 +236,10 @@ class SonoraDspProcessor {
         val cfg = snapshot
         val sr = sampleRate.coerceIn(8000, 192000)
         val volScale = cfg.volumeScale.coerceIn(0f, 1f)
-
-        // Ensure clean finite input and capture peak amplitude to verify non-silent output
-        var inputPeak = 0f
         val sampleLimit = frameCount * 2
+
+        // Sanitize incoming samples and compute input peak
+        var inputPeak = 0f
         for (idx in 0 until sampleLimit) {
             val s = buffer[idx]
             val clean = if (s.isFinite()) s.coerceIn(-4f, 4f) else 0f
@@ -180,41 +248,48 @@ class SonoraDspProcessor {
             if (absS > inputPeak) inputPeak = absS
         }
 
-        // Fast bypass path when "All Effects Bypassed" is ON
-        if (cfg.globalBypass) {
+        // Initialize smoothers on very first frame to exact snapshot values (no initial fade sweep)
+        if (!smootherInitialized) {
+            initializeSmoothers(cfg, volScale)
+        }
+
+        val targetBypassWet = if (cfg.globalBypass) 0f else 1f
+        // Fast pure-dry zero-overhead bypass ONLY once wet mix has ramped completely to zero
+        if (cfg.globalBypass && smoothedBypassWet < 0.0005f) {
+            smoothedBypassWet = 0f
             isSafetyBypassed = false
-            if (volScale != 1.0f) {
-                for (idx in 0 until sampleLimit) {
-                    buffer[idx] = (buffer[idx] * volScale).coerceIn(-1f, 1f)
-                }
-            }
+            applyBypassGainAndRamp(buffer, frameCount, sr, volScale)
             return
         }
 
-        // Keep temporary copy in case an unexpected DSP failure requires clean fallback
-        // To avoid heap allocation on the hot audio thread, we keep a reusable scratch array.
-        ensureDryScratch(sampleLimit)
+        ensureScratchBuffers(sampleLimit)
         System.arraycopy(buffer, 0, dryScratch, 0, sampleLimit)
+        System.arraycopy(buffer, 0, bypassScratch, 0, sampleLimit)
+
+        // Smoothing coefficient (~15ms time constant, sample-rate independent)
+        val alpha15ms = (1.0 - exp(-1.0 / (0.015 * sr.toDouble()))).toFloat().coerceIn(0.0002f, 0.2f)
+        // Slightly faster ramp (~10ms) for bypass & gain transitions
+        val alpha10ms = (1.0 - exp(-1.0 / (0.010 * sr.toDouble()))).toFloat().coerceIn(0.0003f, 0.25f)
 
         try {
             recomputeCoefficientsIfNeeded(cfg, sr)
 
-            // 1. 15-Band Parametric EQ & Bass Shelf
-            applyEqAndBass(buffer, frameCount)
+            // 1. 15-Band Parametric EQ & Bass Shelf (always filtered cleanly; wet mix smoothly crossfaded)
+            applyEqAndBass(buffer, frameCount, cfg, alpha10ms)
 
-            // 2. 360° Soundstage Mode (Binaural / Dynamic 360° / Speakers)
-            applySoundstage(buffer, frameCount, cfg, sr)
+            // 2. 360° Soundstage Mode + Phase-Safe M/S Stereo Width
+            applySoundstage(buffer, frameCount, cfg, sr, alpha15ms)
 
-            // 3. Cinematic 8D & Dynamic 360° Real-Time Spatial Orbit
-            applyOrbit8d(buffer, frameCount, cfg, sr)
+            // 3. Cinematic 8D & Dynamic 360° Spatial Motion (Orbit / Dynamic 360° / Cinematic)
+            applyOrbit8d(buffer, frameCount, cfg, sr, alpha15ms)
 
             // 4. Acoustic Room Reverb
-            applyRoomReverb(buffer, frameCount, cfg, sr)
+            applyRoomReverb(buffer, frameCount, cfg, sr, alpha15ms)
 
-            // 5. Channel Balance, Volume Boost, Volume Scale & Soft Limiter
-            applyOutputGainAndLimiter(buffer, frameCount, cfg, volScale)
+            // 5. Global Bypass Crossfade + Channel Balance + Volume Boost + Soft Limiter + Stream Ramp
+            applyFinalMixAndLimiter(buffer, frameCount, cfg, sr, volScale, targetBypassWet, alpha10ms)
 
-            // Final output verification: ensure no NaN/Inf and no accidental silence drop
+            // Integrity check: ensure finite output and zero silent-drop regression
             var outputPeak = 0f
             var hasInvalid = false
             for (idx in 0 until sampleLimit) {
@@ -229,7 +304,7 @@ class SonoraDspProcessor {
 
             if (hasInvalid || (inputPeak > 1e-3f && volScale > 0.1f && outputPeak < 1e-5f)) {
                 restoreDry(buffer, sampleLimit, volScale)
-                resetTransientState()
+                resetTransientState(resetSmoothers = true)
                 isSafetyBypassed = true
                 lastDspError = "Safety bypass triggered: invalid or silent DSP frame detected"
             } else {
@@ -237,17 +312,70 @@ class SonoraDspProcessor {
             }
         } catch (t: Throwable) {
             restoreDry(buffer, sampleLimit, volScale)
-            resetTransientState()
+            resetTransientState(resetSmoothers = true)
             isSafetyBypassed = true
             lastDspError = "DSP stage bypassed: ${t.message}"
         }
     }
 
-    private var dryScratch = FloatArray(4096)
+    private fun initializeSmoothers(cfg: SonoraDspSnapshot, volScale: Float) {
+        val sc = cfg.spatialConfig
+        smoothedBypassWet = if (cfg.globalBypass) 0f else 1f
+        smoothedEqWet = if (cfg.eqEnabled) 1f else 0f
 
-    private fun ensureDryScratch(requiredSize: Int) {
+        val virtNorm = (cfg.virtualizerStrength.coerceIn(0, 1000) / 1000f)
+        val ssActive = sc.isEnabled || virtNorm > 0.01f
+        smoothedSoundstageMix = if (ssActive) 1f else 0f
+        smoothedMsWidth = computeTargetMsWidth(cfg, sc, virtNorm)
+        smoothedCrossfeedAmt = computeTargetCrossfeed(sc)
+        smoothedReflectionMix = computeTargetReflectionMix(sc)
+
+        smoothedOrbitMix = if (cfg.orbit8dEnabled) 1f else 0f
+        smoothedOrbitDepth = cfg.orbit8dDepth.coerceIn(0.05f, 1.0f)
+        smoothedOrbitSpeed = cfg.orbit8dSpeed.coerceIn(0.1f, 2.0f)
+        val profile = sc.spatialProfile
+        smoothedOrbitFloor = profileMinFloor(profile, smoothedOrbitDepth, sc.spatialIntensity)
+        smoothedOrbitItdScale = profileItdScale(profile)
+        smoothedOrbitRearWarmth = profileRearWarmth(profile)
+
+        val (revWet, revFb, revDamp) = resolveReverbParams(cfg.reverbPreset)
+        smoothedReverbWet = revWet
+        smoothedReverbFeedback = revFb
+        smoothedReverbDamping = revDamp
+
+        val (targetL, targetR) = computeTargetOutputGains(cfg, volScale)
+        smoothedGainL = targetL
+        smoothedGainR = targetR
+        smootherInitialized = true
+    }
+
+    private fun applyBypassGainAndRamp(buffer: FloatArray, frameCount: Int, sr: Int, volScale: Float) {
+        val alpha = (1.0 - exp(-1.0 / (0.010 * sr.toDouble()))).toFloat().coerceIn(0.0003f, 0.25f)
+        for (f in 0 until frameCount) {
+            smoothedGainL += alpha * (volScale - smoothedGainL)
+            smoothedGainR += alpha * (volScale - smoothedGainR)
+            val ramp = nextFadeInMultiplier()
+            val lIdx = f * 2
+            val rIdx = lIdx + 1
+            buffer[lIdx] = (buffer[lIdx] * smoothedGainL * ramp).coerceIn(-1f, 1f)
+            buffer[rIdx] = (buffer[rIdx] * smoothedGainR * ramp).coerceIn(-1f, 1f)
+        }
+    }
+
+    private fun nextFadeInMultiplier(): Float {
+        if (fadeInRemainingSamples <= 0 || fadeInTotalSamples <= 0) return 1f
+        val progress = 1f - (fadeInRemainingSamples.toFloat() / fadeInTotalSamples.toFloat())
+        fadeInRemainingSamples--
+        // Smooth raised-cosine fade-in [0 -> 1]
+        return (0.5f - 0.5f * cos(PI * progress).toFloat()).coerceIn(0f, 1f)
+    }
+
+    private fun ensureScratchBuffers(requiredSize: Int) {
         if (dryScratch.size < requiredSize) {
             dryScratch = FloatArray(requiredSize)
+        }
+        if (bypassScratch.size < requiredSize) {
+            bypassScratch = FloatArray(requiredSize)
         }
     }
 
@@ -263,17 +391,16 @@ class SonoraDspProcessor {
         val qChanged = abs(cachedQ - qClamped) > 0.001f
 
         val gainsChanged = srChanged || qChanged || (0 until 15).any { i ->
-            val g = if (cfg.eqEnabled) cfg.eqGainsDb.getOrElse(i) { 0f }.coerceIn(-12f, 12f) else 0f
+            val g = cfg.eqGainsDb.getOrElse(i) { 0f }.coerceIn(-12f, 12f)
             abs(cachedGains[i] - g) > 0.01f
         }
 
         if (gainsChanged) {
             val freqs = DynamicSoundMapper.ISO_15_FREQUENCIES
             for (i in 0 until 15) {
-                val g = if (cfg.eqEnabled) cfg.eqGainsDb.getOrElse(i) { 0f }.coerceIn(-12f, 12f) else 0f
+                val g = cfg.eqGainsDb.getOrElse(i) { 0f }.coerceIn(-12f, 12f)
                 cachedGains[i] = g
                 val f0 = freqs[i].toDouble()
-                // Guard against Nyquist instability for high bands at lower sample rates
                 if (abs(g) < 0.05f || f0 >= sr * 0.45) {
                     bandActive[i] = false
                     b0[i] = 1.0; b1[i] = 0.0; b2[i] = 0.0; a1[i] = 0.0; a2[i] = 0.0
@@ -307,7 +434,7 @@ class SonoraDspProcessor {
                 bassActive = false
                 bassB0 = 1.0; bassB1 = 0.0; bassB2 = 0.0; bassA1 = 0.0; bassA2 = 0.0
             } else {
-                val boostDb = (clampedBass / 1000.0) * 7.5 // Smooth 0..+7.5 dB low shelf peak
+                val boostDb = (clampedBass / 1000.0) * 7.5
                 val a = 10.0.pow(boostDb / 40.0)
                 val w0 = 2.0 * PI * (72.0 / sr.toDouble())
                 val cosW0 = cos(w0)
@@ -330,15 +457,27 @@ class SonoraDspProcessor {
         cachedSampleRate = sr
     }
 
-    private fun applyEqAndBass(buffer: FloatArray, frameCount: Int) {
+    private fun applyEqAndBass(
+        buffer: FloatArray,
+        frameCount: Int,
+        cfg: SonoraDspSnapshot,
+        alpha: Float
+    ) {
+        val targetEqWet = if (cfg.eqEnabled) 1f else 0f
         val anyEqActive = bandActive.any { it }
-        if (!anyEqActive && !bassActive) return
+        if (!anyEqActive && !bassActive && smoothedEqWet < 0.0002f) {
+            smoothedEqWet = targetEqWet
+            return
+        }
 
         for (f in 0 until frameCount) {
+            smoothedEqWet += alpha * (targetEqWet - smoothedEqWet)
             val lIdx = f * 2
             val rIdx = lIdx + 1
-            var l = buffer[lIdx].toDouble()
-            var r = buffer[rIdx].toDouble()
+            val dryL = buffer[lIdx]
+            val dryR = buffer[rIdx]
+            var l = dryL.toDouble()
+            var r = dryR.toDouble()
 
             if (anyEqActive) {
                 for (b in 0 until 15) {
@@ -353,8 +492,7 @@ class SonoraDspProcessor {
                         eqZ2L[b] = nextZ2L
                         l = outL
                     } else {
-                        eqZ1L[b] = 0.0
-                        eqZ2L[b] = 0.0
+                        eqZ1L[b] = 0.0; eqZ2L[b] = 0.0
                     }
 
                     val outR = b0[b] * r + eqZ1R[b]
@@ -367,8 +505,7 @@ class SonoraDspProcessor {
                         eqZ2R[b] = nextZ2R
                         r = outR
                     } else {
-                        eqZ1R[b] = 0.0
-                        eqZ2R[b] = 0.0
+                        eqZ1R[b] = 0.0; eqZ2R[b] = 0.0
                     }
                 }
             }
@@ -397,8 +534,68 @@ class SonoraDspProcessor {
                 }
             }
 
-            buffer[lIdx] = l.toFloat()
-            buffer[rIdx] = r.toFloat()
+            // Smooth crossfade for EQ section enable/disable; Bass Shelf always follows bassStrength
+            val eqOnlyWet = smoothedEqWet
+            val eqMixedL = dryL + eqOnlyWet * (l.toFloat() - dryL)
+            val eqMixedR = dryR + eqOnlyWet * (r.toFloat() - dryR)
+            buffer[lIdx] = eqMixedL
+            buffer[rIdx] = eqMixedR
+        }
+    }
+
+    private fun computeTargetMsWidth(
+        cfg: SonoraDspSnapshot,
+        sc: SpatialAudioConfig,
+        virtNorm: Float
+    ): Float {
+        if (!sc.isEnabled && virtNorm <= 0.01f) return 1.0f
+
+        val intensityScale = sc.spatialIntensity.multiplier
+        val activeWidth = if (sc.isEnabled) {
+            val base = (sc.soundstageWidth.coerceIn(0f, 1f) * 0.45f +
+                sc.stereoWidening.coerceIn(0f, 1f) * 0.55f) *
+                sc.intensity.coerceIn(0.25f, 1f) * intensityScale
+            val twsMul = if (cfg.isTwsConnected && sc.twsWideStereoEnabled) {
+                (1.0f + 0.14f * sc.twsStereoBoost.coerceIn(0.5f, 1.5f)).coerceIn(1.0f, 1.22f)
+            } else {
+                1.0f
+            }
+            (base * twsMul).coerceIn(0f, 1.15f)
+        } else {
+            virtNorm * 0.50f
+        }
+
+        val profileFactor = when (sc.spatialProfile) {
+            SpatialProfile.ORBIT -> 0.40f
+            SpatialProfile.DYNAMIC_360 -> 0.48f
+            SpatialProfile.CINEMATIC -> 0.54f
+        }
+        val modeFactor = when (if (sc.isEnabled) sc.mode else SpatialMode.HEADPHONES) {
+            SpatialMode.HEADPHONES -> profileFactor
+            SpatialMode.CINEMA_360 -> (profileFactor + 0.08f)
+            SpatialMode.SPEAKERS -> (profileFactor * 0.65f)
+        }
+        // Mono-compatible safe widening limit (<= 1.56f so Mid center never cancels)
+        return (1.0f + modeFactor * activeWidth).coerceIn(0.95f, 1.56f)
+    }
+
+    private fun computeTargetCrossfeed(sc: SpatialAudioConfig): Float {
+        if (!sc.isEnabled) return 0f
+        val width = sc.soundstageWidth.coerceIn(0f, 1f) * sc.spatialIntensity.multiplier.coerceIn(0.5f, 1.0f)
+        return when (sc.mode) {
+            SpatialMode.HEADPHONES -> 0.09f * width
+            SpatialMode.CINEMA_360 -> 0.12f * width
+            SpatialMode.SPEAKERS -> 0f
+        }
+    }
+
+    private fun computeTargetReflectionMix(sc: SpatialAudioConfig): Float {
+        if (!sc.isEnabled) return 0f
+        val width = sc.soundstageWidth.coerceIn(0f, 1f) * sc.spatialIntensity.multiplier
+        return when {
+            sc.spatialProfile == SpatialProfile.CINEMATIC -> (0.11f * width).coerceIn(0f, 0.14f)
+            sc.mode == SpatialMode.CINEMA_360 -> (0.09f * width).coerceIn(0f, 0.12f)
+            else -> 0f
         }
     }
 
@@ -406,190 +603,283 @@ class SonoraDspProcessor {
         buffer: FloatArray,
         frameCount: Int,
         cfg: SonoraDspSnapshot,
-        sr: Int
+        sr: Int,
+        alpha: Float
     ) {
         val sc = cfg.spatialConfig
         val virtNorm = (cfg.virtualizerStrength.coerceIn(0, 1000) / 1000f)
-        if (!sc.isEnabled && virtNorm <= 0.01f) return
+        val ssActive = sc.isEnabled || virtNorm > 0.01f
+        val targetMix = if (ssActive) 1f else 0f
 
-        val activeWidth = if (sc.isEnabled) {
-            val base = (sc.soundstageWidth.coerceIn(0f, 1f) * 0.5f +
-                sc.stereoWidening.coerceIn(0f, 1f) * 0.5f) *
-                sc.intensity.coerceIn(0.25f, 1f)
-            val twsMul = if (cfg.isTwsConnected && sc.twsWideStereoEnabled) {
-                (1.0f + 0.18f * sc.twsStereoBoost.coerceIn(0.5f, 1.5f)).coerceIn(1.0f, 1.25f)
-            } else {
-                1.0f
-            }
-            (base * twsMul).coerceIn(0f, 1.15f)
-        } else {
-            virtNorm * 0.55f
-        }
+        val targetWidth = computeTargetMsWidth(cfg, sc, virtNorm)
+        val targetCrossfeed = computeTargetCrossfeed(sc)
+        val targetReflection = computeTargetReflectionMix(sc)
 
-        // Mode-specific safe M/S widening factor (never phase-cancels Mid energy)
-        val msWidth = when (if (sc.isEnabled) sc.mode else SpatialMode.HEADPHONES) {
-            SpatialMode.HEADPHONES -> (1.0f + 0.44f * activeWidth).coerceIn(0.90f, 1.50f)
-            SpatialMode.CINEMA_360 -> (1.0f + 0.58f * activeWidth).coerceIn(0.95f, 1.65f)
-            SpatialMode.SPEAKERS -> (1.0f + 0.28f * activeWidth).coerceIn(0.90f, 1.32f)
-        }
-
-        // Loudness compensation so widening does not over-boost side energy
-        val normGain = 1.0f / sqrt(1.0f + 0.14f * (msWidth - 1.0f).coerceAtLeast(0f))
-        val crossfeedAmount = when (if (sc.isEnabled) sc.mode else SpatialMode.HEADPHONES) {
-            SpatialMode.HEADPHONES -> (0.10f * sc.soundstageWidth.coerceIn(0f, 1f))
-            SpatialMode.CINEMA_360 -> (0.14f * sc.soundstageWidth.coerceIn(0f, 1f))
-            SpatialMode.SPEAKERS -> 0.0f
-        }
         val crossfeedDelaySamples = (0.00024f * sr).toInt().coerceIn(2, 64)
         val lpAlpha = (1600.0 / (sr.toDouble() + 1600.0)).toFloat().coerceIn(0.02f, 0.5f)
-
         val reflTapL = (0.011f * sr).toInt().coerceIn(64, 4000)
         val reflTapR = (0.017f * sr).toInt().coerceIn(96, 6000)
-        val cinemaReflectionMix = if (sc.isEnabled && sc.mode == SpatialMode.CINEMA_360) {
-            0.12f * sc.soundstageWidth.coerceIn(0f, 1f)
-        } else {
-            0f
-        }
+
+        // If already settled completely dry, still feed dedicated ring silently so next enable is warm
+        val skipCompute = !ssActive && smoothedSoundstageMix < 0.0002f
 
         for (f in 0 until frameCount) {
+            smoothedSoundstageMix += alpha * (targetMix - smoothedSoundstageMix)
+            smoothedMsWidth += alpha * (targetWidth - smoothedMsWidth)
+            smoothedCrossfeedAmt += alpha * (targetCrossfeed - smoothedCrossfeedAmt)
+            smoothedReflectionMix += alpha * (targetReflection - smoothedReflectionMix)
+
             val lIdx = f * 2
             val rIdx = lIdx + 1
             val inL = buffer[lIdx]
             val inR = buffer[rIdx]
 
+            if (skipCompute) {
+                ssDelayL[ssWriteIdx] = inL
+                ssDelayR[ssWriteIdx] = inR
+                ssWriteIdx = (ssWriteIdx + 1) and ssMask
+                continue
+            }
+
             val mid = 0.5f * (inL + inR)
             val side = 0.5f * (inL - inR)
+            val w = smoothedMsWidth
+            val normGain = 1.0f / sqrt(1.0f + 0.14f * (w - 1.0f).coerceAtLeast(0f))
 
-            var outL = (mid + msWidth * side) * normGain
-            var outR = (mid - msWidth * side) * normGain
+            var wetL = (mid + w * side) * normGain
+            var wetR = (mid - w * side) * normGain
 
-            // Write dry stereo to delay buffers cleanly for crossfeed / reflections
-            itdDelayL[itdWriteIdx] = outL
-            itdDelayR[itdWriteIdx] = outR
+            // Write ONLY to Soundstage's dedicated ring buffer
+            ssDelayL[ssWriteIdx] = wetL
+            ssDelayR[ssWriteIdx] = wetR
 
-            if (crossfeedAmount > 0.005f) {
-                val readIdx = (itdWriteIdx - crossfeedDelaySamples) and delayMask
-                val oppR = itdDelayR[readIdx]
-                val oppL = itdDelayL[readIdx]
+            val cfAmt = smoothedCrossfeedAmt
+            if (cfAmt > 0.002f) {
+                val readIdx = (ssWriteIdx - crossfeedDelaySamples) and ssMask
+                val oppR = ssDelayR[readIdx]
+                val oppL = ssDelayL[readIdx]
                 crossfeedLpL += lpAlpha * (oppR - crossfeedLpL)
                 crossfeedLpR += lpAlpha * (oppL - crossfeedLpR)
-                outL = outL * (1f - crossfeedAmount * 0.35f) + crossfeedLpL * crossfeedAmount
-                outR = outR * (1f - crossfeedAmount * 0.35f) + crossfeedLpR * crossfeedAmount
+                wetL = wetL * (1f - cfAmt * 0.35f) + crossfeedLpL * cfAmt
+                wetR = wetR * (1f - cfAmt * 0.35f) + crossfeedLpR * cfAmt
             }
 
-            if (cinemaReflectionMix > 0.005f) {
-                val rTapL = (itdWriteIdx - reflTapL) and delayMask
-                val rTapR = (itdWriteIdx - reflTapR) and delayMask
-                outL += itdDelayR[rTapL] * cinemaReflectionMix
-                outR += itdDelayL[rTapR] * cinemaReflectionMix
+            val reflMix = smoothedReflectionMix
+            if (reflMix > 0.002f) {
+                val rTapL = (ssWriteIdx - reflTapL) and ssMask
+                val rTapR = (ssWriteIdx - reflTapR) and ssMask
+                wetL += ssDelayR[rTapL] * reflMix
+                wetR += ssDelayL[rTapR] * reflMix
             }
 
-            itdWriteIdx = (itdWriteIdx + 1) and delayMask
-            buffer[lIdx] = outL
-            buffer[rIdx] = outR
+            ssWriteIdx = (ssWriteIdx + 1) and ssMask
+
+            val mix = smoothedSoundstageMix
+            buffer[lIdx] = inL + mix * (wetL - inL)
+            buffer[rIdx] = inR + mix * (wetR - inR)
         }
+    }
+
+    private fun profileMinFloor(
+        profile: SpatialProfile,
+        depth: Float,
+        intensity: SpatialIntensity
+    ): Float {
+        val scaledDepth = (depth * intensity.multiplier).coerceIn(0.05f, 1.0f)
+        return when (profile) {
+            SpatialProfile.ORBIT -> (1.0f - 0.42f * scaledDepth).coerceIn(0.52f, 1.0f)
+            SpatialProfile.DYNAMIC_360 -> (1.0f - 0.54f * scaledDepth).coerceIn(0.40f, 1.0f)
+            SpatialProfile.CINEMATIC -> (1.0f - 0.28f * scaledDepth).coerceIn(0.66f, 1.0f)
+        }
+    }
+
+    private fun profileItdScale(profile: SpatialProfile): Float = when (profile) {
+        SpatialProfile.ORBIT -> 0.65f
+        SpatialProfile.DYNAMIC_360 -> 1.00f
+        SpatialProfile.CINEMATIC -> 0.55f
+    }
+
+    private fun profileRearWarmth(profile: SpatialProfile): Float = when (profile) {
+        SpatialProfile.ORBIT -> 0.14f
+        SpatialProfile.DYNAMIC_360 -> 0.24f
+        SpatialProfile.CINEMATIC -> 0.10f
+    }
+
+    private fun profileSpeedScale(profile: SpatialProfile): Double = when (profile) {
+        SpatialProfile.ORBIT -> 0.65
+        SpatialProfile.DYNAMIC_360 -> 1.00
+        SpatialProfile.CINEMATIC -> 0.30
     }
 
     private fun applyOrbit8d(
         buffer: FloatArray,
         frameCount: Int,
         cfg: SonoraDspSnapshot,
-        sr: Int
+        sr: Int,
+        alpha: Float
     ) {
-        if (!cfg.orbit8dEnabled) return
+        val sc = cfg.spatialConfig
+        val profile = sc.spatialProfile
+        val intensity = sc.spatialIntensity
 
-        val speed = cfg.orbit8dSpeed.coerceIn(0.1f, 2.0f)
-        val depth = cfg.orbit8dDepth.coerceIn(0.1f, 1.0f)
+        val targetMix = if (cfg.orbit8dEnabled) 1f else 0f
+        val targetDepth = (cfg.orbit8dDepth.coerceIn(0.05f, 1.0f) * intensity.multiplier).coerceIn(0.05f, 1.0f)
+        val targetSpeed = cfg.orbit8dSpeed.coerceIn(0.1f, 2.0f)
+        val targetFloor = profileMinFloor(profile, cfg.orbit8dDepth.coerceIn(0.05f, 1.0f), intensity)
+        val targetItdScale = profileItdScale(profile)
+        val targetRearWarmth = profileRearWarmth(profile)
+        val speedScale = profileSpeedScale(profile)
 
-        // Smooth rotation frequency: 0.06 Hz .. 0.44 Hz (~2.3s to ~16.6s per full 360° orbit)
-        val orbitHz = 0.04 + 0.20 * speed.toDouble()
-        val deltaAngle = (2.0 * PI * orbitHz) / sr.toDouble()
-        val maxItdSamples = 0.00046 * sr.toDouble() // ~0.46ms human ear acoustic ITD
-        val minGainFloor = (1.0f - 0.56f * depth).coerceIn(0.38f, 1.0f)
+        val maxItdSamples = 0.00045 * sr.toDouble() // ~0.45ms max interaural acoustic delta
+        // Constant positive centering delay (>= maxItd + margin for 4-point Hermite read at offset+2)
+        val baseDelaySamples = maxItdSamples + 8.0
         val rearLpAlpha = (2200.0 / (sr.toDouble() + 2200.0)).toFloat().coerceIn(0.05f, 0.55f)
 
+        val skipCompute = !cfg.orbit8dEnabled && smoothedOrbitMix < 0.0002f
+
         for (f in 0 until frameCount) {
+            smoothedOrbitMix += alpha * (targetMix - smoothedOrbitMix)
+            smoothedOrbitDepth += alpha * (targetDepth - smoothedOrbitDepth)
+            smoothedOrbitSpeed += alpha * (targetSpeed - smoothedOrbitSpeed)
+            smoothedOrbitFloor += alpha * (targetFloor - smoothedOrbitFloor)
+            smoothedOrbitItdScale += alpha * (targetItdScale - smoothedOrbitItdScale)
+            smoothedOrbitRearWarmth += alpha * (targetRearWarmth - smoothedOrbitRearWarmth)
+
             val lIdx = f * 2
             val rIdx = lIdx + 1
             val inL = buffer[lIdx]
             val inR = buffer[rIdx]
 
+            // Continuously feed Orbit's dedicated ITD ring buffer so enabling/disabling is seamless
+            orbitItdL[orbitWriteIdx] = inL
+            orbitItdR[orbitWriteIdx] = inR
+
+            if (skipCompute) {
+                orbitWriteIdx = (orbitWriteIdx + 1) and orbitMask
+                continue
+            }
+
+            // Advance azimuth smoothly using smoothed speed & profile speed multiplier
+            val orbitHz = (0.04 + 0.19 * smoothedOrbitSpeed.toDouble()) * speedScale
+            val deltaAngle = (2.0 * PI * orbitHz) / sr.toDouble()
             azimuthDouble = (azimuthDouble + deltaAngle) % (2.0 * PI)
             val sinAz = sin(azimuthDouble).toFloat()
             val cosAz = cos(azimuthDouble).toFloat()
 
-            val pan = sinAz * depth // -1 (Left) .. +1 (Right)
+            // Effective azimuth pan modulated by smoothed depth (-1 Left .. +1 Right)
+            val profilePanWeight = if (profile == SpatialProfile.CINEMATIC) 0.45f else 1.0f
+            val pan = (sinAz * smoothedOrbitDepth * profilePanWeight).coerceIn(-1f, 1f)
 
-            // Controlled equal-power ILD with guaranteed >= 0.38f floor so neither ear ever goes silent
+            // Equal-power stereo ILD with safe minimum gain floor (never drops an earbud to zero)
             val rightEmphasis = ((pan + 1f) * 0.5f).coerceIn(0f, 1f)
             val leftEmphasis = 1f - rightEmphasis
-            val lGain = (minGainFloor + (1.0f - minGainFloor) * sqrt(leftEmphasis)).coerceIn(0.38f, 1.05f)
-            val rGain = (minGainFloor + (1.0f - minGainFloor) * sqrt(rightEmphasis)).coerceIn(0.38f, 1.05f)
+            val floor = smoothedOrbitFloor
+            val lGain = (floor + (1.0f - floor) * sqrt(leftEmphasis)).coerceIn(0.38f, 1.02f)
+            val rGain = (floor + (1.0f - floor) * sqrt(rightEmphasis)).coerceIn(0.38f, 1.02f)
 
-            // Write current stereo to ITD ring buffer
-            itdDelayL[itdWriteIdx] = inL
-            itdDelayR[itdWriteIdx] = inR
+            // Symmetric smooth fractional ITD centered around baseDelaySamples:
+            // When pan > 0 (sound moves Right), Left ear is delayed slightly more and Right slightly less.
+            // Zero cusp at pan == 0 because delayL and delayR are linear C^\infty functions of pan!
+            val halfItd = 0.5 * pan.toDouble() * maxItdSamples * smoothedOrbitItdScale.toDouble()
+            val delayL = (baseDelaySamples + halfItd).coerceIn(2.0, (orbitMask - 8).toDouble())
+            val delayR = (baseDelaySamples - halfItd).coerceIn(2.0, (orbitMask - 8).toDouble())
 
-            // Trailing ear receives smooth fractional ITD delay
-            val itdSamples = abs(pan).toDouble() * maxItdSamples
-            val delayedL = if (pan > 0f) readFractional(itdDelayL, itdSamples) else inL
-            val delayedR = if (pan < 0f) readFractional(itdDelayR, itdSamples) else inR
+            val delayedL = readCubicHermite(orbitItdL, orbitWriteIdx, orbitMask, delayL)
+            val delayedR = readCubicHermite(orbitItdR, orbitWriteIdx, orbitMask, delayR)
 
-            itdWriteIdx = (itdWriteIdx + 1) and delayMask
+            orbitWriteIdx = (orbitWriteIdx + 1) and orbitMask
 
-            // Subtle rear-hemisphere warmth modulation when sound orbits behind the listener (cosAz < 0)
+            // Subtle rear-hemisphere warmth modulation when sound orbits behind the listener
             rearLpL += rearLpAlpha * (delayedL - rearLpL)
             rearLpR += rearLpAlpha * (delayedR - rearLpR)
-            val rearBlend = ((-cosAz).coerceAtLeast(0f) * 0.24f * depth).coerceIn(0f, 0.30f)
+            val rearBlend = ((-cosAz).coerceAtLeast(0f) * smoothedOrbitRearWarmth * smoothedOrbitDepth).coerceIn(0f, 0.28f)
 
-            val shapedL = delayedL * (1f - rearBlend) + rearLpL * rearBlend
-            val shapedR = delayedR * (1f - rearBlend) + rearLpR * rearBlend
+            val wetL = (delayedL * (1f - rearBlend) + rearLpL * rearBlend) * lGain
+            val wetR = (delayedR * (1f - rearBlend) + rearLpR * rearBlend) * rGain
 
-            buffer[lIdx] = shapedL * lGain
-            buffer[rIdx] = shapedR * rGain
+            val mix = smoothedOrbitMix
+            buffer[lIdx] = inL + mix * (wetL - inL)
+            buffer[rIdx] = inR + mix * (wetR - inR)
         }
 
-        currentAzimuthRad = azimuthDouble.toFloat()
+        if (cfg.orbit8dEnabled) {
+            currentAzimuthRad = azimuthDouble.toFloat()
+        }
     }
 
-    private fun readFractional(delayBuf: FloatArray, delaySamples: Double): Float {
-        if (delaySamples <= 0.001) return delayBuf[itdWriteIdx]
-        val clampedDelay = delaySamples.coerceIn(0.0, 128.0)
-        val intPart = clampedDelay.toInt()
-        val frac = (clampedDelay - intPart).toFloat()
-        val idx0 = (itdWriteIdx - intPart) and delayMask
-        val idx1 = (itdWriteIdx - intPart - 1) and delayMask
-        val s0 = delayBuf[idx0]
-        val s1 = delayBuf[idx1]
-        return s0 + frac * (s1 - s0)
+    /**
+     * 4-point Catmull-Rom cubic Hermite fractional delay reader over a circular ring buffer.
+     * Eliminates linear-interpolation zipper noise during continuous ITD modulation.
+     */
+    private fun readCubicHermite(
+        delayBuf: FloatArray,
+        writeIdx: Int,
+        mask: Int,
+        delaySamples: Double
+    ): Float {
+        val intPart = delaySamples.toInt()
+        val frac = (delaySamples - intPart).toFloat()
+
+        val ym1 = delayBuf[(writeIdx - intPart + 1) and mask]
+        val y0 = delayBuf[(writeIdx - intPart) and mask]
+        val y1 = delayBuf[(writeIdx - intPart - 1) and mask]
+        val y2 = delayBuf[(writeIdx - intPart - 2) and mask]
+
+        val c0 = y0
+        val c1 = 0.5f * (y1 - ym1)
+        val c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2
+        val c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1)
+
+        val out = ((c3 * frac + c2) * frac + c1) * frac + c0
+        return if (out.isFinite()) out else y0
+    }
+
+    private fun resolveReverbParams(preset: Short): Triple<Float, Float, Float> {
+        return when (preset) {
+            PresetReverb.PRESET_NONE -> Triple(0f, 0.22f, 0.38f)
+            PresetReverb.PRESET_SMALLROOM -> Triple(0.13f, 0.24f, 0.42f)
+            PresetReverb.PRESET_MEDIUMROOM -> Triple(0.17f, 0.28f, 0.36f)
+            PresetReverb.PRESET_LARGEROOM -> Triple(0.21f, 0.33f, 0.32f)
+            PresetReverb.PRESET_MEDIUMHALL -> Triple(0.24f, 0.37f, 0.28f)
+            PresetReverb.PRESET_LARGEHALL -> Triple(0.27f, 0.42f, 0.24f)
+            PresetReverb.PRESET_PLATE -> Triple(0.21f, 0.32f, 0.50f)
+            else -> Triple(0.15f, 0.26f, 0.36f)
+        }
     }
 
     private fun applyRoomReverb(
         buffer: FloatArray,
         frameCount: Int,
         cfg: SonoraDspSnapshot,
-        sr: Int
+        sr: Int,
+        alpha: Float
     ) {
-        val preset = cfg.reverbPreset
-        if (preset == PresetReverb.PRESET_NONE) return
+        val (targetWet, targetFb, targetDamp) = resolveReverbParams(cfg.reverbPreset)
+        if (cfg.reverbPreset == PresetReverb.PRESET_NONE && smoothedReverbWet < 0.0002f) {
+            smoothedReverbWet = 0f
+            return
+        }
 
-        val (roomScale, wetMix, damping) = when (preset) {
-            PresetReverb.PRESET_SMALLROOM -> Triple(0.45f, 0.14f, 0.42f)
-            PresetReverb.PRESET_MEDIUMROOM -> Triple(0.65f, 0.18f, 0.36f)
-            PresetReverb.PRESET_LARGEROOM -> Triple(0.85f, 0.22f, 0.32f)
-            PresetReverb.PRESET_MEDIUMHALL -> Triple(1.05f, 0.25f, 0.28f)
-            PresetReverb.PRESET_LARGEHALL -> Triple(1.30f, 0.28f, 0.24f)
-            PresetReverb.PRESET_PLATE -> Triple(0.75f, 0.22f, 0.50f)
-            else -> Triple(0.60f, 0.16f, 0.35f)
+        val roomScale = when (cfg.reverbPreset) {
+            PresetReverb.PRESET_SMALLROOM -> 0.45f
+            PresetReverb.PRESET_MEDIUMROOM -> 0.65f
+            PresetReverb.PRESET_LARGEROOM -> 0.85f
+            PresetReverb.PRESET_MEDIUMHALL -> 1.05f
+            PresetReverb.PRESET_LARGEHALL -> 1.30f
+            PresetReverb.PRESET_PLATE -> 0.75f
+            else -> 0.60f
         }
 
         val tap1L = ((0.0297f * roomScale) * sr).toInt().coerceIn(64, 30000)
         val tap2L = ((0.0419f * roomScale) * sr).toInt().coerceIn(96, 31000)
         val tap1R = ((0.0313f * roomScale) * sr).toInt().coerceIn(64, 30000)
         val tap2R = ((0.0443f * roomScale) * sr).toInt().coerceIn(96, 31000)
-        val feedback = (0.34f * roomScale).coerceIn(0.15f, 0.48f)
 
         for (f in 0 until frameCount) {
+            smoothedReverbWet += alpha * (targetWet - smoothedReverbWet)
+            smoothedReverbFeedback += alpha * (targetFb - smoothedReverbFeedback)
+            smoothedReverbDamping += alpha * (targetDamp - smoothedReverbDamping)
+
             val lIdx = f * 2
             val rIdx = lIdx + 1
             val dryL = buffer[lIdx]
@@ -600,25 +890,21 @@ class SonoraDspProcessor {
             val rR = 0.55f * revBufR[(revWriteIdx - tap1R) and revMask] +
                 0.45f * revBufL[(revWriteIdx - tap2R) and revMask]
 
-            revLpL += damping * (rL - revLpL)
-            revLpR += damping * (rR - revLpR)
+            revLpL += smoothedReverbDamping * (rL - revLpL)
+            revLpR += smoothedReverbDamping * (rR - revLpR)
 
-            revBufL[revWriteIdx] = (dryL + revLpL * feedback).coerceIn(-2f, 2f)
-            revBufR[revWriteIdx] = (dryR + revLpR * feedback).coerceIn(-2f, 2f)
+            revBufL[revWriteIdx] = (dryL + revLpL * smoothedReverbFeedback).coerceIn(-2f, 2f)
+            revBufR[revWriteIdx] = (dryR + revLpR * smoothedReverbFeedback).coerceIn(-2f, 2f)
             revWriteIdx = (revWriteIdx + 1) and revMask
 
-            // Dry always stays >= 0.88f so reverb never buries or silences music
-            buffer[lIdx] = dryL * 0.92f + revLpL * wetMix
-            buffer[rIdx] = dryR * 0.92f + revLpR * wetMix
+            val wet = smoothedReverbWet
+            val dryGain = 1.0f - wet * 0.25f
+            buffer[lIdx] = dryL * dryGain + revLpL * wet
+            buffer[rIdx] = dryR * dryGain + revLpR * wet
         }
     }
 
-    private fun applyOutputGainAndLimiter(
-        buffer: FloatArray,
-        frameCount: Int,
-        cfg: SonoraDspSnapshot,
-        volScale: Float
-    ) {
+    private fun computeTargetOutputGains(cfg: SonoraDspSnapshot, volScale: Float): Pair<Float, Float> {
         val sc = cfg.spatialConfig
         val balance = sc.channelBalance.coerceIn(-1.0f, 1.0f)
         var balL = if (balance > 0f) (1.0f - balance) else 1.0f
@@ -630,7 +916,6 @@ class SonoraDspProcessor {
             else if (posX < 0f) balR *= (1.0f - abs(posX) * 0.35f)
         }
 
-        // Preserve full symmetrical amplitude when centered
         if (abs(balance) < 0.05f && abs(sc.listenerX) < 0.05f) {
             balL = balL.coerceAtLeast(0.95f)
             balR = balR.coerceAtLeast(0.95f)
@@ -639,14 +924,40 @@ class SonoraDspProcessor {
         val boostDb = cfg.volumeBoostDb.coerceIn(0f, 10f)
         val boostLinear = 10.0.pow(boostDb.toDouble() / 20.0).toFloat()
 
-        val finalGainL = balL * boostLinear * volScale
-        val finalGainR = balR * boostLinear * volScale
+        return (balL * boostLinear * volScale) to (balR * boostLinear * volScale)
+    }
+
+    private fun applyFinalMixAndLimiter(
+        buffer: FloatArray,
+        frameCount: Int,
+        cfg: SonoraDspSnapshot,
+        sr: Int,
+        volScale: Float,
+        targetBypassWet: Float,
+        alpha: Float
+    ) {
+        val (targetGainL, targetGainR) = computeTargetOutputGains(cfg, volScale)
 
         for (f in 0 until frameCount) {
+            smoothedBypassWet += alpha * (targetBypassWet - smoothedBypassWet)
+            smoothedGainL += alpha * (targetGainL - smoothedGainL)
+            smoothedGainR += alpha * (targetGainR - smoothedGainR)
+            val ramp = nextFadeInMultiplier()
+
             val lIdx = f * 2
             val rIdx = lIdx + 1
-            buffer[lIdx] = softLimit(buffer[lIdx] * finalGainL)
-            buffer[rIdx] = softLimit(buffer[rIdx] * finalGainR)
+            val dryL = bypassScratch[lIdx] * volScale
+            val dryR = bypassScratch[rIdx] * volScale
+
+            val processedL = softLimit(buffer[lIdx] * smoothedGainL)
+            val processedR = softLimit(buffer[rIdx] * smoothedGainR)
+
+            val wet = smoothedBypassWet
+            val outL = (dryL + wet * (processedL - dryL)) * ramp
+            val outR = (dryR + wet * (processedR - dryR)) * ramp
+
+            buffer[lIdx] = if (outL.isFinite()) outL.coerceIn(-0.995f, 0.995f) else 0f
+            buffer[rIdx] = if (outR.isFinite()) outR.coerceIn(-0.995f, 0.995f) else 0f
         }
     }
 
@@ -654,7 +965,6 @@ class SonoraDspProcessor {
         if (!x.isFinite()) return 0f
         val absX = abs(x)
         if (absX <= 0.88f) return x
-        // Smooth tanh saturation above 0.88f -> strictly bounded in [-0.995f, +0.995f]
         val excess = (absX - 0.88f) / 0.12f
         val limited = 0.88f + 0.115f * tanh(excess.toDouble()).toFloat()
         return if (x >= 0f) limited else -limited

@@ -64,7 +64,7 @@ fun SeekbarStyleScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding(),
         contentAlignment = Alignment.TopCenter
     ) {

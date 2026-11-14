@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.model.DynamicAppearanceMode
+import com.example.model.DynamicColorIntensity
 import com.example.model.DynamicThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +33,9 @@ class ThemePreferences(private val context: Context) {
     companion object {
         val KEY_DYNAMIC_COLORS_ENABLED = booleanPreferencesKey("dynamic_colors_enabled")
         val KEY_DYNAMIC_THEME_MODE = stringPreferencesKey("dynamic_theme_mode")
+        val KEY_DYNAMIC_APPEARANCE_MODE = stringPreferencesKey("dynamic_appearance_mode")
+        val KEY_DYNAMIC_COLOR_INTENSITY = stringPreferencesKey("dynamic_color_intensity")
+        val KEY_DYNAMIC_GRADIENT_ENABLED = booleanPreferencesKey("dynamic_gradient_enabled")
     }
 
     val dynamicColorsEnabledFlow: Flow<Boolean> = context.themeDataStore.data.map { preferences ->
@@ -38,8 +43,19 @@ class ThemePreferences(private val context: Context) {
     }
 
     val dynamicThemeModeFlow: Flow<DynamicThemeMode> = context.themeDataStore.data.map { preferences ->
-        val id = preferences[KEY_DYNAMIC_THEME_MODE]
-        DynamicThemeMode.fromId(id)
+        DynamicThemeMode.fromId(preferences[KEY_DYNAMIC_THEME_MODE])
+    }
+
+    val dynamicAppearanceModeFlow: Flow<DynamicAppearanceMode> = context.themeDataStore.data.map { preferences ->
+        DynamicAppearanceMode.fromId(preferences[KEY_DYNAMIC_APPEARANCE_MODE])
+    }
+
+    val dynamicColorIntensityFlow: Flow<DynamicColorIntensity> = context.themeDataStore.data.map { preferences ->
+        DynamicColorIntensity.fromId(preferences[KEY_DYNAMIC_COLOR_INTENSITY])
+    }
+
+    val dynamicGradientEnabledFlow: Flow<Boolean> = context.themeDataStore.data.map { preferences ->
+        preferences[KEY_DYNAMIC_GRADIENT_ENABLED] ?: true
     }
 
     val dynamicColorsEnabled: StateFlow<Boolean> = dynamicColorsEnabledFlow.stateIn(
@@ -59,10 +75,45 @@ class ThemePreferences(private val context: Context) {
         started = SharingStarted.Eagerly,
         initialValue = runBlocking {
             try {
-                val id = context.themeDataStore.data.first()[KEY_DYNAMIC_THEME_MODE]
-                DynamicThemeMode.fromId(id)
+                DynamicThemeMode.fromId(context.themeDataStore.data.first()[KEY_DYNAMIC_THEME_MODE])
             } catch (e: Exception) {
                 DynamicThemeMode.DEFAULT
+            }
+        }
+    )
+
+    val dynamicAppearanceMode: StateFlow<DynamicAppearanceMode> = dynamicAppearanceModeFlow.stateIn(
+        scope = scope,
+        started = SharingStarted.Eagerly,
+        initialValue = runBlocking {
+            try {
+                DynamicAppearanceMode.fromId(context.themeDataStore.data.first()[KEY_DYNAMIC_APPEARANCE_MODE])
+            } catch (e: Exception) {
+                DynamicAppearanceMode.DEFAULT
+            }
+        }
+    )
+
+    val dynamicColorIntensity: StateFlow<DynamicColorIntensity> = dynamicColorIntensityFlow.stateIn(
+        scope = scope,
+        started = SharingStarted.Eagerly,
+        initialValue = runBlocking {
+            try {
+                DynamicColorIntensity.fromId(context.themeDataStore.data.first()[KEY_DYNAMIC_COLOR_INTENSITY])
+            } catch (e: Exception) {
+                DynamicColorIntensity.DEFAULT
+            }
+        }
+    )
+
+    val dynamicGradientEnabled: StateFlow<Boolean> = dynamicGradientEnabledFlow.stateIn(
+        scope = scope,
+        started = SharingStarted.Eagerly,
+        initialValue = runBlocking {
+            try {
+                context.themeDataStore.data.first()[KEY_DYNAMIC_GRADIENT_ENABLED] ?: true
+            } catch (e: Exception) {
+                true
             }
         }
     )
@@ -83,11 +134,38 @@ class ThemePreferences(private val context: Context) {
         }
     }
 
+    fun setDynamicAppearanceMode(mode: DynamicAppearanceMode) {
+        scope.launch {
+            context.themeDataStore.edit { preferences ->
+                preferences[KEY_DYNAMIC_APPEARANCE_MODE] = mode.id
+            }
+        }
+    }
+
+    fun setDynamicColorIntensity(intensity: DynamicColorIntensity) {
+        scope.launch {
+            context.themeDataStore.edit { preferences ->
+                preferences[KEY_DYNAMIC_COLOR_INTENSITY] = intensity.id
+            }
+        }
+    }
+
+    fun setDynamicGradientEnabled(enabled: Boolean) {
+        scope.launch {
+            context.themeDataStore.edit { preferences ->
+                preferences[KEY_DYNAMIC_GRADIENT_ENABLED] = enabled
+            }
+        }
+    }
+
     fun resetToDefault() {
         scope.launch {
             context.themeDataStore.edit { preferences ->
                 preferences[KEY_DYNAMIC_COLORS_ENABLED] = true
                 preferences[KEY_DYNAMIC_THEME_MODE] = DynamicThemeMode.DEFAULT.id
+                preferences[KEY_DYNAMIC_APPEARANCE_MODE] = DynamicAppearanceMode.DEFAULT.id
+                preferences[KEY_DYNAMIC_COLOR_INTENSITY] = DynamicColorIntensity.DEFAULT.id
+                preferences[KEY_DYNAMIC_GRADIENT_ENABLED] = true
             }
         }
     }

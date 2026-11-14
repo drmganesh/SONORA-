@@ -39,6 +39,12 @@ fun SpatialSoundstageView(
     onPositionChanged: (Float, Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val colors = ui.theme.LocalEditorialColors.current
+    val dynPalette = ui.theme.LocalDynamicColorPalette.current
+    val primaryAccent = colors.accentStrong
+    val secondaryAccent = dynPalette.tertiary
+    val radarSurfaceInner = colors.surfaceTinted
+    val radarSurfaceOuter = colors.surface
     val waveAnim = remember { Animatable(0f) }
 
     LaunchedEffect(spatialConfig.isEnabled) {
@@ -78,10 +84,9 @@ fun SpatialSoundstageView(
             val center = Offset(size.width / 2, size.height / 2)
             val maxRadius = (minOf(size.width, size.height) / 2) - 16.dp.toPx()
 
-            // Outer acoustic radar background
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(SonoraSurfaceDark, SonoraObsidian),
+                    colors = listOf(radarSurfaceInner, radarSurfaceOuter),
                     center = center,
                     radius = maxRadius
                 ),
@@ -89,40 +94,37 @@ fun SpatialSoundstageView(
                 center = center
             )
 
-            // Concentric soundstage expansion rings
             val numRings = 4
             for (i in 1..numRings) {
                 val ringRad = maxRadius * (i.toFloat() / numRings) * spatialConfig.soundstageWidth.coerceIn(0.4f, 1f)
                 drawCircle(
-                    color = SonoraCardBorder.copy(alpha = 0.5f),
+                    color = colors.cardBorder.copy(alpha = 0.65f),
                     radius = ringRad,
                     center = center,
                     style = Stroke(width = 1.dp.toPx())
                 )
             }
 
-            // Radial crosshair guides
             drawLine(
-                color = SonoraCardBorder.copy(alpha = 0.35f),
+                color = colors.cardBorder.copy(alpha = 0.45f),
                 start = Offset(center.x - maxRadius, center.y),
                 end = Offset(center.x + maxRadius, center.y),
                 strokeWidth = 1.dp.toPx()
             )
             drawLine(
-                color = SonoraCardBorder.copy(alpha = 0.35f),
+                color = colors.cardBorder.copy(alpha = 0.45f),
                 start = Offset(center.x, center.y - maxRadius),
                 end = Offset(center.x, center.y + maxRadius),
                 strokeWidth = 1.dp.toPx()
             )
 
-            // Surrounding 360° Speaker/Spatial Nodes
             val speakerAngles = when (spatialConfig.mode) {
-                SpatialMode.HEADPHONES -> listOf(-Math.PI / 4, Math.PI / 4) // Left & Right ears
-                SpatialMode.SPEAKERS -> listOf(-Math.PI / 6, Math.PI / 6, -5 * Math.PI / 6, 5 * Math.PI / 6) // Studio Quad
+                SpatialMode.HEADPHONES -> listOf(-Math.PI / 4, Math.PI / 4)
+                SpatialMode.SPEAKERS -> listOf(-Math.PI / 6, Math.PI / 6, -5 * Math.PI / 6, 5 * Math.PI / 6)
                 SpatialMode.CINEMA_360 -> listOf(
-                    -Math.PI / 6, 0.0, Math.PI / 6, // Front L, C, R
-                    -Math.PI / 2, Math.PI / 2, // Sides
-                    -5 * Math.PI / 6, 5 * Math.PI / 6 // Surrounds
+                    -Math.PI / 6, 0.0, Math.PI / 6,
+                    -Math.PI / 2, Math.PI / 2,
+                    -5 * Math.PI / 6, 5 * Math.PI / 6
                 )
             }
 
@@ -131,21 +133,19 @@ fun SpatialSoundstageView(
                 val sy = center.y + maxRadius * sin(angle).toFloat() * 0.88f
                 val speakerPos = Offset(sx, sy)
 
-                // Pulse waves from speakers
                 if (spatialConfig.isEnabled) {
                     val pulseRadius = 12.dp.toPx() + (waveAnim.value * 28.dp.toPx())
                     drawCircle(
-                        color = SonoraCyan.copy(alpha = (1f - waveAnim.value) * 0.45f * spatialConfig.intensity),
+                        color = secondaryAccent.copy(alpha = (1f - waveAnim.value) * 0.45f * spatialConfig.intensity),
                         radius = pulseRadius,
                         center = speakerPos,
                         style = Stroke(width = 1.5.dp.toPx())
                     )
                 }
 
-                // Speaker node marker
                 drawCircle(
                     brush = Brush.radialGradient(
-                        colors = listOf(SonoraCyanGlow, SonoraCyan),
+                        colors = listOf(secondaryAccent.copy(alpha = 0.9f), secondaryAccent),
                         center = speakerPos,
                         radius = 8.dp.toPx()
                     ),
@@ -154,17 +154,15 @@ fun SpatialSoundstageView(
                 )
             }
 
-            // Central Listener position
             val listenerPx = Offset(
                 center.x + (spatialConfig.listenerX * maxRadius * 0.75f),
                 center.y + (spatialConfig.listenerY * maxRadius * 0.75f)
             )
 
-            // Listener aura glow
             if (spatialConfig.isEnabled) {
                 drawCircle(
                     brush = Brush.radialGradient(
-                        colors = listOf(SonoraGold.copy(alpha = 0.45f), Color.Transparent),
+                        colors = listOf(primaryAccent.copy(alpha = 0.45f), Color.Transparent),
                         center = listenerPx,
                         radius = 24.dp.toPx()
                     ),
@@ -173,14 +171,13 @@ fun SpatialSoundstageView(
                 )
             }
 
-            // Listener core avatar
             drawCircle(
-                color = SonoraGold,
+                color = primaryAccent,
                 radius = 10.dp.toPx(),
                 center = listenerPx
             )
             drawCircle(
-                color = SonoraObsidian,
+                color = colors.onAccentStrong,
                 radius = 4.dp.toPx(),
                 center = listenerPx
             )

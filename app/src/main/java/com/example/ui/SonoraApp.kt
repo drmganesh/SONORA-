@@ -60,6 +60,11 @@ fun SonoraApp(viewModel: SonoraViewModel) {
     val reduceAnimations by viewModel.reduceAnimations.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+
+    LaunchedEffect(systemDark) {
+        viewModel.updateSystemDarkTheme(systemDark)
+    }
 
     var currentTab by remember { mutableIntStateOf(0) } // 0 = Home, 1 = Search, 2 = Library
     var showSettingsScreen by remember { mutableStateOf(false) }
@@ -69,6 +74,8 @@ fun SonoraApp(viewModel: SonoraViewModel) {
     var showPlaylistsScreen by remember { mutableStateOf(false) }
     var showQueueScreen by remember { mutableStateOf(false) }
     var showFolderManagementScreen by remember { mutableStateOf(false) }
+    var showDynamicThemeScreen by remember { mutableStateOf(false) }
+    var showPlayerStyleScreen by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
 
@@ -125,22 +132,28 @@ fun SonoraApp(viewModel: SonoraViewModel) {
         BackHandler(enabled = showFolderManagementScreen && !showQueueScreen) {
             showFolderManagementScreen = false
         }
-        BackHandler(enabled = showAudioStudioScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+            showPlayerStyleScreen = false
+        }
+        BackHandler(enabled = showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
+            showDynamicThemeScreen = false
+        }
+        BackHandler(enabled = showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
             showAudioStudioScreen = false
         }
-        BackHandler(enabled = showEqualizerScreen && !showAudioStudioScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
             showEqualizerScreen = false
         }
-        BackHandler(enabled = isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
             isNowPlayingExpanded = false
         }
-        BackHandler(enabled = showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
             showPlaylistsScreen = false
         }
-        BackHandler(enabled = showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
             showSettingsScreen = false
         }
-        BackHandler(enabled = currentTab != 0 && !showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showQueueScreen && !showFolderManagementScreen) {
+        BackHandler(enabled = currentTab != 0 && !showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showDynamicThemeScreen && !showPlayerStyleScreen && !showQueueScreen && !showFolderManagementScreen) {
             currentTab = 0
         }
 
@@ -150,6 +163,8 @@ fun SonoraApp(viewModel: SonoraViewModel) {
             !showPlaylistsScreen &&
             !showQueueScreen &&
             !showFolderManagementScreen &&
+            !showDynamicThemeScreen &&
+            !showPlayerStyleScreen &&
             !showSettingsScreen
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -176,7 +191,9 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                         onOpenEqualizer = { showEqualizerScreen = true },
                         onOpenAudioStudio = { showAudioStudioScreen = true },
                         onOpenPlaylists = { showPlaylistsScreen = true },
-                        onOpenQueue = { showQueueScreen = true }
+                        onOpenQueue = { showQueueScreen = true },
+                        onOpenDynamicColors = { showDynamicThemeScreen = true },
+                        onOpenPlayerStyles = { showPlayerStyleScreen = true }
                     )
                     1 -> SearchScreen(
                         viewModel = viewModel,
@@ -320,6 +337,38 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                     onBack = { showQueueScreen = false },
                     onOpenNowPlaying = {
                         showQueueScreen = false
+                        isNowPlayingExpanded = true
+                    }
+                )
+            }
+
+            // 10. Dynamic Colours Personalization Overlay (opened from Profile Sheet)
+            AnimatedVisibility(
+                visible = showDynamicThemeScreen,
+                enter = subtleEnter,
+                exit = subtleExit
+            ) {
+                ui.settings.DynamicThemeSettingsScreen(
+                    viewModel = viewModel,
+                    onBack = { showDynamicThemeScreen = false },
+                    onOpenPlayer = {
+                        showDynamicThemeScreen = false
+                        isNowPlayingExpanded = true
+                    }
+                )
+            }
+
+            // 11. Now Playing Player Style Selector Overlay (opened from Profile Sheet)
+            AnimatedVisibility(
+                visible = showPlayerStyleScreen,
+                enter = subtleEnter,
+                exit = subtleExit
+            ) {
+                ui.player.PlayerStyleSelector(
+                    viewModel = viewModel,
+                    onBack = { showPlayerStyleScreen = false },
+                    onOpenPlayer = {
+                        showPlayerStyleScreen = false
                         isNowPlayingExpanded = true
                     }
                 )

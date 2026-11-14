@@ -3,10 +3,11 @@ package ui.theme
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import com.example.ui.theme.SonoraCharcoal
 import com.example.ui.theme.SonoraCharcoalBorder
+import com.example.ui.theme.SonoraCyan
 import com.example.ui.theme.SonoraDustyRose
-import com.example.ui.theme.SonoraDustyRoseDark
 import com.example.ui.theme.SonoraDustyRoseLight
 import com.example.ui.theme.SonoraTextMuted
 import com.example.ui.theme.SonoraTextPrimary
@@ -14,7 +15,9 @@ import com.example.ui.theme.SonoraTextSecondary
 
 /**
  * Coordinated Dynamic UI Theme Palette derived from album artwork.
- * Provides accessible, WCAG-compliant colors for every section of SONORA.
+ * Provides accessible, WCAG-compliant colors for every section of SONORA:
+ * main background, elevated & secondary surfaces, primary/secondary/tertiary accents,
+ * readable typography, outline, progress indicators, and tonal gradients.
  */
 @Immutable
 data class DynamicColorPalette(
@@ -42,19 +45,30 @@ data class DynamicColorPalette(
     val textPrimary: Color = SonoraTextPrimary,
     val textSecondary: Color = SonoraTextSecondary,
     val textMuted: Color = SonoraTextMuted,
-    val subtleTint: Color = SonoraDustyRose.copy(alpha = 0.15f)
+    val subtleTint: Color = SonoraDustyRose.copy(alpha = 0.15f),
+    val tertiary: Color = secondary,
+    val onTertiary: Color = onSecondary,
+    val secondarySurface: Color = surfaceVariant,
+    val elevatedSurface: Color = surfaceVariant,
+    val outline: Color = cardBorder,
+    val isDarkPalette: Boolean = true,
+    val gradientEnabled: Boolean = true
 ) {
     /**
-     * Vertical background gradient for Now Playing & Canvas.
+     * Vertical tonal background gradient (or flat solid fill when Dynamic Gradient is OFF).
      */
     val backgroundGradientBrush: Brush
-        get() = Brush.verticalGradient(
-            colors = listOf(
-                gradientTop,
-                gradientMiddle,
-                gradientBottom
+        get() = if (gradientEnabled) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    gradientTop,
+                    gradientMiddle,
+                    gradientBottom
+                )
             )
-        )
+        } else {
+            SolidColor(background)
+        }
 
     /**
      * Radial glow brush for ambient lighting behind album artwork.
@@ -109,7 +123,14 @@ data class DynamicColorPalette(
                 textPrimary = SonoraTextPrimary,
                 textSecondary = SonoraTextSecondary,
                 textMuted = SonoraTextMuted,
-                subtleTint = SonoraDustyRose.copy(alpha = 0.15f)
+                subtleTint = SonoraDustyRose.copy(alpha = 0.15f),
+                tertiary = SonoraCyan.copy(alpha = 0.85f),
+                onTertiary = Color.Black,
+                secondarySurface = Color(0xFF1A1719),
+                elevatedSurface = Color(0xFF1F1D21),
+                outline = SonoraCharcoalBorder,
+                isDarkPalette = true,
+                gradientEnabled = true
             )
         }
     }

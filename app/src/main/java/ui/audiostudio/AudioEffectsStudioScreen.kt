@@ -62,7 +62,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.SpatialIntensity
 import com.example.model.SpatialMode
+import com.example.model.SpatialProfile
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
@@ -127,7 +129,7 @@ fun AudioEffectsStudioScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("audio_effects_studio_screen"),
@@ -314,7 +316,7 @@ fun AudioEffectsStudioScreen(
                                         color = colors.textPrimary
                                     )
                                     Text(
-                                        text = "Slow orbital acoustic azimuth panning with safe dual-earbud floor",
+                                        text = "${spatialConfig.spatialProfile.displayName} • ${spatialConfig.spatialIntensity.displayName} spatial field",
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 12.sp,
                                         color = colors.textSecondary
@@ -332,9 +334,64 @@ fun AudioEffectsStudioScreen(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
 
-                            // Orbital Soundstage Radar Canvas
+                            // Three Spatial Profiles: Orbit / Dynamic 360° / Cinematic
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                SpatialProfile.entries.forEach { profile ->
+                                    val selected = spatialConfig.spatialProfile == profile
+                                    Surface(
+                                        onClick = { viewModel.setSpatialProfile(profile) },
+                                        enabled = !globalBypass,
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = if (selected) colors.accentPill else colors.surfaceTinted,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            1.dp,
+                                            if (selected) colors.accentStrong else colors.cardBorder
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(54.dp)
+                                            .testTag("spatial_profile_${profile.id}")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 6.dp),
+                                            verticalArrangement = Arrangement.Center,
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Text(
+                                                text = profile.displayName,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                                                fontSize = 12.sp,
+                                                color = if (selected) colors.onAccentPill else colors.textPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = when (profile) {
+                                                    SpatialProfile.ORBIT -> "Gentle orbit"
+                                                    SpatialProfile.DYNAMIC_360 -> "Full 360° arc"
+                                                    SpatialProfile.CINEMATIC -> "Wide stage"
+                                                },
+                                                fontFamily = PlusJakartaFontFamily,
+                                                fontSize = 10.sp,
+                                                color = if (selected) colors.onAccentPill.copy(alpha = 0.8f) else colors.textMuted,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Real-time Orbital Soundstage Radar Canvas driven by actual DSP azimuth & intensity
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -346,10 +403,12 @@ fun AudioEffectsStudioScreen(
                                 val accentColor = colors.accentStrong
                                 val trackRingColor = colors.cardBorder
                                 val listenerBg = colors.accentPill
+                                val effectiveDepth = (orbitDepth * spatialConfig.spatialIntensity.multiplier).coerceIn(0.1f, 1.0f)
+                                val profileSpread = if (spatialConfig.spatialProfile == SpatialProfile.CINEMATIC) 0.55f else 1.0f
                                 Canvas(modifier = Modifier.size(136.dp)) {
                                     val center = Offset(size.width / 2f, size.height / 2f)
                                     val outerR = size.minDimension * 0.44f
-                                    val innerR = outerR * 0.56f
+                                    val innerR = outerR * (0.45f + 0.25f * spatialConfig.stereoWidening)
 
                                     drawCircle(
                                         color = trackRingColor,
@@ -373,8 +432,8 @@ fun AudioEffectsStudioScreen(
                                         center = center
                                     )
 
-                                    val activeRadius = outerR * (0.45f + 0.55f * orbitDepth)
-                                    val orbX = center.x + sin(orbitAzimuth.toDouble()).toFloat() * activeRadius
+                                    val activeRadius = outerR * (0.42f + 0.58f * effectiveDepth)
+                                    val orbX = center.x + sin(orbitAzimuth.toDouble()).toFloat() * activeRadius * profileSpread
                                     val orbY = center.y - cos(orbitAzimuth.toDouble()).toFloat() * activeRadius
 
                                     if (orbitEnabled && !globalBypass) {
@@ -406,11 +465,55 @@ fun AudioEffectsStudioScreen(
                                 )
                             }
 
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Spatial Intensity Chips: Subtle / Balanced / Immersive
+                            Text(
+                                text = "Spatial Intensity",
+                                fontFamily = PlusJakartaFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                color = colors.textSecondary
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                SpatialIntensity.entries.forEach { level ->
+                                    val selected = spatialConfig.spatialIntensity == level
+                                    Surface(
+                                        onClick = { viewModel.setSpatialIntensity(level) },
+                                        enabled = !globalBypass,
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (selected) colors.accentStrong else colors.surfaceTinted,
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            0.75.dp,
+                                            if (selected) colors.accentStrong else colors.cardBorder
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(40.dp)
+                                            .testTag("spatial_intensity_${level.id}")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = level.displayName,
+                                                fontFamily = PlusJakartaFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = if (selected) colors.onAccentStrong else colors.textPrimary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
                             AnimatedVisibility(visible = orbitEnabled && !globalBypass) {
                                 Column {
                                     Spacer(modifier = Modifier.height(14.dp))
                                     StudioSliderRow(
-                                        label = "Slow Orbit Speed",
+                                        label = "Rotation Speed",
                                         valueLabel = "${String.format(java.util.Locale.US, "%.2f", orbitSpeed)}x",
                                         value = orbitSpeed,
                                         valueRange = 0.1f..2.0f,
@@ -418,7 +521,7 @@ fun AudioEffectsStudioScreen(
                                         onValueChange = { viewModel.setOrbit8dConfig(true, speed = it, depth = orbitDepth) }
                                     )
                                     StudioSliderRow(
-                                        label = "8D Spatial Depth",
+                                        label = "Spatial Depth",
                                         valueLabel = "${(orbitDepth * 100).toInt()}%",
                                         value = orbitDepth,
                                         valueRange = 0.1f..1.0f,

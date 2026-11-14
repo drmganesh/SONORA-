@@ -20,7 +20,9 @@ import com.example.model.ShuffleMode
 import com.example.model.SingleTapAction
 import com.example.model.SortOption
 import com.example.model.SpatialAudioConfig
+import com.example.model.SpatialIntensity
 import com.example.model.SpatialMode
+import com.example.model.SpatialProfile
 import com.example.model.SwipeAction
 import com.example.model.ThemeMode
 import org.json.JSONArray
@@ -88,6 +90,24 @@ class SonoraPreferences(context: Context) {
             return com.example.model.DynamicThemeMode.fromId(id)
         }
         set(value) = prefs.edit().putString("dynamic_theme_mode", value.id).apply()
+
+    var dynamicAppearanceMode: com.example.model.DynamicAppearanceMode
+        get() {
+            val id = prefs.getString("dynamic_appearance_mode", com.example.model.DynamicAppearanceMode.DEFAULT.id)
+            return com.example.model.DynamicAppearanceMode.fromId(id)
+        }
+        set(value) = prefs.edit().putString("dynamic_appearance_mode", value.id).apply()
+
+    var dynamicColorIntensity: com.example.model.DynamicColorIntensity
+        get() {
+            val id = prefs.getString("dynamic_color_intensity", com.example.model.DynamicColorIntensity.DEFAULT.id)
+            return com.example.model.DynamicColorIntensity.fromId(id)
+        }
+        set(value) = prefs.edit().putString("dynamic_color_intensity", value.id).apply()
+
+    var dynamicGradientEnabled: Boolean
+        get() = prefs.getBoolean("dynamic_gradient_enabled", true)
+        set(value) = prefs.edit().putBoolean("dynamic_gradient_enabled", value).apply()
 
     // Editorial Home Theme & Custom Accent
     var homeThemeMode: ui.theme.HomeThemeMode
@@ -176,6 +196,8 @@ class SonoraPreferences(context: Context) {
             val channelBalance = prefs.getFloat("spatial_channel_balance", 0.0f)
             val twsWideStereo = prefs.getBoolean("spatial_tws_wide_stereo", true)
             val twsStereoBoost = prefs.getFloat("spatial_tws_stereo_boost", 0.90f)
+            val spatialProfile = SpatialProfile.fromId(prefs.getString("spatial_profile", SpatialProfile.DYNAMIC_360.id))
+            val spatialIntensity = SpatialIntensity.fromId(prefs.getString("spatial_intensity", SpatialIntensity.BALANCED.id))
 
             return SpatialAudioConfig(
                 isEnabled = isEnabled,
@@ -188,7 +210,9 @@ class SonoraPreferences(context: Context) {
                 stereoWidening = stereoWidening,
                 channelBalance = channelBalance,
                 twsWideStereoEnabled = twsWideStereo,
-                twsStereoBoost = twsStereoBoost
+                twsStereoBoost = twsStereoBoost,
+                spatialProfile = spatialProfile,
+                spatialIntensity = spatialIntensity
             )
         }
         set(value) {
@@ -204,6 +228,8 @@ class SonoraPreferences(context: Context) {
                 .putFloat("spatial_channel_balance", value.channelBalance)
                 .putBoolean("spatial_tws_wide_stereo", value.twsWideStereoEnabled)
                 .putFloat("spatial_tws_stereo_boost", value.twsStereoBoost)
+                .putString("spatial_profile", value.spatialProfile.id)
+                .putString("spatial_intensity", value.spatialIntensity.id)
                 .apply()
         }
 

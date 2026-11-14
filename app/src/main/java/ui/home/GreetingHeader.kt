@@ -25,26 +25,26 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.Song
+import com.example.model.UserProfile
 import com.example.ui.theme.OutfitFontFamily
-import ui.components.CircularArtwork
 import ui.components.DiscoveryScallopShape
+import ui.components.UserProfileAvatar
 import ui.theme.EditorialColors
 
 /**
  * Compact Editorial Top Greeting Header:
- * Left: Circular profile/featured artwork + full responsive time-based greeting (never ellipsized)
+ * Left: Dedicated circular User Profile Avatar (48-52dp) + full responsive greeting text
  * Right: Scalloped Music Discovery button + Circular Settings button
  */
 @Composable
 fun GreetingHeader(
     greeting: String,
-    featuredSong: Song?,
-    isPlaying: Boolean,
+    userProfile: UserProfile,
     colors: EditorialColors,
     onAvatarClick: () -> Unit,
     onDiscoveryClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    reduceAnimations: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
@@ -55,7 +55,7 @@ fun GreetingHeader(
     ) {
         val compact = maxWidth < 360.dp
         val greetingSize = if (compact) 15.5.sp else 17.5.sp
-        val avatarSize = if (compact) 38.dp else 42.dp
+        val avatarSize = if (compact) 48.dp else 52.dp
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -65,23 +65,21 @@ fun GreetingHeader(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .clip(CircleShape)
-                    .clickable { onAvatarClick() }
                     .padding(end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                CircularArtwork(
-                    song = featuredSong,
-                    fallbackLabel = "S",
-                    isPlaying = isPlaying,
-                    accentColor = colors.accentPill,
-                    shadowElevation = 4.dp,
-                    modifier = Modifier
-                        .size(avatarSize)
-                        .testTag("header_avatar_artwork")
+                UserProfileAvatar(
+                    userProfile = userProfile,
+                    colors = colors,
+                    size = avatarSize,
+                    borderWidth = 1.5.dp,
+                    shadowElevation = 6.dp,
+                    reduceAnimations = reduceAnimations,
+                    onClick = onAvatarClick,
+                    modifier = Modifier.testTag("header_profile_avatar")
                 )
 
-                Spacer(modifier = Modifier.width(if (compact) 9.dp else 12.dp))
+                Spacer(modifier = Modifier.width(if (compact) 10.dp else 12.dp))
 
                 Text(
                     text = greeting,

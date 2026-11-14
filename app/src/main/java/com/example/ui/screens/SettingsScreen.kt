@@ -115,6 +115,9 @@ fun SettingsScreen(
     val seekbarStyle by viewModel.seekbarStyle.collectAsState()
     val dynamicColorsEnabled by viewModel.dynamicColorsEnabled.collectAsState()
     val dynamicThemeMode by viewModel.dynamicThemeMode.collectAsState()
+    val dynamicAppearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
+    val dynamicColorIntensity by viewModel.dynamicColorIntensity.collectAsState()
+    val dynamicGradientEnabled by viewModel.dynamicGradientEnabled.collectAsState()
 
     val gaplessEnabled by viewModel.gaplessEnabled.collectAsState()
     val crossfadeSeconds by viewModel.crossfadeSeconds.collectAsState()
@@ -212,7 +215,7 @@ fun SettingsScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .testTag("settings_screen"),
         contentAlignment = Alignment.TopCenter
@@ -412,12 +415,28 @@ fun SettingsScreen(
                             colors = colors
                         )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        SettingsSwitchRow(
+                            title = "Dynamic Album Art",
+                            subtitle = "Adapt app colors automatically to playing cover",
+                            checked = dynamicColorsEnabled,
+                            onCheckedChange = { viewModel.setDynamicColorsEnabled(it) },
+                            colors = colors
+                        )
+
+                        SettingsSwitchRow(
+                            title = "Dynamic Gradient",
+                            subtitle = "Smooth tonal album-art gradients behind screens",
+                            checked = dynamicGradientEnabled,
+                            onCheckedChange = { viewModel.setDynamicGradientEnabled(it) },
+                            colors = colors
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         SettingsLinkRow(
                             icon = Icons.Rounded.AutoAwesome,
-                            title = "Dynamic Album Colors",
-                            subtitle = if (dynamicColorsEnabled) "${dynamicThemeMode.displayName} • Active" else "Off",
+                            title = "Dynamic Colours & Modes",
+                            subtitle = if (dynamicColorsEnabled) "${dynamicAppearanceMode.displayName} • ${dynamicColorIntensity.displayName}" else "Off • ${dynamicThemeMode.displayName}",
                             colors = colors,
                             onClick = { showDynamicThemeSettings = true }
                         )

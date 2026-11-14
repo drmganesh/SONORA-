@@ -13,8 +13,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import com.example.model.ThemeMode
-import com.example.ui.theme.SonoraTextPrimary
-import com.example.ui.theme.SonoraTextSecondary
 import com.example.ui.theme.Typography
 
 /**
@@ -26,30 +24,34 @@ val LocalDynamicColorPalette = staticCompositionLocalOf {
 
 /**
  * Animated Dynamic Theme wrapper for SONORA.
- * Smoothly interpolates all interface colors when track or album art changes.
+ * Smoothly interpolates all interface colors (600ms default) when track or album art changes.
  */
 @Composable
 fun DynamicTheme(
     palette: DynamicColorPalette,
     themeMode: ThemeMode = ThemeMode.AMOLED_BLACK,
-    animationDurationMs: Int = 500,
+    animationDurationMs: Int = 600,
     content: @Composable () -> Unit
 ) {
     val animSpec = tween<Color>(durationMillis = animationDurationMs, easing = FastOutSlowInEasing)
 
-    // Smoothly animate every color in the palette
     val animPrimary by animateColorAsState(targetValue = palette.primary, animationSpec = animSpec, label = "dynPrimary")
     val animOnPrimary by animateColorAsState(targetValue = palette.onPrimary, animationSpec = animSpec, label = "dynOnPrimary")
     val animSecondary by animateColorAsState(targetValue = palette.secondary, animationSpec = animSpec, label = "dynSecondary")
     val animOnSecondary by animateColorAsState(targetValue = palette.onSecondary, animationSpec = animSpec, label = "dynOnSecondary")
+    val animTertiary by animateColorAsState(targetValue = palette.tertiary, animationSpec = animSpec, label = "dynTertiary")
+    val animOnTertiary by animateColorAsState(targetValue = palette.onTertiary, animationSpec = animSpec, label = "dynOnTertiary")
     val animAccent by animateColorAsState(targetValue = palette.accent, animationSpec = animSpec, label = "dynAccent")
     val animBackground by animateColorAsState(targetValue = palette.background, animationSpec = animSpec, label = "dynBackground")
     val animOnBackground by animateColorAsState(targetValue = palette.onBackground, animationSpec = animSpec, label = "dynOnBackground")
     val animSurface by animateColorAsState(targetValue = palette.surface, animationSpec = animSpec, label = "dynSurface")
     val animOnSurface by animateColorAsState(targetValue = palette.onSurface, animationSpec = animSpec, label = "dynOnSurface")
     val animSurfaceVariant by animateColorAsState(targetValue = palette.surfaceVariant, animationSpec = animSpec, label = "dynSurfaceVariant")
+    val animSecondarySurface by animateColorAsState(targetValue = palette.secondarySurface, animationSpec = animSpec, label = "dynSecSurface")
+    val animElevatedSurface by animateColorAsState(targetValue = palette.elevatedSurface, animationSpec = animSpec, label = "dynElevSurface")
     val animCardBg by animateColorAsState(targetValue = palette.cardBackground, animationSpec = animSpec, label = "dynCardBg")
     val animCardBorder by animateColorAsState(targetValue = palette.cardBorder, animationSpec = animSpec, label = "dynCardBorder")
+    val animOutline by animateColorAsState(targetValue = palette.outline, animationSpec = animSpec, label = "dynOutline")
     val animProgressBar by animateColorAsState(targetValue = palette.progressBar, animationSpec = animSpec, label = "dynProgressBar")
     val animSeekbarPlayed by animateColorAsState(targetValue = palette.seekbarPlayed, animationSpec = animSpec, label = "dynSeekbarPlayed")
     val animSeekbarRemaining by animateColorAsState(targetValue = palette.seekbarRemaining, animationSpec = animSpec, label = "dynSeekbarRemaining")
@@ -59,6 +61,9 @@ fun DynamicTheme(
     val animGradTop by animateColorAsState(targetValue = palette.gradientTop, animationSpec = animSpec, label = "dynGradTop")
     val animGradMid by animateColorAsState(targetValue = palette.gradientMiddle, animationSpec = animSpec, label = "dynGradMid")
     val animGradBot by animateColorAsState(targetValue = palette.gradientBottom, animationSpec = animSpec, label = "dynGradBot")
+    val animTextPrimary by animateColorAsState(targetValue = palette.textPrimary, animationSpec = animSpec, label = "dynTextPrimary")
+    val animTextSecondary by animateColorAsState(targetValue = palette.textSecondary, animationSpec = animSpec, label = "dynTextSecondary")
+    val animTextMuted by animateColorAsState(targetValue = palette.textMuted, animationSpec = animSpec, label = "dynTextMuted")
     val animSubtleTint by animateColorAsState(targetValue = palette.subtleTint, animationSpec = animSpec, label = "dynSubtleTint")
 
     val animatedPalette = DynamicColorPalette(
@@ -83,27 +88,38 @@ fun DynamicTheme(
         gradientTop = animGradTop,
         gradientMiddle = animGradMid,
         gradientBottom = animGradBot,
-        textPrimary = SonoraTextPrimary,
-        textSecondary = SonoraTextSecondary,
-        textMuted = palette.textMuted,
-        subtleTint = animSubtleTint
+        textPrimary = animTextPrimary,
+        textSecondary = animTextSecondary,
+        textMuted = animTextMuted,
+        subtleTint = animSubtleTint,
+        tertiary = animTertiary,
+        onTertiary = animOnTertiary,
+        secondarySurface = animSecondarySurface,
+        elevatedSurface = animElevatedSurface,
+        outline = animOutline,
+        isDarkPalette = palette.isDarkPalette,
+        gradientEnabled = palette.gradientEnabled
     )
 
-    // Build Material 3 ColorScheme reflecting the dynamic album colors
-    val m3ColorScheme: ColorScheme = if (themeMode == ThemeMode.LIGHT) {
+    val useLight = !palette.isDarkPalette || themeMode == ThemeMode.LIGHT
+    val m3ColorScheme: ColorScheme = if (useLight) {
         lightColorScheme(
             primary = animPrimary,
             onPrimary = animOnPrimary,
+            primaryContainer = animSecondarySurface,
+            onPrimaryContainer = animTextPrimary,
             secondary = animSecondary,
             onSecondary = animOnSecondary,
-            tertiary = animAccent,
-            background = Color(0xFFF7F8FA),
-            onBackground = Color(0xFF14161C),
-            surface = Color.White,
-            onSurface = Color(0xFF14161C),
-            surfaceVariant = Color(0xFFEEF0F5),
-            onSurfaceVariant = Color(0xFF484E5B),
-            outline = animCardBorder
+            tertiary = animTertiary,
+            onTertiary = animOnTertiary,
+            background = animBackground,
+            onBackground = animOnBackground,
+            surface = animSurface,
+            onSurface = animOnSurface,
+            surfaceVariant = animSurfaceVariant,
+            onSurfaceVariant = animTextSecondary,
+            surfaceContainer = animElevatedSurface,
+            outline = animOutline
         )
     } else {
         darkColorScheme(
@@ -113,15 +129,16 @@ fun DynamicTheme(
             onPrimaryContainer = animSecondary,
             secondary = animSecondary,
             onSecondary = animOnSecondary,
-            tertiary = animAccent,
+            tertiary = animTertiary,
+            onTertiary = animOnTertiary,
             background = animBackground,
             onBackground = animOnBackground,
             surface = animSurface,
             onSurface = animOnSurface,
             surfaceVariant = animSurfaceVariant,
-            onSurfaceVariant = SonoraTextSecondary,
-            surfaceContainer = animCardBg,
-            outline = animCardBorder
+            onSurfaceVariant = animTextSecondary,
+            surfaceContainer = animElevatedSurface,
+            outline = animOutline
         )
     }
 

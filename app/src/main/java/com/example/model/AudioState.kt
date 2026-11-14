@@ -25,13 +25,66 @@ enum class SpatialMode {
     CINEMA_360
 }
 
+/**
+ * High-level spatial acoustic trajectory and imaging profile for Audio Studio DSP.
+ */
+enum class SpatialProfile(
+    val id: String,
+    val displayName: String,
+    val subtitle: String
+) {
+    ORBIT(
+        id = "orbit",
+        displayName = "Orbit",
+        subtitle = "Slow smooth stereo movement"
+    ),
+    DYNAMIC_360(
+        id = "dynamic_360",
+        displayName = "Dynamic 360°",
+        subtitle = "Continuous 360° spatial motion"
+    ),
+    CINEMATIC(
+        id = "cinematic",
+        displayName = "Cinematic",
+        subtitle = "Wide immersive soundstage"
+    );
+
+    companion object {
+        fun fromId(id: String?): SpatialProfile {
+            if (id.isNullOrBlank()) return DYNAMIC_360
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) || it.name.equals(id, ignoreCase = true) }
+                ?: DYNAMIC_360
+        }
+    }
+}
+
+/**
+ * Overall spatial effect depth scaling preset.
+ */
+enum class SpatialIntensity(
+    val id: String,
+    val displayName: String,
+    val multiplier: Float
+) {
+    SUBTLE(id = "subtle", displayName = "Subtle", multiplier = 0.58f),
+    BALANCED(id = "balanced", displayName = "Balanced", multiplier = 0.85f),
+    IMMERSIVE(id = "immersive", displayName = "Immersive", multiplier = 1.08f);
+
+    companion object {
+        fun fromId(id: String?): SpatialIntensity {
+            if (id.isNullOrBlank()) return BALANCED
+            return entries.firstOrNull { it.id.equals(id, ignoreCase = true) || it.name.equals(id, ignoreCase = true) }
+                ?: BALANCED
+        }
+    }
+}
+
 enum class ThemeMode {
     AMOLED_BLACK,
     DARK,
     LIGHT,
     DYNAMIC_YOU
 }
-
 
 data class SpatialPreset(
     val name: String,
@@ -42,7 +95,8 @@ data class SpatialPreset(
     val stereoWidening: Float,
     val reverbPreset: Short = 0,
     val listenerX: Float = 0f,
-    val listenerY: Float = 0f
+    val listenerY: Float = 0f,
+    val profile: SpatialProfile = SpatialProfile.DYNAMIC_360
 )
 
 data class SpatialAudioConfig(
@@ -56,7 +110,9 @@ data class SpatialAudioConfig(
     val stereoWidening: Float = 0.80f,
     val channelBalance: Float = 0.0f, // -1.0 (Left) to +1.0 (Right)
     val twsWideStereoEnabled: Boolean = true, // TWS ultra-wide stereo expansion
-    val twsStereoBoost: Float = 0.90f // 0.0 to 1.0 TWS widening boost factor
+    val twsStereoBoost: Float = 0.90f, // 0.0 to 1.5 TWS widening boost factor
+    val spatialProfile: SpatialProfile = SpatialProfile.DYNAMIC_360,
+    val spatialIntensity: SpatialIntensity = SpatialIntensity.BALANCED
 )
 
 data class PlaybackInfo(

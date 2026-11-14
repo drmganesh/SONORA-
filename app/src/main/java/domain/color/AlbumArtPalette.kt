@@ -1,11 +1,8 @@
 package domain.color
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import com.example.ui.theme.SonoraDustyRose
-import com.example.ui.theme.SonoraCharcoal
-import com.example.ui.theme.SonoraObsidian
 import com.example.ui.theme.SonoraCyan
+import com.example.ui.theme.SonoraDustyRose
 
 /**
  * Raw and analyzed colors extracted from an album artwork bitmap.
@@ -19,12 +16,15 @@ data class AlbumArtPalette(
     val darkMutedColor: Color,
     val lightMutedColor: Color,
     val isMonochrome: Boolean = false,
-    val artworkIdentifier: String = ""
+    val artworkIdentifier: String = "",
+    val tertiaryColor: Color = lightVibrantColor,
+    val averageLuminance: Float = 0.28f,
+    val isDarkArtwork: Boolean = true
 ) {
     companion object {
         /**
          * Default fallback palette when no artwork is present or extraction fails.
-         * Uses SONORA's signature Dusty Rose, Charcoal, and Cyan palette.
+         * Uses SONORA's signature Dusty Rose, Warm Amber/Cyan, and Charcoal tones.
          */
         fun default(identifier: String = "default"): AlbumArtPalette {
             return AlbumArtPalette(
@@ -36,7 +36,10 @@ data class AlbumArtPalette(
                 darkMutedColor = Color(0xFF2E2221),
                 lightMutedColor = Color(0xFFBFAFAD),
                 isMonochrome = false,
-                artworkIdentifier = identifier
+                artworkIdentifier = identifier,
+                tertiaryColor = SonoraCyan.copy(alpha = 0.85f),
+                averageLuminance = 0.24f,
+                isDarkArtwork = true
             )
         }
     }

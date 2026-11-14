@@ -34,8 +34,8 @@ fun AudioVisualizerView(
     waveform: FloatArray,
     style: VisualizerStyle,
     modifier: Modifier = Modifier,
-    primaryColor: Color = SonoraGold,
-    secondaryColor: Color = SonoraCyan
+    primaryColor: Color = MaterialTheme.colorScheme.primary,
+    secondaryColor: Color = MaterialTheme.colorScheme.secondary
 ) {
     val rotationAnim = remember { Animatable(0f) }
 

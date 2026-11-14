@@ -88,15 +88,15 @@ private fun editorialToColorScheme(colors: EditorialColors): ColorScheme {
             onPrimaryContainer = colors.onAccentPill,
             secondary = colors.accentStrong,
             onSecondary = colors.onAccentStrong,
-            secondaryContainer = colors.surfaceTinted,
+            secondaryContainer = colors.secondarySurface,
             onSecondaryContainer = colors.textPrimary,
-            tertiary = colors.accentStrong,
+            tertiary = colors.tertiaryAccent,
             onTertiary = colors.onAccentStrong,
             background = colors.background,
             onBackground = colors.textPrimary,
             surface = colors.surface,
             onSurface = colors.textPrimary,
-            surfaceVariant = colors.surfaceElevated,
+            surfaceVariant = colors.secondarySurface,
             onSurfaceVariant = colors.textSecondary,
             surfaceContainer = colors.surfaceElevated,
             surfaceContainerHigh = colors.surfaceTinted,
@@ -111,15 +111,15 @@ private fun editorialToColorScheme(colors: EditorialColors): ColorScheme {
             onPrimaryContainer = colors.onAccentPill,
             secondary = colors.accentStrong,
             onSecondary = colors.onAccentStrong,
-            secondaryContainer = colors.surfaceTinted,
+            secondaryContainer = colors.secondarySurface,
             onSecondaryContainer = colors.textPrimary,
-            tertiary = colors.accentStrong,
+            tertiary = colors.tertiaryAccent,
             onTertiary = colors.onAccentStrong,
             background = colors.background,
             onBackground = colors.textPrimary,
             surface = colors.surface,
             onSurface = colors.textPrimary,
-            surfaceVariant = colors.surfaceElevated,
+            surfaceVariant = colors.secondarySurface,
             onSurfaceVariant = colors.textSecondary,
             surfaceContainer = colors.surfaceElevated,
             surfaceContainerHigh = colors.surfaceTinted,
@@ -154,16 +154,21 @@ fun SonoraTheme(
 
     if (editorialColors != null) {
         val m3Scheme = editorialToColorScheme(editorialColors)
-        CompositionLocalProvider(
-            LocalEditorialColors provides editorialColors,
-            LocalReduceAnimations provides reduceAnimations,
-            LocalDynamicColorPalette provides (dynamicPalette ?: DynamicColorPalette.default())
+        ui.theme.DynamicTheme(
+            palette = dynamicPalette ?: DynamicColorPalette.default(),
+            themeMode = if (editorialColors.isDark) ThemeMode.AMOLED_BLACK else ThemeMode.LIGHT,
+            animationDurationMs = if (reduceAnimations) 0 else 600
         ) {
-            MaterialTheme(
-                colorScheme = m3Scheme,
-                typography = Typography,
-                content = content
-            )
+            CompositionLocalProvider(
+                LocalEditorialColors provides editorialColors,
+                LocalReduceAnimations provides reduceAnimations
+            ) {
+                MaterialTheme(
+                    colorScheme = m3Scheme,
+                    typography = Typography,
+                    content = content
+                )
+            }
         }
         return
     }

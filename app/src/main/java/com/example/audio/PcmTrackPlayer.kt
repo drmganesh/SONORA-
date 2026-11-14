@@ -81,6 +81,17 @@ class PcmTrackPlayer(
     @Volatile
     private var activeAudioTrack: AudioTrack? = null
 
+    // Pre-allocated telemetry double-buffers (eliminates GC allocations on the real-time audio thread)
+    private val waveBufA = FloatArray(64)
+    private val waveBufB = FloatArray(64)
+    private val binsBufA = FloatArray(32)
+    private val binsBufB = FloatArray(32)
+    private var telemetrySlot = 0
+    private var cachedOscSampleRate = -1
+    private val oscCosW = DoubleArray(32)
+    private val oscSinW = DoubleArray(32)
+    private var lastUnderrunCount = 0
+
     val durationMs: Long
         get() = durationAtomicMs.get()
 
@@ -349,7 +360,7 @@ class PcmTrackPlayer(
                 val targetMs = pendingSeekMs.get().coerceAtLeast(0L)
                 extractor.seekTo(targetMs * 1000L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
                 flushAudioTrack(track)
-                dspProcessor.resetTransientState()
+                dspProcessor.notifyStreamDiscontinuity()
                 currentPositionAtomicMs.set(targetMs)
             }
 
@@ -430,7 +441,7 @@ class PcmTrackPlayer(
                 } catch (_: Throwable) {
                 }
                 track?.let { flushAudioTrack(it) }
-                dspProcessor.resetTransientState()
+                dspProcessor.notifyStreamDiscontinuity()
                 sawInputEos = false
                 sawOutputEos = false
                 currentPositionAtomicMs.set(targetMs)
@@ -652,7 +663,7 @@ class PcmTrackPlayer(
         if (minBuf <= 0) {
             throw IllegalStateException("AudioTrack rejected sampleRate=$sampleRate (minBuf=$minBuf)")
         }
-        val rawBuf = maxOf(minBuf * 2, 16384)
+        val rawBuf = maxOf(minBuf * 3, 24576)
         // Align to stereo 16-bit frame boundary (4 bytes per frame)
         val bufferSize = ((rawBuf + 3) / 4) * 4
 
@@ -827,6 +838,18 @@ class PcmTrackPlayer(
         }
     }
 
+    private fun ensureOscillatorTable(sampleRate: Int) {
+        if (cachedOscSampleRate == sampleRate) return
+        cachedOscSampleRate = sampleRate
+        for (b in 0 until 32) {
+            val norm = b / 31.0
+            val freq = 40.0 * Math.pow(350.0, norm)
+            val omega = (2.0 * PI * freq / sampleRate).coerceAtMost(PI * 0.9)
+            oscCosW[b] = cos(omega)
+            oscSinW[b] = sin(omega)
+        }
+    }
+
     private fun maybePushUiTelemetry(
         stereoFloats: FloatArray,
         frameCount: Int,
@@ -836,7 +859,24 @@ class PcmTrackPlayer(
         val now = System.currentTimeMillis()
         if (now - lastPushMs < 33L) return lastPushMs
 
-        val wave = FloatArray(64)
+        // Periodic underrun health check on API 24+ (pure integer read, zero allocation)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            activeAudioTrack?.let { tr ->
+                try {
+                    val ur = tr.underrunCount
+                    if (ur > lastUnderrunCount) {
+                        lastUnderrunCount = ur
+                        Log.w(tag, "AudioTrack underrun detected (count=$ur)")
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        }
+
+        val wave = if (telemetrySlot == 0) waveBufA else waveBufB
+        val bins = if (telemetrySlot == 0) binsBufA else binsBufB
+        telemetrySlot = telemetrySlot xor 1
+
         val step = (frameCount / 64).coerceAtLeast(1)
         for (i in 0 until 64) {
             val f = (i * step).coerceAtMost(frameCount - 1)
@@ -845,16 +885,13 @@ class PcmTrackPlayer(
             wave[i] = ((l + r) * 0.5f).coerceIn(-1f, 1f)
         }
 
-        // Compute 32-band audio-reactive spectrum from live PCM frames using recurrence oscillator
-        val bins = FloatArray(32)
-        val n = frameCount.coerceAtMost(256)
+        ensureOscillatorTable(sampleRate)
+        val n = frameCount.coerceAtMost(128)
         if (n >= 32) {
+            val invNorm = 1.0 / (n * 0.35)
             for (b in 0 until 32) {
-                val norm = b / 31.0
-                val freq = 40.0 * Math.pow(350.0, norm)
-                val omega = (2.0 * PI * freq / sampleRate).coerceAtMost(PI * 0.9)
-                val cosW = cos(omega)
-                val sinW = sin(omega)
+                val cosW = oscCosW[b]
+                val sinW = oscSinW[b]
                 var c = 1.0
                 var s = 0.0
                 var cosSum = 0.0
@@ -867,9 +904,10 @@ class PcmTrackPlayer(
                     s = s * cosW + c * sinW
                     c = nextC
                 }
-                val mag = (sqrt(cosSum * cosSum + sinSum * sinSum) / (n * 0.35)).toFloat().coerceIn(0f, 1f)
-                bins[b] = mag
+                bins[b] = (sqrt(cosSum * cosSum + sinSum * sinSum) * invNorm).toFloat().coerceIn(0f, 1f)
             }
+        } else {
+            bins.fill(0f)
         }
 
         onVisualizerFrame(bins, wave)

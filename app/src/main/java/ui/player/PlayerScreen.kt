@@ -254,11 +254,16 @@ fun PlayerScreen(
         PlayerBackgroundStyle.SOLID_SURFACE -> colors.surface
         else -> colors.background
     }
+    val useThemeBrush = playerAppearance.backgroundStyle == PlayerBackgroundStyle.THEME_DEFAULT ||
+        playerAppearance.backgroundStyle == PlayerBackgroundStyle.GRADIENT_GLOW
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(rootBackground)
+            .then(
+                if (useThemeBrush) Modifier.background(colors.backgroundBrush)
+                else Modifier.background(rootBackground)
+            )
             .playerScreenEdgeGestures(
                 config = playerGestureConfig,
                 controller = gestureController,
@@ -1273,7 +1278,7 @@ private fun ArtworkFocusOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
             .pointerInput(Unit) {

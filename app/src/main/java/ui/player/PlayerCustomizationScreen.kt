@@ -90,7 +90,7 @@ fun PlayerCustomizationScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("player_customization_screen"),

@@ -2,13 +2,14 @@ package ui.theme
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 
 /**
@@ -83,10 +84,10 @@ enum class HomeThemeMode(
     DYNAMIC_ALBUM_ART(
         id = "dynamic_album_art",
         displayName = "Dynamic Album Art",
-        subtitle = "Pastels & accents adapt to playing artwork",
-        previewColorArgb = 0xFFF7F5FC,
-        previewAccentArgb = 0xFFB8A9F5,
-        isDarkDefault = false
+        subtitle = "Entire app adapts smoothly to playing artwork",
+        previewColorArgb = 0xFF151926,
+        previewAccentArgb = 0xFFD99890,
+        isDarkDefault = true
     ),
     CUSTOM_ACCENT(
         id = "custom_accent",
@@ -98,7 +99,8 @@ enum class HomeThemeMode(
     );
 
     companion object {
-        val DEFAULT = FIXED_LAVENDER
+        // Default to app-wide Dynamic Album Art theming
+        val DEFAULT = DYNAMIC_ALBUM_ART
 
         fun fromId(id: String?): HomeThemeMode {
             if (id == null) return DEFAULT
@@ -146,8 +148,31 @@ data class EditorialColors(
     val floatingNavActiveTint: Color,
     val floatingNavInactiveTint: Color,
     val miniPlayerBackground: Color,
-    val shadowColor: Color
+    val shadowColor: Color,
+    val tertiaryAccent: Color = accentPill,
+    val secondarySurface: Color = surfaceTinted,
+    val gradientTop: Color = background,
+    val gradientMiddle: Color = background,
+    val gradientBottom: Color = background,
+    val gradientEnabled: Boolean = true
 ) {
+    /**
+     * Global background brush: smooth multi-stop tonal gradient when [gradientEnabled] is true,
+     * or crisp flat [background] fill when disabled.
+     */
+    val backgroundBrush: Brush
+        get() = if (gradientEnabled) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    gradientTop,
+                    gradientMiddle,
+                    gradientBottom
+                )
+            )
+        } else {
+            SolidColor(background)
+        }
+
     companion object {
         fun default(): EditorialColors = editorialColorsFor(
             mode = HomeThemeMode.DEFAULT,
@@ -211,12 +236,19 @@ private fun lightEditorialTheme(
         floatingNavActiveTint = textPrimary,
         floatingNavInactiveTint = textSecondary,
         miniPlayerBackground = surface,
-        shadowColor = shadowBase.copy(alpha = 0.20f)
+        shadowColor = shadowBase.copy(alpha = 0.20f),
+        tertiaryAccent = blendColors(strong, pill, 0.45f),
+        secondarySurface = surfaceElev,
+        gradientTop = blendColors(bg, pill, 0.14f),
+        gradientMiddle = bg,
+        gradientBottom = blendColors(bg, surfaceTintBase, 0.25f),
+        gradientEnabled = true
     )
 }
 
 /**
- * Pure non-composable theme palette resolver for all 9 SONORA AESTHETIC UI themes.
+ * Pure non-composable theme palette resolver for all 9 SONORA AESTHETIC UI themes
+ * and global dynamic album-art theming.
  */
 fun editorialColorsFor(
     mode: HomeThemeMode,
@@ -302,31 +334,73 @@ fun editorialColorsFor(
         )
 
         HomeThemeMode.DYNAMIC_ALBUM_ART -> {
-            val artAccent = customColor ?: dynamicPalette.primary
-            val pastelPill = blendColors(Color.White, artAccent, 0.28f)
-            val pastelBg = blendColors(Color(0xFFF7F5FC), artAccent, 0.09f)
-            val strong = blendColors(artAccent, Color(0xFF181C2E), 0.44f)
-            EditorialColors(
-                isDark = false,
-                background = pastelBg,
-                surface = Color(0xFFFFFFFF),
-                surfaceElevated = blendColors(Color.White, artAccent, 0.05f),
-                surfaceTinted = blendColors(Color(0xFFF1EFF9), artAccent, 0.14f),
-                accentPill = pastelPill,
-                onAccentPill = if (pastelPill.luminance() > 0.45f) Color(0xFF15151C) else Color.White,
-                accentStrong = strong,
-                onAccentStrong = if (strong.luminance() > 0.55f) Color(0xFF15151C) else Color.White,
-                textPrimary = Color(0xFF15151C),
-                textSecondary = Color(0xFF545364),
-                textMuted = Color(0xFF828095),
-                cardBorder = artAccent.copy(alpha = 0.22f),
-                floatingNavBackground = Color(0xFFFFFFFF),
-                floatingNavIndicator = pastelPill,
-                floatingNavActiveTint = Color(0xFF15151C),
-                floatingNavInactiveTint = Color(0xFF4A4B59),
-                miniPlayerBackground = Color(0xFFFFFFFF),
-                shadowColor = artAccent.copy(alpha = 0.26f)
-            )
+            if (dynamicPalette.isDarkPalette) {
+                val primary = customColor?.let { blendColors(it, Color.White, 0.14f) } ?: dynamicPalette.primary
+                val secondary = dynamicPalette.secondary
+                val tertiary = dynamicPalette.tertiary
+                val pillBg = blendColors(dynamicPalette.surface, primary, 0.24f)
+                val onStrong = if (primary.luminance() > 0.45f) Color(0xFF101218) else Color.White
+                EditorialColors(
+                    isDark = true,
+                    background = dynamicPalette.background,
+                    surface = dynamicPalette.surface,
+                    surfaceElevated = dynamicPalette.elevatedSurface,
+                    surfaceTinted = dynamicPalette.secondarySurface,
+                    accentPill = pillBg,
+                    onAccentPill = primary,
+                    accentStrong = primary,
+                    onAccentStrong = onStrong,
+                    textPrimary = dynamicPalette.textPrimary,
+                    textSecondary = dynamicPalette.textSecondary,
+                    textMuted = dynamicPalette.textMuted,
+                    cardBorder = dynamicPalette.outline,
+                    floatingNavBackground = dynamicPalette.elevatedSurface,
+                    floatingNavIndicator = primary.copy(alpha = 0.24f),
+                    floatingNavActiveTint = secondary,
+                    floatingNavInactiveTint = dynamicPalette.textSecondary,
+                    miniPlayerBackground = dynamicPalette.elevatedSurface,
+                    shadowColor = dynamicPalette.glowColor.copy(alpha = 0.30f),
+                    tertiaryAccent = tertiary,
+                    secondarySurface = dynamicPalette.secondarySurface,
+                    gradientTop = dynamicPalette.gradientTop,
+                    gradientMiddle = dynamicPalette.gradientMiddle,
+                    gradientBottom = dynamicPalette.gradientBottom,
+                    gradientEnabled = dynamicPalette.gradientEnabled
+                )
+            } else {
+                val primary = customColor ?: dynamicPalette.primary
+                val secondary = dynamicPalette.secondary
+                val tertiary = dynamicPalette.tertiary
+                val pillBg = blendColors(Color.White, primary, 0.24f)
+                val onStrong = if (primary.luminance() > 0.45f) Color(0xFF101218) else Color.White
+                EditorialColors(
+                    isDark = false,
+                    background = dynamicPalette.background,
+                    surface = dynamicPalette.surface,
+                    surfaceElevated = dynamicPalette.elevatedSurface,
+                    surfaceTinted = dynamicPalette.secondarySurface,
+                    accentPill = pillBg,
+                    onAccentPill = if (pillBg.luminance() > 0.45f) dynamicPalette.textPrimary else Color.White,
+                    accentStrong = primary,
+                    onAccentStrong = onStrong,
+                    textPrimary = dynamicPalette.textPrimary,
+                    textSecondary = dynamicPalette.textSecondary,
+                    textMuted = dynamicPalette.textMuted,
+                    cardBorder = dynamicPalette.outline,
+                    floatingNavBackground = dynamicPalette.surface,
+                    floatingNavIndicator = pillBg,
+                    floatingNavActiveTint = primary,
+                    floatingNavInactiveTint = dynamicPalette.textSecondary,
+                    miniPlayerBackground = dynamicPalette.surface,
+                    shadowColor = dynamicPalette.glowColor.copy(alpha = 0.24f),
+                    tertiaryAccent = if (customColor != null) tertiary else secondary,
+                    secondarySurface = dynamicPalette.secondarySurface,
+                    gradientTop = dynamicPalette.gradientTop,
+                    gradientMiddle = dynamicPalette.gradientMiddle,
+                    gradientBottom = dynamicPalette.gradientBottom,
+                    gradientEnabled = dynamicPalette.gradientEnabled
+                )
+            }
         }
 
         HomeThemeMode.CUSTOM_ACCENT -> {
@@ -354,7 +428,13 @@ fun editorialColorsFor(
                 floatingNavActiveTint = Color(0xFF15151C),
                 floatingNavInactiveTint = Color(0xFF494B57),
                 miniPlayerBackground = Color(0xFFFFFFFF),
-                shadowColor = seed.copy(alpha = 0.24f)
+                shadowColor = seed.copy(alpha = 0.24f),
+                tertiaryAccent = strong,
+                secondarySurface = surfaceTint,
+                gradientTop = blendColors(bg, seed, 0.16f),
+                gradientMiddle = bg,
+                gradientBottom = bg,
+                gradientEnabled = true
             )
         }
 
@@ -380,7 +460,13 @@ fun editorialColorsFor(
                 floatingNavActiveTint = strong,
                 floatingNavInactiveTint = Color(0xFF8B98BD),
                 miniPlayerBackground = Color(0xFF0E152B),
-                shadowColor = accent.copy(alpha = 0.28f)
+                shadowColor = accent.copy(alpha = 0.28f),
+                tertiaryAccent = strong,
+                secondarySurface = Color(0xFF121A34),
+                gradientTop = Color(0xFF0A1128),
+                gradientMiddle = Color(0xFF050814),
+                gradientBottom = Color(0xFF040711),
+                gradientEnabled = true
             )
         }
 
@@ -406,7 +492,13 @@ fun editorialColorsFor(
                 floatingNavActiveTint = strong,
                 floatingNavInactiveTint = Color(0xFF939AB0),
                 miniPlayerBackground = Color(0xFF13161F),
-                shadowColor = accent.copy(alpha = 0.25f)
+                shadowColor = accent.copy(alpha = 0.25f),
+                tertiaryAccent = dynamicPalette.tertiary,
+                secondarySurface = Color(0xFF141720),
+                gradientTop = Color(0xFF0B0D14),
+                gradientMiddle = Color(0xFF000000),
+                gradientBottom = Color(0xFF000000),
+                gradientEnabled = true
             )
         }
     }
@@ -425,7 +517,8 @@ fun rememberEditorialColors(
         return target
     }
 
-    val spec = tween<Color>(durationMillis = 360, easing = FastOutSlowInEasing)
+    // Smooth 600ms transition so song changes breathe naturally without jarring jumps
+    val spec = tween<Color>(durationMillis = 600, easing = FastOutSlowInEasing)
     val bg by animateColorAsState(target.background, spec, label = "edBg")
     val surface by animateColorAsState(target.surface, spec, label = "edSurface")
     val surfaceElevated by animateColorAsState(target.surfaceElevated, spec, label = "edSurfaceElev")
@@ -437,8 +530,17 @@ fun rememberEditorialColors(
     val textPrimary by animateColorAsState(target.textPrimary, spec, label = "edTextPrim")
     val textSecondary by animateColorAsState(target.textSecondary, spec, label = "edTextSec")
     val textMuted by animateColorAsState(target.textMuted, spec, label = "edTextMuted")
+    val cardBorder by animateColorAsState(target.cardBorder, spec, label = "edBorder")
     val navBg by animateColorAsState(target.floatingNavBackground, spec, label = "edNavBg")
     val navInd by animateColorAsState(target.floatingNavIndicator, spec, label = "edNavInd")
+    val navAct by animateColorAsState(target.floatingNavActiveTint, spec, label = "edNavAct")
+    val navInact by animateColorAsState(target.floatingNavInactiveTint, spec, label = "edNavInact")
+    val miniBg by animateColorAsState(target.miniPlayerBackground, spec, label = "edMiniBg")
+    val tertiaryAccent by animateColorAsState(target.tertiaryAccent, spec, label = "edTert")
+    val secondarySurface by animateColorAsState(target.secondarySurface, spec, label = "edSecSurf")
+    val gradTop by animateColorAsState(target.gradientTop, spec, label = "edGradTop")
+    val gradMid by animateColorAsState(target.gradientMiddle, spec, label = "edGradMid")
+    val gradBot by animateColorAsState(target.gradientBottom, spec, label = "edGradBot")
 
     return target.copy(
         background = bg,
@@ -452,7 +554,16 @@ fun rememberEditorialColors(
         textPrimary = textPrimary,
         textSecondary = textSecondary,
         textMuted = textMuted,
+        cardBorder = cardBorder,
         floatingNavBackground = navBg,
-        floatingNavIndicator = navInd
+        floatingNavIndicator = navInd,
+        floatingNavActiveTint = navAct,
+        floatingNavInactiveTint = navInact,
+        miniPlayerBackground = miniBg,
+        tertiaryAccent = tertiaryAccent,
+        secondarySurface = secondarySurface,
+        gradientTop = gradTop,
+        gradientMiddle = gradMid,
+        gradientBottom = gradBot
     )
 }

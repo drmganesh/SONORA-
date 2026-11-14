@@ -93,7 +93,7 @@ fun QueueScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("queue_screen"),

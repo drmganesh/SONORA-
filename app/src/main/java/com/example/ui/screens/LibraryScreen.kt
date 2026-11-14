@@ -235,7 +235,7 @@ fun LibraryScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .testTag("library_screen"),
         contentAlignment = Alignment.TopCenter

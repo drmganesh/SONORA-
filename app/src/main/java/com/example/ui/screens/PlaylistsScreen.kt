@@ -139,7 +139,7 @@ fun PlaylistsScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .let { if (onBack != null) it.statusBarsPadding() else it }
             .testTag("playlists_screen"),
         contentAlignment = Alignment.TopCenter

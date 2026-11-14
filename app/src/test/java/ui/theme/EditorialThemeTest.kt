@@ -56,13 +56,13 @@ class EditorialThemeTest {
     }
 
     @Test
-    fun `legacy light_minimal id migrates to WARM_CREAM and defaults to FIXED_LAVENDER`() {
-        assertEquals(HomeThemeMode.FIXED_LAVENDER, HomeThemeMode.DEFAULT)
+    fun `legacy light_minimal id migrates to WARM_CREAM and defaults to DYNAMIC_ALBUM_ART`() {
+        assertEquals(HomeThemeMode.DYNAMIC_ALBUM_ART, HomeThemeMode.DEFAULT)
         assertEquals(HomeThemeMode.WARM_CREAM, HomeThemeMode.fromId("light_minimal"))
         assertEquals(HomeThemeMode.WARM_CREAM, HomeThemeMode.fromId("LIGHT_MINIMAL"))
         assertEquals(HomeThemeMode.AMOLED_MIDNIGHT, HomeThemeMode.fromId("amoled_midnight"))
-        assertEquals(HomeThemeMode.FIXED_LAVENDER, HomeThemeMode.fromId("nonexistent"))
-        assertEquals(HomeThemeMode.FIXED_LAVENDER, HomeThemeMode.fromId(null))
+        assertEquals(HomeThemeMode.DYNAMIC_ALBUM_ART, HomeThemeMode.fromId("nonexistent"))
+        assertEquals(HomeThemeMode.DYNAMIC_ALBUM_ART, HomeThemeMode.fromId(null))
     }
 
     @Test

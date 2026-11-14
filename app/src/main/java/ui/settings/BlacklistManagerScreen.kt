@@ -86,7 +86,7 @@ fun BlacklistManagerScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .testTag("blacklist_manager_screen"),
         contentAlignment = Alignment.TopCenter

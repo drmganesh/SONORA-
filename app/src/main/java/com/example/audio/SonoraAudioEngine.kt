@@ -661,12 +661,20 @@ class SonoraAudioEngine(private val context: Context) {
             var angle = _orbitAzimuthRad.value
             while (isActive && usingFallbackPlayer && orbit8dEnabled && !globalEffectsBypass) {
                 if (_isPlayingState) {
-                    angle = (angle + 0.03f * orbit8dSpeed) % (2f * Math.PI.toFloat())
+                    val profile = spatialConfig.spatialProfile
+                    val speedMul = when (profile) {
+                        com.example.model.SpatialProfile.ORBIT -> 0.65f
+                        com.example.model.SpatialProfile.DYNAMIC_360 -> 1.0f
+                        com.example.model.SpatialProfile.CINEMATIC -> 0.30f
+                    }
+                    val depthWeight = if (profile == com.example.model.SpatialProfile.CINEMATIC) 0.45f else 1.0f
+                    angle = (angle + 0.03f * orbit8dSpeed * speedMul) % (2f * Math.PI.toFloat())
                     _orbitAzimuthRad.value = angle
-                    val pan = sin(angle.toDouble()).toFloat() * orbit8dDepth
-                    val leftGain = (1f - (pan.coerceAtLeast(0f) * 0.50f)).coerceIn(0.42f, 1f)
-                    val rightGain = (1f - ((-pan).coerceAtLeast(0f) * 0.50f)).coerceIn(0.42f, 1f)
-                    val floor = if (currentVolumeScale > 0.05f) 0.40f * currentVolumeScale else 0f
+                    val pan = sin(angle.toDouble()).toFloat() * orbit8dDepth * depthWeight *
+                        spatialConfig.spatialIntensity.multiplier.coerceIn(0.5f, 1.05f)
+                    val leftGain = (1f - (pan.coerceAtLeast(0f) * 0.45f)).coerceIn(0.45f, 1f)
+                    val rightGain = (1f - ((-pan).coerceAtLeast(0f) * 0.45f)).coerceIn(0.45f, 1f)
+                    val floor = if (currentVolumeScale > 0.05f) 0.42f * currentVolumeScale else 0f
                     try {
                         fallbackMediaPlayer?.setVolume(
                             (leftGain * currentVolumeScale).coerceIn(floor, 1f),

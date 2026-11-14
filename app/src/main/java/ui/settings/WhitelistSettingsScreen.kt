@@ -87,7 +87,7 @@ fun WhitelistSettingsScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.background)
+            .background(colors.backgroundBrush)
             .statusBarsPadding()
             .testTag("whitelist_settings_screen"),
         contentAlignment = Alignment.TopCenter
