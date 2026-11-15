@@ -49,7 +49,10 @@ jobs:
           mkdir -p "$SDK_ROOT/licenses"
           { yes || true; } | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "build-tools;36.0.0" "platforms;android-36"
-          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36.1" || true
+          if [ ! -f "$SDK_ROOT/platforms/android-36/android.jar" ]; then
+            echo "::error::Android SDK Platform 36 missing at $SDK_ROOT/platforms/android-36/android.jar"
+            exit 1
+          fi
 
       - name: Validate release signing secrets
         env:
@@ -83,7 +86,7 @@ jobs:
           gradle-version: "9.3.1"
 
       - name: Build release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace --max-workers=2
+        run: gradle :app:assembleRelease --no-daemon --stacktrace --max-workers=2 -Dorg.gradle.configuration-cache=false
 
       - name: Prepare release APK asset
         id: release_vars
