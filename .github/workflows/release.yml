@@ -38,6 +38,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install Android SDK 36 & accept licenses
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "build-tools;36.0.0" "platforms;android-36"
+          sdkmanager "platforms;android-36.1" || true
+
       - name: Validate release signing secrets
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -70,7 +76,7 @@ jobs:
           gradle-version: "9.3.1"
 
       - name: Build release APK
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+        run: gradle :app:assembleRelease --no-daemon --stacktrace --max-workers=2
 
       - name: Prepare release APK asset
         id: release_vars
