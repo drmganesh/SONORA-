@@ -222,4 +222,136 @@ class SonoraStabilityAuditRobolectricTest {
         assertEquals("Editing metadata must preserve play count", 7, persisted.playCount)
         assertEquals("Track B (Remastered)", vm.queue.value.find { it.id == 102L }?.title)
     }
+
+    @Test
+    fun `preferences recover legacy String spatial_intensity collision and persist Float plus preset cleanly`() {
+        val rawPrefs = context.getSharedPreferences("sonora_app_settings", Context.MODE_PRIVATE)
+        rawPrefs.edit()
+            .clear()
+            .putString("spatial_intensity", com.example.model.SpatialIntensity.IMMERSIVE.id)
+            .commit()
+
+        val prefs = com.example.data.SonoraPreferences(context)
+        val migrated = prefs.spatialConfig
+        assertEquals(com.example.model.SpatialIntensity.IMMERSIVE, migrated.spatialIntensity)
+        assertEquals(0.75f, migrated.intensity, 0.01f)
+
+        val updated = com.example.model.SpatialAudioConfig(
+            isEnabled = true,
+            mode = com.example.model.SpatialMode.CINEMA_360,
+            intensity = 0.88f,
+            spatialProfile = com.example.model.SpatialProfile.CINEMATIC,
+            spatialIntensity = com.example.model.SpatialIntensity.SUBTLE
+        )
+        prefs.spatialConfig = updated
+
+        val reloaded = com.example.data.SonoraPreferences(context).spatialConfig
+        assertEquals(0.88f, reloaded.intensity, 0.01f)
+        assertEquals(com.example.model.SpatialIntensity.SUBTLE, reloaded.spatialIntensity)
+        assertEquals(com.example.model.SpatialProfile.CINEMATIC, reloaded.spatialProfile)
+        assertEquals(com.example.model.SpatialMode.CINEMA_360, reloaded.mode)
+    }
+
+    @Test
+    fun `dsp processor renders 15 band EQ 8D orbit and reverb without NaN Inf or silent drop across sample rates`() {
+        val dsp = com.example.audio.SonoraDspProcessor()
+        val gains = FloatArray(15) { idx -> if (idx < 4) 6.5f else if (idx > 11) 4.0f else -1.5f }
+        dsp.updateSnapshot(
+            com.example.audio.SonoraDspSnapshot(
+                globalBypass = false,
+                eqEnabled = true,
+                eqGainsDb = gains,
+                bassBoostStrength = 700,
+                virtualizerStrength = 800,
+                reverbPreset = android.media.audiofx.PresetReverb.PRESET_MEDIUMROOM,
+                spatialConfig = com.example.model.SpatialAudioConfig(
+                    isEnabled = true,
+                    mode = com.example.model.SpatialMode.CINEMA_360,
+                    spatialProfile = com.example.model.SpatialProfile.DYNAMIC_360
+                ),
+                orbit8dEnabled = true,
+                orbit8dSpeed = 0.6f,
+                orbit8dDepth = 0.85f,
+                volumeScale = 1.0f
+            )
+        )
+
+        for (sr in listOf(44100, 48000, 96000)) {
+            dsp.configureSampleRate(sr)
+            val frames = 1024
+            val pcm = FloatArray(frames * 2) { i ->
+                val sampleIdx = i / 2
+                0.35f * kotlin.math.sin(2.0 * kotlin.math.PI * 220.0 * sampleIdx / sr).toFloat()
+            }
+            dsp.processStereoBuffer(pcm, frames)
+            assertFalse("DSP must not trigger safety bypass on valid PCM at $sr Hz", dsp.isSafetyBypassed)
+            var peak = 0f
+            for (s in pcm) {
+                assertTrue("DSP sample must stay finite at $sr Hz", s.isFinite())
+                val a = kotlin.math.abs(s)
+                if (a > peak) peak = a
+            }
+            assertTrue("DSP output peak must remain audible at $sr Hz", peak > 0.05f)
+        }
+    }
+
+    @Test
+    fun `service handles ACTION_STOP safely on API 26+ and autonomous remote actions when callback cleared`() {
+        val controller = Robolectric.buildService(SonoraMusicService::class.java)
+            .create()
+            .startCommand(0, 0)
+        val service = controller.get()
+
+        val testSong = Song(
+            id = 505L,
+            title = "Autonomous Track",
+            artist = "Sonora",
+            album = "Test",
+            albumId = 5L,
+            durationMs = 180000L,
+            uri = Uri.EMPTY,
+            dataPath = "",
+            mimeType = "audio/mpeg",
+            sizeBytes = 1024L
+        )
+        service.updateQueueSnapshot(listOf(testSong), 0)
+        service.updateForegroundNotification(testSong, isPlaying = false)
+
+        // Toggling shuffle/repeat works autonomously even when playbackCallback == null
+        service.setPlaybackCallback(null)
+        service.handleRemoteShuffle()
+        assertTrue(service.currentIsShuffleSnapshot)
+        service.handleRemoteRepeat()
+        assertEquals(com.example.model.RepeatMode.ALL, service.currentRepeatModeSnapshot)
+
+        // ACTION_STOP completes cleanly on both API 26 and API 36 without ForegroundServiceDidNotStartInTimeException
+        service.onStartCommand(Intent(context, SonoraMusicService::class.java).setAction(SonoraMusicService.ACTION_STOP), 0, 2)
+        assertFalse(service.notificationManager.isForegroundNotificationActive)
+        controller.destroy()
+    }
+
+    @Test
+    fun `lyrics extractor and folder filter handle plain text LRC tags and blacklist precedence`() {
+        val plain = com.example.util.LyricsExtractor.parseLrcLines("Line one\nLine two")
+        assertEquals(2, plain.size)
+        assertEquals(-1L, plain[0].timestampMs)
+
+        val lrc = com.example.util.LyricsExtractor.parseLrcLines("[00:10.50]First line\n[00:25.00]Second line")
+        assertEquals(2, lrc.size)
+        assertEquals(10_500L, lrc[0].timestampMs)
+        assertEquals(0, com.example.util.LyricsExtractor.findActiveLineIndex(lrc, 12_000L))
+        assertEquals(1, com.example.util.LyricsExtractor.findActiveLineIndex(lrc, 30_000L))
+
+        val sAllowed = Song(1L, "Allowed", "A", "Alb", 1L, 1000L, Uri.EMPTY, "/storage/emulated/0/Music/a.mp3", "audio/mpeg", 10L)
+        val sBlockedSub = Song(2L, "Blocked", "A", "Alb", 1L, 1000L, Uri.EMPTY, "/storage/emulated/0/Music/CallRecordings/b.mp3", "audio/mpeg", 10L)
+        val filtered = domain.filter.MusicFolderFilter.filterSongs(
+            listOf(sAllowed, sBlockedSub),
+            domain.model.FolderFilterSettings(
+                whitelistEnabled = true,
+                whitelistedFolders = listOf(domain.model.FolderInfo(path = "/storage/emulated/0/Music", name = "Music")),
+                blacklistedFolders = listOf(domain.model.FolderInfo(path = "/storage/emulated/0/Music/CallRecordings", name = "CallRecordings"))
+            )
+        )
+        assertEquals(listOf(1L), filtered.map { it.id })
+    }
 }

@@ -32,6 +32,11 @@ object AlbumArtHelper {
     // Negative cache to prevent repeated disk I/O and JNI calls for tracks without artwork
     private val noArtCache = object : LruCache<String, Boolean>(1000) {}
 
+    fun getCachedBitmap(song: Song?): Bitmap? {
+        if (song == null || song.isDemoTrack || song.id < 0) return null
+        return memoryCache.get("art_${song.albumId}_${song.id}")
+    }
+
     suspend fun loadAlbumArt(context: Context, song: Song?): Bitmap? = withContext(Dispatchers.IO) {
         if (song == null) return@withContext null
 
@@ -131,17 +136,31 @@ object AlbumArtHelper {
     }
 
     /**
-     * Efficiently checks whether an audio file has embedded image tags (e.g. ID3v2 APIC or FLAC Picture)
-     * without invoking native MediaMetadataRetriever when no artwork exists.
+     * Efficiently checks whether an audio file may have embedded image tags (e.g. ID3v2 APIC or FLAC Picture)
+     * without invoking native MediaMetadataRetriever on formats without image tags.
      */
     private fun mayHaveEmbeddedArt(song: Song): Boolean {
         if (song.isDemoTrack || song.id < 0) return false
-        val path = song.dataPath
-        if (path.isBlank()) {
+        val nameLower = (song.dataPath.ifBlank { song.uri.path ?: "" }).lowercase()
+        val mimeLower = song.mimeType.lowercase()
+        if (nameLower.endsWith(".wav") || nameLower.endsWith(".mid") || nameLower.endsWith(".midi") ||
+            nameLower.endsWith(".ogg") || nameLower.endsWith(".opus") ||
+            mimeLower.contains("wav") || mimeLower.contains("midi") || mimeLower.contains("opus")
+        ) {
             return false
         }
+
+        val path = song.dataPath
+        if (path.isBlank()) {
+            // Scoped Storage (Android 10-16): dataPath may be unavailable; allow Uri-based extraction
+            return song.uri != Uri.EMPTY
+        }
         val file = File(path)
-        if (!file.exists() || !file.canRead() || file.length() < 1024) {
+        if (!file.exists() || !file.canRead()) {
+            // Direct File access blocked by Scoped Storage; fall back safely to content URI
+            return song.uri != Uri.EMPTY && song.uri.scheme == "content"
+        }
+        if (file.length() < 1024) {
             return false
         }
 

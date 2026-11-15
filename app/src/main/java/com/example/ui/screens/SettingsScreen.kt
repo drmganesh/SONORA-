@@ -84,6 +84,7 @@ import com.example.model.SwipeAction
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import ui.home.animations.HomeAnimationSettingsScreen
 import ui.player.PlayerCustomizationScreen
 import ui.player.PlayerStyleSelector
 import ui.settings.DynamicThemeSettingsScreen
@@ -118,6 +119,8 @@ fun SettingsScreen(
     val dynamicAppearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
     val dynamicColorIntensity by viewModel.dynamicColorIntensity.collectAsState()
     val dynamicGradientEnabled by viewModel.dynamicGradientEnabled.collectAsState()
+    val homeAnimationLevel by viewModel.homeAnimationLevel.collectAsState()
+    val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
 
     val gaplessEnabled by viewModel.gaplessEnabled.collectAsState()
     val crossfadeSeconds by viewModel.crossfadeSeconds.collectAsState()
@@ -143,6 +146,7 @@ fun SettingsScreen(
     val showLockScreenControls by viewModel.showLockScreenControls.collectAsState()
     val showNotificationFormatBadge by viewModel.showNotificationFormatBadge.collectAsState()
 
+    var showHomeAnimationSettings by remember { mutableStateOf(false) }
     var showPlayerStyleSelector by remember { mutableStateOf(false) }
     var showPlayerCustomization by remember { mutableStateOf(false) }
     var showSeekbarStyleScreen by remember { mutableStateOf(false) }
@@ -159,6 +163,13 @@ fun SettingsScreen(
     var notificationsExpanded by remember { mutableStateOf(true) }
     var aboutExpanded by remember { mutableStateOf(true) }
 
+    if (showHomeAnimationSettings) {
+        HomeAnimationSettingsScreen(
+            viewModel = viewModel,
+            onBack = { showHomeAnimationSettings = false }
+        )
+        return
+    }
     if (showInternalFolderManagement) {
         BackHandler { showInternalFolderManagement = false }
         LibraryFolderManagementScreen(
@@ -432,6 +443,14 @@ fun SettingsScreen(
                         )
 
                         Spacer(modifier = Modifier.height(6.dp))
+
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.AutoAwesome,
+                            title = "Home Animations",
+                            subtitle = "${homeAnimationLevel.displayName} • Daily Mix: ${dailyMixAnimationStyle.displayName}",
+                            colors = colors,
+                            onClick = { showHomeAnimationSettings = true }
+                        )
 
                         SettingsLinkRow(
                             icon = Icons.Rounded.AutoAwesome,

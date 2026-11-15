@@ -26,12 +26,14 @@ import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.OrganicArtworkCard
 import ui.components.OrganicHeroLeafShape
 import ui.components.OrganicPebbleShape
+import ui.home.animations.HomeAnimationLevel
 import ui.theme.EditorialColors
 
 /**
  * Artistic asymmetric collage of real local album artwork covers:
  * Large organic hero artwork + overlapping circular and pebble thumbnails.
- * Updates dynamically as library contents change.
+ * Animated with staggered floating drift, bounded slow zoom, touch parallax,
+ * selective decorative rotation, and smooth album transitions.
  */
 @Composable
 fun FeaturedArtworkCollage(
@@ -39,6 +41,9 @@ fun FeaturedArtworkCollage(
     colors: EditorialColors,
     onArtworkClick: (Song) -> Unit,
     onArtworkLongClick: (Song) -> Unit,
+    animationLevel: HomeAnimationLevel = HomeAnimationLevel.BALANCED,
+    screenVisible: Boolean = true,
+    isPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (collageSongs.isEmpty()) return
@@ -65,7 +70,7 @@ fun FeaturedArtworkCollage(
                 .fillMaxWidth()
                 .height(containerHeight)
         ) {
-            // 1. Main oversized organic curved hero artwork on the center-right
+            // 1. Main oversized organic curved hero artwork (Floating + Slow Zoom + Parallax + Crossfade)
             OrganicArtworkCard(
                 song = heroSong,
                 contentDescription = "${heroSong.album} featured artwork",
@@ -74,6 +79,15 @@ fun FeaturedArtworkCollage(
                 iconTint = colors.onAccentPill,
                 shadowColor = colors.shadowColor,
                 shadowElevation = 18.dp,
+                animationLevel = animationLevel,
+                screenVisible = screenVisible,
+                enableFloating = true,
+                floatingAmplitudeDp = 4.dp,
+                floatingDurationMs = 4800,
+                floatingPhaseMs = 0,
+                enableSlowZoom = true,
+                enableParallax = true,
+                decorativeRotation = false,
                 onClick = { onArtworkClick(heroSong) },
                 onLongClick = { onArtworkLongClick(heroSong) },
                 modifier = Modifier
@@ -83,7 +97,7 @@ fun FeaturedArtworkCollage(
                     .testTag("collage_hero_artwork")
             )
 
-            // 2. Floating overlapping circular thumbnail top-left
+            // 2. Floating overlapping circular thumbnail top-left (gentle rotation only while playing)
             Box(
                 modifier = Modifier
                     .size(topCircleSize + 6.dp)
@@ -100,6 +114,16 @@ fun FeaturedArtworkCollage(
                     iconTint = colors.textPrimary,
                     shadowColor = colors.shadowColor,
                     shadowElevation = 12.dp,
+                    animationLevel = animationLevel,
+                    screenVisible = screenVisible,
+                    enableFloating = true,
+                    floatingAmplitudeDp = 3.2.dp,
+                    floatingDurationMs = 3900,
+                    floatingPhaseMs = 700,
+                    enableSlowZoom = false,
+                    enableParallax = true,
+                    decorativeRotation = true,
+                    isPlaying = isPlaying,
                     onClick = { onArtworkClick(topLeftSong) },
                     onLongClick = { onArtworkLongClick(topLeftSong) },
                     modifier = Modifier
@@ -108,7 +132,7 @@ fun FeaturedArtworkCollage(
                 )
             }
 
-            // 3. Optional bottom-left pebble accent if 4+ distinct albums exist
+            // 3. Optional bottom-left pebble accent (varied timing, slow zoom, no rotation)
             if (bottomLeftSong != null) {
                 OrganicArtworkCard(
                     song = bottomLeftSong,
@@ -118,10 +142,19 @@ fun FeaturedArtworkCollage(
                     iconTint = colors.onAccentPill,
                     shadowColor = colors.shadowColor,
                     shadowElevation = 10.dp,
+                    animationLevel = animationLevel,
+                    screenVisible = screenVisible,
+                    enableFloating = true,
+                    floatingAmplitudeDp = 3.0.dp,
+                    floatingDurationMs = 5200,
+                    floatingPhaseMs = 1350,
+                    enableSlowZoom = true,
+                    enableParallax = true,
+                    decorativeRotation = false,
                     onClick = { onArtworkClick(bottomLeftSong) },
                     onLongClick = { onArtworkLongClick(bottomLeftSong) },
                     modifier = Modifier
-                        .size((accentCircleSize * 0.92f))
+                        .size(accentCircleSize * 0.92f)
                         .align(Alignment.BottomStart)
                         .offset(x = 18.dp, y = (-18).dp)
                         .testTag("collage_accent_pebble")
@@ -145,6 +178,15 @@ fun FeaturedArtworkCollage(
                     iconTint = colors.textPrimary,
                     shadowColor = colors.shadowColor,
                     shadowElevation = 10.dp,
+                    animationLevel = animationLevel,
+                    screenVisible = screenVisible,
+                    enableFloating = true,
+                    floatingAmplitudeDp = 2.8.dp,
+                    floatingDurationMs = 4300,
+                    floatingPhaseMs = 1900,
+                    enableSlowZoom = false,
+                    enableParallax = true,
+                    decorativeRotation = false,
                     onClick = { onArtworkClick(bottomRightSong) },
                     onLongClick = { onArtworkLongClick(bottomRightSong) },
                     modifier = Modifier
@@ -153,7 +195,7 @@ fun FeaturedArtworkCollage(
                 )
             }
 
-            // Subtle floating album caption pill tucked cleanly on the bottom-left / center-left
+            // Subtle floating album caption pill tucked cleanly on the bottom-left
             Surface(
                 onClick = { onArtworkClick(heroSong) },
                 shape = RoundedCornerShape(20.dp),

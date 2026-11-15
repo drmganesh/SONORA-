@@ -64,6 +64,8 @@ fun M3ExpressiveSeekbar(
         label = "amplitude"
     )
 
+    val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -72,6 +74,7 @@ fun M3ExpressiveSeekbar(
                 if (!enabled) return@pointerInput
                 detectTapGestures(
                     onPress = { offset ->
+                        if (size.width <= 0) return@detectTapGestures
                         val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
                         onSeekProgress(newProgress)
                         onSeekConfirmed(newProgress)
@@ -82,12 +85,14 @@ fun M3ExpressiveSeekbar(
                 if (!enabled) return@pointerInput
                 detectDragGestures(
                     onDragStart = { offset ->
+                        if (size.width <= 0) return@detectDragGestures
                         val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
                         onSeekProgress(newProgress)
                     },
-                    onDragEnd = { onSeekConfirmed(progress) },
-                    onDragCancel = { onSeekConfirmed(progress) },
+                    onDragEnd = { onSeekConfirmed(safeProgress) },
+                    onDragCancel = { onSeekConfirmed(safeProgress) },
                     onDrag = { change, _ ->
+                        if (size.width <= 0) return@detectDragGestures
                         change.consume()
                         val newProgress = (change.position.x / size.width).coerceIn(0f, 1f)
                         onSeekProgress(newProgress)
@@ -98,8 +103,10 @@ fun M3ExpressiveSeekbar(
         Canvas(modifier = Modifier.matchParentSize()) {
             val width = size.width
             val height = size.height
+            if (width <= 0f || height <= 0f) return@Canvas
+
             val centerY = height / 2f
-            val activeX = width * progress
+            val activeX = width * safeProgress
             val wavelength = 28.dp.toPx()
             val amp = waveAmplitude.dp.toPx()
 
@@ -134,7 +141,8 @@ fun M3ExpressiveSeekbar(
 
             val thumbWidth = 5.dp.toPx()
             val thumbHeight = 16.dp.toPx()
-            val thumbLeft = (activeX - (thumbWidth / 2f)).coerceIn(0f, width - thumbWidth)
+            val maxThumbLeft = (width - thumbWidth).coerceAtLeast(0f)
+            val thumbLeft = (activeX - (thumbWidth / 2f)).coerceIn(0f, maxThumbLeft)
             val thumbTop = centerY - (thumbHeight / 2f)
 
             drawRoundRect(

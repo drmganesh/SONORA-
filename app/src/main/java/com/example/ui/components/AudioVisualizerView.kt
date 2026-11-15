@@ -52,6 +52,7 @@ fun AudioVisualizerView(
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
+        if (w <= 0f || h <= 0f || frequencies.isEmpty()) return@Canvas
 
         when (style) {
             VisualizerStyle.SPECTRUM_BARS -> {

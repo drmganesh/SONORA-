@@ -185,6 +185,7 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                     0 -> HomeScreen(
                         viewModel = viewModel,
                         colors = editorialColors,
+                        screenVisible = showBottomChrome && currentTab == 0,
                         onOpenSettings = { showSettingsScreen = true },
                         onNavigateToLibrary = { currentTab = 2 },
                         onOpenNowPlaying = { isNowPlayingExpanded = true },

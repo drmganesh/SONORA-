@@ -32,10 +32,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Shuffle
@@ -117,6 +115,7 @@ fun HomeScreen(
     onOpenQueue: () -> Unit = {},
     onOpenDynamicColors: () -> Unit = {},
     onOpenPlayerStyles: () -> Unit = {},
+    screenVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val allSongs by viewModel.allSongs.collectAsState()
@@ -137,6 +136,8 @@ fun HomeScreen(
     val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
     val reduceAnimations by viewModel.reduceAnimations.collectAsState()
+    val homeAnimationLevel by viewModel.homeAnimationLevel.collectAsState()
+    val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
     val appearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
     val colorIntensity by viewModel.dynamicColorIntensity.collectAsState()
     val playerStyle by viewModel.playerStyle.collectAsState()
@@ -235,7 +236,7 @@ fun HomeScreen(
                         )
                     }
                 } else {
-                    // 2. Hero Section: Your Mix
+                    // 2 & 3. Hero Section: Your Mix + Artist / Music Labels
                     item(key = "your_mix_hero") {
                         YourMixSection(
                             contributorsSummary = yourMixContributors,
@@ -243,6 +244,8 @@ fun HomeScreen(
                             isMixPlaying = isMixActivelyPlaying,
                             hasTracks = yourMixSongs.isNotEmpty(),
                             colors = colors,
+                            animationLevel = homeAnimationLevel,
+                            screenVisible = screenVisible,
                             onPlayMix = {
                                 if (isMixActivelyPlaying) {
                                     viewModel.togglePlayPause()
@@ -264,11 +267,14 @@ fun HomeScreen(
                         )
                     }
 
-                    // 3. Featured Overlapping Artwork Collage
+                    // 4. Featured Album Artwork Collage
                     item(key = "featured_collage") {
                         FeaturedArtworkCollage(
                             collageSongs = collageSongs,
                             colors = colors,
+                            animationLevel = homeAnimationLevel,
+                            screenVisible = screenVisible,
+                            isPlaying = playbackInfo.isPlaying,
                             onArtworkClick = { song ->
                                 val albumSongs = allSongs.filter { it.album == song.album }
                                 if (albumSongs.isNotEmpty()) {
@@ -287,24 +293,7 @@ fun HomeScreen(
                         )
                     }
 
-                    // 4. Continue Listening Card (compact horizontal pill-card)
-                    currentSong?.let { activeSong ->
-                        item(key = "continue_listening") {
-                            ContinueListeningEditorialCard(
-                                song = activeSong,
-                                isPlaying = playbackInfo.isPlaying,
-                                progressFraction = if (playbackInfo.durationMs > 0L) {
-                                    (playbackInfo.currentPositionMs.toFloat() / playbackInfo.durationMs.toFloat()).coerceIn(0f, 1f)
-                                } else 0f,
-                                colors = colors,
-                                onCardClick = onOpenNowPlaying,
-                                onPlayPauseClick = { viewModel.togglePlayPause() },
-                                onLongClick = { contextMenuSong = activeSong }
-                            )
-                        }
-                    }
-
-                    // 4b. Quick Studio & Queue Pills
+                    // Quick Studio & Queue Pills (EQ, Audio Studio, Playlists, Queue shortcuts)
                     item(key = "quick_tools_strip") {
                         QuickToolsEditorialStrip(
                             playlistCount = playlists.size,
@@ -324,6 +313,8 @@ fun HomeScreen(
                                 currentPlayingSongId = currentSong?.id,
                                 isPlaying = playbackInfo.isPlaying,
                                 colors = colors,
+                                animationLevel = homeAnimationLevel,
+                                screenVisible = screenVisible,
                                 onSongClick = { song -> viewModel.playSong(song, recentlyPlayed) },
                                 onSongLongClick = { song -> contextMenuSong = song }
                             )
@@ -337,6 +328,8 @@ fun HomeScreen(
                             favorites = favorites,
                             currentSongId = currentSong?.id,
                             colors = colors,
+                            animationLevel = homeAnimationLevel,
+                            screenVisible = screenVisible,
                             onSongClick = { song -> viewModel.playSong(song, quickPicks) },
                             onSongLongClick = { song -> contextMenuSong = song },
                             onOpenFavorites = {
@@ -351,12 +344,17 @@ fun HomeScreen(
                         )
                     }
 
-                    // 7. Daily Mixes (Daily Mix 1..3, Energy, Chill, Acoustic)
+                    // 7. Daily Mixes (5 Animation Styles + Horizontal Swipe + Shuffle & Play)
                     if (dailyMixes.isNotEmpty()) {
                         item(key = "daily_mixes") {
                             DailyMixSection(
                                 mixes = dailyMixes,
                                 colors = colors,
+                                animationStyle = dailyMixAnimationStyle,
+                                animationLevel = homeAnimationLevel,
+                                screenVisible = screenVisible,
+                                currentPlayingSongId = currentSong?.id,
+                                isPlaying = playbackInfo.isPlaying,
                                 onMixClick = { mix ->
                                     activeCollection = ActiveCollectionModal(
                                         title = mix.title,
@@ -365,19 +363,30 @@ fun HomeScreen(
                                     )
                                 },
                                 onPlayMix = { mix ->
-                                    viewModel.playCollection(mix.songs, shuffle = false)
+                                    val isThisMixPlaying = playbackInfo.isPlaying && currentSong != null &&
+                                        mix.songs.any { it.id == currentSong?.id }
+                                    if (isThisMixPlaying) {
+                                        viewModel.togglePlayPause()
+                                    } else {
+                                        viewModel.playCollection(mix.songs, shuffle = false)
+                                    }
+                                },
+                                onShuffleMix = { mix ->
+                                    viewModel.playCollection(mix.songs, shuffle = true)
                                 }
                             )
                         }
                     }
 
-                    // 8. Favourite Albums (Squircle cards)
+                    // 8. Favourite Albums (Animated organic squircle cards)
                     if (favouriteAlbums.isNotEmpty()) {
                         item(key = "favourite_albums") {
                             FavouriteAlbumsSection(
                                 albums = favouriteAlbums,
                                 allSongs = allSongs,
                                 colors = colors,
+                                animationLevel = homeAnimationLevel,
+                                screenVisible = screenVisible,
                                 onAlbumClick = { album ->
                                     val albumSongs = allSongs.filter { it.album == album.title }
                                     activeCollection = ActiveCollectionModal(
@@ -391,13 +400,15 @@ fun HomeScreen(
                         }
                     }
 
-                    // 9. Favourite Artists (Circular medallions)
+                    // 9. Favourite Artists (Animated circular medallions)
                     if (favouriteArtists.isNotEmpty()) {
                         item(key = "favourite_artists") {
                             FavouriteArtistsSection(
                                 artists = favouriteArtists,
                                 allSongs = allSongs,
                                 colors = colors,
+                                animationLevel = homeAnimationLevel,
+                                screenVisible = screenVisible,
                                 onArtistClick = { artist ->
                                     val artistSongs = allSongs.filter { it.artist == artist.name }
                                     activeCollection = ActiveCollectionModal(
@@ -417,6 +428,8 @@ fun HomeScreen(
                                 songs = recentlyAdded.take(5),
                                 currentPlayingSongId = currentSong?.id,
                                 colors = colors,
+                                animationLevel = homeAnimationLevel,
+                                screenVisible = screenVisible,
                                 onSongClick = { song -> viewModel.playSong(song, recentlyAdded) },
                                 onSongLongClick = { song -> contextMenuSong = song },
                                 onSeeAllClick = onNavigateToLibrary
@@ -431,6 +444,8 @@ fun HomeScreen(
                             MostPlayedArchSection(
                                 songs = actualMostPlayed,
                                 colors = colors,
+                                animationLevel = homeAnimationLevel,
+                                screenVisible = screenVisible,
                                 onSongClick = { song -> viewModel.playSong(song, actualMostPlayed) },
                                 onSongLongClick = { song -> contextMenuSong = song }
                             )
@@ -443,6 +458,9 @@ fun HomeScreen(
                             featuredAlbum = featuredAlbum,
                             representativeSong = featuredAlbumSong,
                             colors = colors,
+                            animationLevel = homeAnimationLevel,
+                            screenVisible = screenVisible,
+                            isPlaying = playbackInfo.isPlaying && currentSong?.album == featuredAlbum?.title,
                             onOpenAlbum = { album ->
                                 val albumSongs = allSongs.filter { it.album == album.title }
                                 activeCollection = ActiveCollectionModal(
@@ -580,138 +598,13 @@ fun HomeScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ContinueListeningEditorialCard(
-    song: Song,
-    isPlaying: Boolean,
-    progressFraction: Float,
-    colors: EditorialColors,
-    onCardClick: () -> Unit,
-    onPlayPauseClick: () -> Unit,
-    onLongClick: () -> Unit
-) {
-    val haptic = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(24.dp)
-
-    Surface(
-        shape = shape,
-        color = colors.surface,
-        shadowElevation = 8.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .shadow(10.dp, shape, ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
-            .clip(shape)
-            .border(0.75.dp, colors.cardBorder, shape)
-            .combinedClickable(
-                onClick = onCardClick,
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLongClick()
-                }
-            )
-            .testTag("continue_listening_card")
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularArtwork(
-                    song = song,
-                    isPlaying = isPlaying,
-                    accentColor = colors.accentPill,
-                    shadowElevation = 4.dp,
-                    modifier = Modifier.size(54.dp)
-                )
-
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.GraphicEq,
-                            contentDescription = null,
-                            tint = colors.accentStrong,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isPlaying) "NOW PLAYING" else "CONTINUE LISTENING",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp,
-                            letterSpacing = 0.8.sp,
-                            color = colors.accentStrong
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = song.title,
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${song.artist} • ${song.durationFormatted}",
-                        fontFamily = PlusJakartaFontFamily,
-                        fontSize = 12.sp,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                IconButton(
-                    onClick = onPlayPauseClick,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .background(colors.accentPill, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Resume",
-                            tint = colors.onAccentPill,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .background(colors.surfaceTinted)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progressFraction)
-                        .height(3.dp)
-                        .background(colors.accentStrong)
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
 private fun MadeForYouEditorialSection(
     quickPicks: List<Song>,
     favorites: List<Song>,
     currentSongId: Long?,
     colors: EditorialColors,
+    animationLevel: ui.home.animations.HomeAnimationLevel,
+    screenVisible: Boolean,
     onSongClick: (Song) -> Unit,
     onSongLongClick: (Song) -> Unit,
     onOpenFavorites: () -> Unit
@@ -827,6 +720,8 @@ private fun MadeForYouEditorialSection(
                                     song = song,
                                     accentColor = colors.accentPill,
                                     shadowElevation = 2.dp,
+                                    animationLevel = animationLevel,
+                                    screenVisible = screenVisible,
                                     modifier = Modifier.size(44.dp)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
@@ -863,6 +758,8 @@ private fun FavouriteAlbumsSection(
     albums: List<Album>,
     allSongs: List<Song>,
     colors: EditorialColors,
+    animationLevel: ui.home.animations.HomeAnimationLevel,
+    screenVisible: Boolean,
     onAlbumClick: (Album) -> Unit,
     onAlbumLongClick: (Song) -> Unit
 ) {
@@ -883,7 +780,7 @@ private fun FavouriteAlbumsSection(
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            items(albums, key = { "fav_alb_${it.id}_${it.title}" }) { album ->
+            itemsIndexed(albums, key = { _, alb -> "fav_alb_${alb.id}_${alb.title}" }) { index, album ->
                 val repSong = remember(album.title, allSongs) {
                     allSongs.firstOrNull { it.album == album.title }
                 }
@@ -895,6 +792,14 @@ private fun FavouriteAlbumsSection(
                     artworkSize = 148.dp,
                     cornerRadius = 24.dp,
                     showPlayBadge = true,
+                    animationLevel = animationLevel,
+                    screenVisible = screenVisible,
+                    enableFloating = true,
+                    floatingPhaseMs = index * 420,
+                    floatingDurationMs = 4500 + (index % 3) * 400,
+                    enableSlowZoom = true,
+                    enableMorph = true,
+                    enableParallax = true,
                     onClick = { onAlbumClick(album) },
                     onLongClick = repSong?.let { s -> { onAlbumLongClick(s) } },
                     modifier = Modifier.width(156.dp)
@@ -909,6 +814,8 @@ private fun FavouriteArtistsSection(
     artists: List<Artist>,
     allSongs: List<Song>,
     colors: EditorialColors,
+    animationLevel: ui.home.animations.HomeAnimationLevel,
+    screenVisible: Boolean,
     onArtistClick: (Artist) -> Unit
 ) {
     Column(
@@ -928,7 +835,7 @@ private fun FavouriteArtistsSection(
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            items(artists, key = { "fav_art_${it.name}" }) { artist ->
+            itemsIndexed(artists, key = { _, art -> "fav_art_${art.name}" }) { index, artist ->
                 val repSong = remember(artist.name, allSongs) {
                     allSongs.firstOrNull { it.artist == artist.name }
                 }
@@ -947,6 +854,14 @@ private fun FavouriteArtistsSection(
                         shadowElevation = 6.dp,
                         borderWidth = 2.dp,
                         borderColor = colors.surface,
+                        animationLevel = animationLevel,
+                        screenVisible = screenVisible,
+                        enableFloating = true,
+                        floatingAmplitudeDp = 2.4.dp,
+                        floatingDurationMs = 4200 + (index % 3) * 380,
+                        floatingPhaseMs = index * 340,
+                        enableSlowZoom = true,
+                        decorativeRotation = false,
                         modifier = Modifier.size(84.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -981,6 +896,8 @@ private fun RecentlyAddedSection(
     songs: List<Song>,
     currentPlayingSongId: Long?,
     colors: EditorialColors,
+    animationLevel: ui.home.animations.HomeAnimationLevel,
+    screenVisible: Boolean,
     onSongClick: (Song) -> Unit,
     onSongLongClick: (Song) -> Unit,
     onSeeAllClick: () -> Unit
@@ -1031,6 +948,8 @@ private fun RecentlyAddedSection(
                             isPlaying = isCurrent,
                             accentColor = colors.accentPill,
                             shadowElevation = 3.dp,
+                            animationLevel = animationLevel,
+                            screenVisible = screenVisible,
                             modifier = Modifier.size(46.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -1084,6 +1003,8 @@ private fun RecentlyAddedSection(
 private fun MostPlayedArchSection(
     songs: List<Song>,
     colors: EditorialColors,
+    animationLevel: ui.home.animations.HomeAnimationLevel,
+    screenVisible: Boolean,
     onSongClick: (Song) -> Unit,
     onSongLongClick: (Song) -> Unit
 ) {
@@ -1113,6 +1034,13 @@ private fun MostPlayedArchSection(
                     artworkSize = 136.dp,
                     cornerRadius = 68.dp, // Arch / pill-rounded silhouette for layout variety
                     badgeText = "#${index + 1}",
+                    animationLevel = animationLevel,
+                    screenVisible = screenVisible,
+                    enableFloating = true,
+                    floatingPhaseMs = index * 390,
+                    floatingDurationMs = 4600 + (index % 3) * 350,
+                    enableSlowZoom = true,
+                    enableParallax = true,
                     onClick = { onSongClick(song) },
                     onLongClick = { onSongLongClick(song) },
                     modifier = Modifier.width(144.dp)

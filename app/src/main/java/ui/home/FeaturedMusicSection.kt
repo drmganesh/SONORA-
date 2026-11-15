@@ -1,9 +1,14 @@
 package ui.home
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,11 +29,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -42,11 +50,13 @@ import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.OrganicArtworkCard
 import ui.components.OrganicPebbleShape
+import ui.home.animations.HomeAnimationLevel
+import ui.home.animations.rememberShouldAnimateHomeMotion
 import ui.theme.EditorialColors
 
 /**
  * Large expressive Featured Music showcase card highlighting a real spotlight Album
- * from the user's local library with organic artwork, metadata, Play, and Shuffle buttons.
+ * from the user's local library with animated organic artwork, metadata, Play, and Shuffle buttons.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -58,11 +68,31 @@ fun FeaturedMusicSection(
     onPlayAlbum: (Album) -> Unit,
     onShuffleAlbum: (Album) -> Unit,
     onLongClick: ((Song) -> Unit)? = null,
+    animationLevel: HomeAnimationLevel = HomeAnimationLevel.BALANCED,
+    screenVisible: Boolean = true,
+    isPlaying: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (featuredAlbum == null || representativeSong == null) return
     val haptic = LocalHapticFeedback.current
     val cardShape = RoundedCornerShape(30.dp)
+    val motionEnabled = rememberShouldAnimateHomeMotion(level = animationLevel, screenVisible = screenVisible)
+
+    val playInteraction = remember { MutableInteractionSource() }
+    val playPressed by playInteraction.collectIsPressedAsState()
+    val playScale by animateFloatAsState(
+        targetValue = if (playPressed && motionEnabled) 0.94f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "featured_play_scale"
+    )
+
+    val shuffleInteraction = remember { MutableInteractionSource() }
+    val shufflePressed by shuffleInteraction.collectIsPressedAsState()
+    val shuffleScale by animateFloatAsState(
+        targetValue = if (shufflePressed && motionEnabled) 0.94f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "featured_shuffle_scale"
+    )
 
     Column(
         modifier = modifier
@@ -117,6 +147,16 @@ fun FeaturedMusicSection(
                         iconTint = colors.onAccentPill,
                         shadowColor = colors.shadowColor,
                         shadowElevation = 10.dp,
+                        animationLevel = animationLevel,
+                        screenVisible = screenVisible,
+                        enableFloating = true,
+                        floatingAmplitudeDp = 3.2.dp,
+                        floatingDurationMs = 5000,
+                        floatingPhaseMs = 450,
+                        enableSlowZoom = true,
+                        enableParallax = true,
+                        decorativeRotation = false,
+                        isPlaying = isPlaying,
                         onClick = { onOpenAlbum(featuredAlbum) },
                         onLongClick = { onLongClick?.invoke(representativeSong) },
                         modifier = Modifier.size(116.dp)
@@ -173,6 +213,7 @@ fun FeaturedMusicSection(
                 ) {
                     Button(
                         onClick = { onPlayAlbum(featuredAlbum) },
+                        interactionSource = playInteraction,
                         shape = RoundedCornerShape(24.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = colors.accentStrong,
@@ -181,6 +222,10 @@ fun FeaturedMusicSection(
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp)
+                            .graphicsLayer {
+                                scaleX = playScale
+                                scaleY = playScale
+                            }
                             .testTag("featured_play_button")
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null)
@@ -190,6 +235,7 @@ fun FeaturedMusicSection(
 
                     Button(
                         onClick = { onShuffleAlbum(featuredAlbum) },
+                        interactionSource = shuffleInteraction,
                         shape = RoundedCornerShape(24.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = colors.accentPill,
@@ -198,6 +244,10 @@ fun FeaturedMusicSection(
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp)
+                            .graphicsLayer {
+                                scaleX = shuffleScale
+                                scaleY = shuffleScale
+                            }
                             .testTag("featured_shuffle_button")
                     ) {
                         Icon(Icons.Rounded.Shuffle, contentDescription = null)

@@ -1,5 +1,13 @@
 package ui.home
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,7 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,10 +37,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -44,6 +54,8 @@ import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.CircularArtwork
+import ui.home.animations.HomeAnimationLevel
+import ui.home.animations.rememberShouldAnimateHomeMotion
 import ui.theme.EditorialColors
 
 data class MixArtistChip(
@@ -53,7 +65,7 @@ data class MixArtistChip(
 
 /**
  * Editorial Hero Section: Oversized responsive "Your" / "Mix" title (guaranteed never to wrap mid-word),
- * overlapping circular Play & Shuffle buttons, dynamic contributor subtitle, and artist chip strip.
+ * overlapping circular Play & Shuffle buttons, dynamic contributor subtitle, and animated artist label strip.
  */
 @Composable
 fun YourMixSection(
@@ -65,9 +77,35 @@ fun YourMixSection(
     onPlayMix: () -> Unit,
     onShuffleMix: () -> Unit,
     onArtistChipClick: (MixArtistChip) -> Unit,
+    animationLevel: HomeAnimationLevel = HomeAnimationLevel.BALANCED,
+    screenVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
+    val motionEnabled = rememberShouldAnimateHomeMotion(level = animationLevel, screenVisible = screenVisible)
+
+    val playClusterTargetScale = if (motionEnabled && isMixPlaying && animationLevel.amplitudeScale > 0f) {
+        val amp = (0.04f * animationLevel.amplitudeScale).coerceIn(0.015f, 0.06f)
+        val trans = rememberInfiniteTransition(label = "your_mix_play_breathe")
+        val s by trans.animateFloat(
+            initialValue = 1.0f,
+            targetValue = 1.0f + amp,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1500, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "your_mix_play_scale"
+        )
+        s
+    } else {
+        1.0f
+    }
+    val settledPlayScale by animateFloatAsState(
+        targetValue = playClusterTargetScale,
+        animationSpec = spring(),
+        label = "your_mix_play_settle"
+    )
+    val effectivePlayScale = if (motionEnabled && isMixPlaying) playClusterTargetScale else settledPlayScale
 
     Column(
         modifier = modifier
@@ -134,7 +172,11 @@ fun YourMixSection(
                 Box(
                     modifier = Modifier
                         .size(playClusterSize)
-                        .padding(4.dp),
+                        .padding(4.dp)
+                        .graphicsLayer {
+                            scaleX = effectivePlayScale
+                            scaleY = effectivePlayScale
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Surface(
@@ -211,7 +253,7 @@ fun YourMixSection(
                 .padding(top = 6.dp)
         )
 
-        // Horizontal artist contributor pills
+        // Horizontal artist / music labels strip
         if (artistChips.isNotEmpty()) {
             Spacer(modifier = Modifier.height(12.dp))
             LazyRow(
@@ -219,7 +261,7 @@ fun YourMixSection(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.testTag("your_mix_artists_strip")
             ) {
-                items(artistChips, key = { it.artistName }) { chip ->
+                itemsIndexed(artistChips, key = { _, it -> it.artistName }) { idx, chip ->
                     Surface(
                         onClick = { onArtistChipClick(chip) },
                         shape = RoundedCornerShape(24.dp),
@@ -236,6 +278,10 @@ fun YourMixSection(
                                 fallbackLabel = chip.artistName,
                                 accentColor = colors.accentPill,
                                 shadowElevation = 2.dp,
+                                animationLevel = animationLevel,
+                                screenVisible = screenVisible,
+                                enableFloating = false,
+                                floatingPhaseMs = idx * 320,
                                 modifier = Modifier.size(34.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))

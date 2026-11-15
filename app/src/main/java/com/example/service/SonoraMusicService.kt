@@ -64,6 +64,24 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     private var audioFocusEnabled = true
     @Volatile
     private var headsetAutoPlayPause = true
+    @Volatile
+    var currentSongSnapshot: Song? = null
+        private set
+    @Volatile
+    var currentQueueSnapshot: List<Song> = emptyList()
+        private set
+    @Volatile
+    var currentQueueIndexSnapshot: Int = 0
+        private set
+    @Volatile
+    var currentIsShuffleSnapshot: Boolean = false
+        private set
+    @Volatile
+    var currentRepeatModeSnapshot: RepeatMode = RepeatMode.OFF
+        private set
+    @Volatile
+    var currentDeviceNameSnapshot: String = ""
+        private set
     var playbackCallback: ServicePlaybackCallback? = null
         private set
 
@@ -72,7 +90,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && headsetAutoPlayPause) {
                 resumeOnAudioFocusGain = false
-                playbackCallback?.onRemotePause()
+                handleRemotePause()
             }
         }
     }
@@ -89,6 +107,11 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     fun setPlaybackCallback(callback: ServicePlaybackCallback?) {
         this.playbackCallback = callback
+    }
+
+    fun updateQueueSnapshot(queue: List<Song>, index: Int) {
+        currentQueueSnapshot = queue
+        currentQueueIndexSnapshot = if (queue.isNotEmpty()) index.coerceIn(0, queue.lastIndex) else 0
     }
 
     fun updateAudioPolicySettings(focusEnabled: Boolean, headsetPauseEnabled: Boolean) {
@@ -181,24 +204,215 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Satisfy Android 8.0+ foreground service promotion synchronously before handling actions or stopping
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !notificationManager.isForegroundNotificationActive) {
+            val likelyPlaying = (::audioEngine.isInitialized && audioEngine.isPlaying) || intent?.action == ACTION_PLAY
+            notificationManager.ensureForegroundForServiceStart(currentSongSnapshot, likelyPlaying)
+        }
+
         when (intent?.action) {
-            ACTION_PLAY -> playbackCallback?.onRemotePlay()
-            ACTION_PAUSE -> playbackCallback?.onRemotePause()
-            ACTION_NEXT -> playbackCallback?.onRemoteNext()
-            ACTION_PREV -> playbackCallback?.onRemotePrev()
-            ACTION_SHUFFLE -> playbackCallback?.onRemoteShuffle()
-            ACTION_REPEAT -> playbackCallback?.onRemoteRepeat()
+            ACTION_PLAY -> handleRemotePlay()
+            ACTION_PAUSE -> handleRemotePause()
+            ACTION_NEXT -> handleRemoteNext()
+            ACTION_PREV -> handleRemotePrev()
+            ACTION_SHUFFLE -> handleRemoteShuffle()
+            ACTION_REPEAT -> handleRemoteRepeat()
             ACTION_SEEK -> {
                 val pos = intent.getLongExtra(EXTRA_SEEK_POSITION, -1L)
-                if (pos >= 0) playbackCallback?.onRemoteSeek(pos)
+                if (pos >= 0) handleRemoteSeek(pos)
             }
             ACTION_STOP -> {
-                playbackCallback?.onRemotePause()
+                handleRemotePause()
                 notificationManager.clearNotification()
                 stopSelf()
             }
         }
         return START_NOT_STICKY
+    }
+
+    fun handleRemotePlay() {
+        playbackCallback?.let {
+            it.onRemotePlay()
+            return
+        }
+        if (!::audioEngine.isInitialized) return
+        if (audioEngine.isPlaying) return
+        val song = currentSongSnapshot ?: return
+        if (!requestAudioFocusIfNeeded()) return
+        if (audioEngine.isPrepared) {
+            audioEngine.play()
+            updateForegroundNotification(
+                song = song,
+                isPlaying = true,
+                isShuffle = currentIsShuffleSnapshot,
+                repeatMode = currentRepeatModeSnapshot,
+                deviceName = currentDeviceNameSnapshot
+            )
+        } else {
+            playSongAutonomously(song)
+        }
+    }
+
+    fun handleRemotePause() {
+        playbackCallback?.let {
+            it.onRemotePause()
+            return
+        }
+        if (::audioEngine.isInitialized && audioEngine.isPlaying) {
+            audioEngine.pause()
+        }
+        abandonAudioFocus()
+        updateForegroundNotification(
+            song = currentSongSnapshot,
+            isPlaying = false,
+            isShuffle = currentIsShuffleSnapshot,
+            repeatMode = currentRepeatModeSnapshot,
+            deviceName = currentDeviceNameSnapshot
+        )
+    }
+
+    fun handleRemoteNext() {
+        playbackCallback?.let {
+            it.onRemoteNext()
+            return
+        }
+        val queue = currentQueueSnapshot
+        if (queue.isEmpty() || !::audioEngine.isInitialized) return
+        var nextIdx = currentQueueIndexSnapshot + 1
+        if (nextIdx >= queue.size) {
+            if (currentRepeatModeSnapshot == RepeatMode.ALL) {
+                nextIdx = 0
+            } else {
+                return
+            }
+        }
+        currentQueueIndexSnapshot = nextIdx
+        playSongAutonomously(queue[nextIdx])
+    }
+
+    fun handleRemotePrev() {
+        playbackCallback?.let {
+            it.onRemotePrev()
+            return
+        }
+        if (!::audioEngine.isInitialized) return
+        if (audioEngine.currentPosition > 3000L) {
+            handleRemoteSeek(0L)
+            return
+        }
+        val queue = currentQueueSnapshot
+        if (queue.isEmpty()) return
+        var prevIdx = currentQueueIndexSnapshot - 1
+        if (prevIdx < 0) {
+            prevIdx = if (currentRepeatModeSnapshot == RepeatMode.ALL) queue.size - 1 else 0
+        }
+        currentQueueIndexSnapshot = prevIdx
+        playSongAutonomously(queue[prevIdx])
+    }
+
+    fun handleRemoteShuffle() {
+        playbackCallback?.let {
+            it.onRemoteShuffle()
+            return
+        }
+        currentIsShuffleSnapshot = !currentIsShuffleSnapshot
+        updateForegroundNotification(
+            song = currentSongSnapshot,
+            isPlaying = ::audioEngine.isInitialized && audioEngine.isPlaying,
+            isShuffle = currentIsShuffleSnapshot,
+            repeatMode = currentRepeatModeSnapshot,
+            deviceName = currentDeviceNameSnapshot
+        )
+    }
+
+    fun handleRemoteRepeat() {
+        playbackCallback?.let {
+            it.onRemoteRepeat()
+            return
+        }
+        currentRepeatModeSnapshot = when (currentRepeatModeSnapshot) {
+            RepeatMode.OFF -> RepeatMode.ALL
+            RepeatMode.ALL -> RepeatMode.ONE
+            RepeatMode.ONE -> RepeatMode.OFF
+        }
+        updateForegroundNotification(
+            song = currentSongSnapshot,
+            isPlaying = ::audioEngine.isInitialized && audioEngine.isPlaying,
+            isShuffle = currentIsShuffleSnapshot,
+            repeatMode = currentRepeatModeSnapshot,
+            deviceName = currentDeviceNameSnapshot
+        )
+    }
+
+    fun handleRemoteSeek(positionMs: Long) {
+        playbackCallback?.let {
+            it.onRemoteSeek(positionMs)
+            return
+        }
+        if (!::audioEngine.isInitialized) return
+        audioEngine.seekTo(positionMs)
+        val song = currentSongSnapshot
+        notificationManager.updatePlaybackState(
+            isPlaying = audioEngine.isPlaying,
+            positionMs = positionMs,
+            durationMs = audioEngine.duration.coerceAtLeast(song?.durationMs ?: 0L),
+            isShuffle = currentIsShuffleSnapshot,
+            repeatMode = currentRepeatModeSnapshot
+        )
+    }
+
+    private fun playSongAutonomously(song: Song) {
+        if (!::audioEngine.isInitialized) return
+        if (!requestAudioFocusIfNeeded()) return
+        currentSongSnapshot = song
+        updateForegroundNotification(
+            song = song,
+            isPlaying = true,
+            isShuffle = currentIsShuffleSnapshot,
+            repeatMode = currentRepeatModeSnapshot,
+            deviceName = currentDeviceNameSnapshot
+        )
+        audioEngine.prepareAndPlay(
+            uri = song.uri,
+            fallbackPath = song.dataPath,
+            onPrepared = {
+                updateForegroundNotification(
+                    song = song,
+                    isPlaying = true,
+                    isShuffle = currentIsShuffleSnapshot,
+                    repeatMode = currentRepeatModeSnapshot,
+                    deviceName = currentDeviceNameSnapshot
+                )
+            },
+            onCompletion = {
+                when (currentRepeatModeSnapshot) {
+                    RepeatMode.ONE -> playSongAutonomously(song)
+                    RepeatMode.ALL -> handleRemoteNext()
+                    RepeatMode.OFF -> {
+                        if (currentQueueIndexSnapshot < currentQueueSnapshot.lastIndex) {
+                            handleRemoteNext()
+                        } else {
+                            updateForegroundNotification(
+                                song = song,
+                                isPlaying = false,
+                                isShuffle = currentIsShuffleSnapshot,
+                                repeatMode = currentRepeatModeSnapshot,
+                                deviceName = currentDeviceNameSnapshot
+                            )
+                        }
+                    }
+                }
+            },
+            onError = {
+                updateForegroundNotification(
+                    song = song,
+                    isPlaying = false,
+                    isShuffle = currentIsShuffleSnapshot,
+                    repeatMode = currentRepeatModeSnapshot,
+                    deviceName = currentDeviceNameSnapshot
+                )
+            }
+        )
     }
 
     fun updateForegroundNotification(
@@ -208,6 +422,10 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         repeatMode: RepeatMode = RepeatMode.OFF,
         deviceName: String = ""
     ) {
+        currentSongSnapshot = song
+        currentIsShuffleSnapshot = isShuffle
+        currentRepeatModeSnapshot = repeatMode
+        currentDeviceNameSnapshot = deviceName
         notificationManager.updateNotification(
             song = song,
             isPlaying = isPlaying,
@@ -224,12 +442,12 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                 hasAudioFocus = false
                 resumeOnAudioFocusGain = false
                 if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
-                playbackCallback?.onRemotePause()
+                handleRemotePause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 resumeOnAudioFocusGain = ::audioEngine.isInitialized && audioEngine.isPlaying
                 if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
-                playbackCallback?.onRemotePause()
+                handleRemotePause()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                 if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(0.25f)
@@ -239,7 +457,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                 if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
                 if (resumeOnAudioFocusGain) {
                     resumeOnAudioFocusGain = false
-                    playbackCallback?.onRemotePlay()
+                    handleRemotePlay()
                 }
             }
         }

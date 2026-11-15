@@ -77,10 +77,12 @@ class SonoraAudioEngine(private val context: Context) {
     val isPlaying: Boolean
         get() = if (usingFallbackPlayer) _isPlayingState else pcmPlayer.isPlaying
 
+    @Volatile
     private var cachedDurationMs: Long = 0L
     val duration: Long
         get() = if (usingFallbackPlayer) cachedDurationMs else pcmPlayer.durationMs.coerceAtLeast(cachedDurationMs)
 
+    @Volatile
     private var cachedPositionMs: Long = 0L
     val currentPosition: Long
         get() = if (usingFallbackPlayer) {
@@ -146,6 +148,7 @@ class SonoraAudioEngine(private val context: Context) {
     val isLoudnessSupported: StateFlow<Boolean> = _isLoudnessSupported.asStateFlow()
 
     private var crossfadeJob: Job? = null
+    @Volatile
     private var currentVolumeScale = 1.0f
     @Volatile
     internal var focusDuckScale = 1.0f
@@ -284,6 +287,7 @@ class SonoraAudioEngine(private val context: Context) {
 
     fun getAudioSessionId(): Int = currentSessionId
 
+    @Volatile
     private var playbackRequestGeneration = 0L
 
     fun prepareAndPlay(
@@ -294,6 +298,13 @@ class SonoraAudioEngine(private val context: Context) {
         onError: (String) -> Unit
     ) {
         val reqGen = ++playbackRequestGeneration
+        var preparedDispatched = false
+        val dispatchPreparedOnce = {
+            if (!preparedDispatched && reqGen == playbackRequestGeneration) {
+                preparedDispatched = true
+                onPrepared()
+            }
+        }
 
         // Always cancel any pending crossfade and restore unity volume before preparing a track
         crossfadeJob?.cancel()
@@ -327,7 +338,7 @@ class SonoraAudioEngine(private val context: Context) {
 
                 // Software DSP pipeline already handles EQ & loudness without AudioEffect conflicts
                 adaptiveEqualizer.attachToAudioSession(sessionId, softwareDspHandled = true)
-                onPrepared()
+                dispatchPreparedOnce()
             },
             onCompletion = {
                 if (reqGen != playbackRequestGeneration) return@prepareAndPlay
@@ -343,7 +354,7 @@ class SonoraAudioEngine(private val context: Context) {
                     uri = uri,
                     fallbackPath = fallbackPath,
                     startPositionMs = resumePositionMs,
-                    onPrepared = onPrepared,
+                    onPrepared = dispatchPreparedOnce,
                     onCompletion = onCompletion,
                     onError = onError
                 )

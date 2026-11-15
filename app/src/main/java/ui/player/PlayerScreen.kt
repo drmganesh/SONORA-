@@ -612,8 +612,7 @@ fun PlayerScreen(
                 onOpenOutputDevice = { showOutputDeviceSheet = true },
                 onCycleSpeed = {
                     val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-                    val curIdx = speeds.indexOfFirst { kotlin.math.abs(it - playbackSpeed) < 0.08f }
-                    val next = speeds[(curIdx + 1) % speeds.size]
+                    val next = speeds.firstOrNull { it > playbackSpeed + 0.05f } ?: speeds.first()
                     viewModel.setPlaybackSpeed(next)
                 },
                 onOpenEqualizer = openEqualizerAction,
@@ -927,7 +926,13 @@ fun PlayerScreen(
                                         lineHeight = (fontSizeSp * 1.4f).sp,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable { viewModel.seekTo(line.timestampMs) }
+                                            .then(
+                                                if (line.timestampMs >= 0L) {
+                                                    Modifier.clickable { viewModel.seekTo(line.timestampMs) }
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
                                             .padding(vertical = 4.dp)
                                     )
                                 }

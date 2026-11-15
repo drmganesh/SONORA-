@@ -466,6 +466,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _reduceAnimations = MutableStateFlow(preferences.reduceAnimations)
     val reduceAnimations: StateFlow<Boolean> = _reduceAnimations.asStateFlow()
 
+    private val homeAnimationPrefs = data.preferences.HomeAnimationPreferences(application)
+    private val _homeAnimationLevel = MutableStateFlow(homeAnimationPrefs.getInitialSettings().animationLevel)
+    val homeAnimationLevel: StateFlow<ui.home.animations.HomeAnimationLevel> = _homeAnimationLevel.asStateFlow()
+
+    private val _dailyMixAnimationStyle = MutableStateFlow(homeAnimationPrefs.getInitialSettings().dailyMixStyle)
+    val dailyMixAnimationStyle: StateFlow<ui.home.animations.DailyMixAnimationStyle> = _dailyMixAnimationStyle.asStateFlow()
+
     // Dedicated User Profile state & DataStore persistence (strictly separate from song artwork)
     private val userProfilePrefs = data.preferences.UserProfilePreferences(application)
     val userProfile: StateFlow<com.example.model.UserProfile> = userProfilePrefs.userProfile
@@ -520,6 +527,31 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun setReduceAnimations(reduce: Boolean) {
         _reduceAnimations.value = reduce
         preferences.reduceAnimations = reduce
+    }
+
+    fun setHomeAnimationLevel(level: ui.home.animations.HomeAnimationLevel) {
+        _homeAnimationLevel.value = level
+        viewModelScope.launch(Dispatchers.IO) {
+            homeAnimationPrefs.setHomeAnimationLevel(level)
+        }
+    }
+
+    fun setDailyMixAnimationStyle(style: ui.home.animations.DailyMixAnimationStyle) {
+        _dailyMixAnimationStyle.value = style
+        viewModelScope.launch(Dispatchers.IO) {
+            homeAnimationPrefs.setDailyMixAnimationStyle(style)
+        }
+    }
+
+    fun applyHomeAnimationSettings(
+        level: ui.home.animations.HomeAnimationLevel,
+        style: ui.home.animations.DailyMixAnimationStyle
+    ) {
+        _homeAnimationLevel.value = level
+        _dailyMixAnimationStyle.value = style
+        viewModelScope.launch(Dispatchers.IO) {
+            homeAnimationPrefs.saveSettings(level, style)
+        }
     }
 
     fun addRecentSearch(query: String) {
@@ -829,6 +861,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private var originalQueueBeforeShuffle: List<Song>? = null
     private val dateKeyFormatter = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
 
+    private val servicePlaybackCallback = object : SonoraMusicService.ServicePlaybackCallback {
+        override fun onRemotePlay() = resumePlayback()
+        override fun onRemotePause() = pausePlayback()
+        override fun onRemoteNext() = playNext()
+        override fun onRemotePrev() = playPrevious()
+        override fun onRemoteShuffle() = toggleShuffle()
+        override fun onRemoteRepeat() = cycleRepeatMode()
+        override fun onRemoteSeek(positionMs: Long) = seekTo(positionMs)
+    }
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as? SonoraMusicService.SonoraBinder
@@ -846,15 +888,21 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             isBound = true
 
             connectedService.updateAudioPolicySettings(_audioFocusEnabled.value, _headsetAutoPlayPause.value)
-            connectedService.setPlaybackCallback(object : SonoraMusicService.ServicePlaybackCallback {
-                override fun onRemotePlay() = resumePlayback()
-                override fun onRemotePause() = pausePlayback()
-                override fun onRemoteNext() = playNext()
-                override fun onRemotePrev() = playPrevious()
-                override fun onRemoteShuffle() = toggleShuffle()
-                override fun onRemoteRepeat() = cycleRepeatMode()
-                override fun onRemoteSeek(positionMs: Long) = seekTo(positionMs)
-            })
+            connectedService.setPlaybackCallback(servicePlaybackCallback)
+            if (_queue.value.isNotEmpty()) {
+                connectedService.updateQueueSnapshot(_queue.value, _queueIndex.value)
+            } else if (connectedService.currentQueueSnapshot.isNotEmpty()) {
+                _queue.value = connectedService.currentQueueSnapshot
+                _queueIndex.value = connectedService.currentQueueIndexSnapshot
+            }
+            connectedService.currentSongSnapshot?.let { activeSvcSong ->
+                if (_currentSong.value?.id != activeSvcSong.id || (connectedService.audioEngine.isPrepared || connectedService.audioEngine.isPlaying)) {
+                    _currentSong.value = activeSvcSong
+                    viewModelScope.launch(Dispatchers.IO) {
+                        _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), activeSvcSong)
+                    }
+                }
+            }
 
             serviceCollectorsJob?.cancel()
             serviceCollectorsJob = kotlinx.coroutines.SupervisorJob()
@@ -872,6 +920,19 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 eng.setGlobalEffectsBypass(_globalEffectsBypass.value)
                 eng.update8dOrbitConfig(_orbit8dEnabled.value, _orbit8dSpeed.value, _orbit8dDepth.value)
                 eng.setPlaybackSpeed(_playbackSpeed.value)
+
+                if (eng.isPrepared || eng.isPlaying) {
+                    val activeSong = connectedService.currentSongSnapshot ?: _currentSong.value
+                    _playbackInfo.value = _playbackInfo.value.copy(
+                        isPlaying = eng.isPlaying,
+                        currentPositionMs = eng.currentPosition,
+                        durationMs = eng.duration.coerceAtLeast(activeSong?.durationMs ?: 0L),
+                        playbackSpeed = _playbackSpeed.value
+                    )
+                    if (eng.isPlaying) {
+                        startProgressTracker()
+                    }
+                }
 
                 collectorScope.launch {
                     eng.visualizerFrequencies.collect { _visualizerFrequencies.value = it }
@@ -924,6 +985,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceCollectorsJob?.cancel()
             serviceCollectorsJob = null
+            musicService?.let { svc ->
+                if (svc.playbackCallback === servicePlaybackCallback) {
+                    svc.setPlaybackCallback(null)
+                }
+            }
             musicService = null
             isBound = false
         }
@@ -943,6 +1009,14 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         loadLocalSongs()
         observePlaylists()
         observeFolderFiltering()
+        viewModelScope.launch {
+            homeAnimationPrefs.settingsFlow
+                .catch { e -> Log.w(TAG, "Home animation DataStore stream error", e) }
+                .collect { saved ->
+                    _homeAnimationLevel.value = saved.animationLevel
+                    _dailyMixAnimationStyle.value = saved.dailyMixStyle
+                }
+        }
         viewModelScope.launch {
             _currentSong.collect { song ->
                 updateDynamicThemeForSong(song)
@@ -1269,6 +1343,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         pendingTogglePlayOnConnect = false
 
         ensureServiceStarted()
+        musicService?.updateQueueSnapshot(q, idx)
         if (musicService?.requestAudioFocusIfNeeded() == false) {
             _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
             return
@@ -1470,6 +1545,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             _queue.value = restored
             _queueIndex.value = restored.indexOfFirst { it.id == _currentSong.value?.id }.coerceAtLeast(0)
         }
+        musicService?.updateQueueSnapshot(_queue.value, _queueIndex.value)
         syncNotification()
     }
 
@@ -1599,6 +1675,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _queue.value = list
         val cur = _currentSong.value
         _queueIndex.value = list.indexOfFirst { it.id == cur?.id }.coerceAtLeast(0)
+        musicService?.updateQueueSnapshot(list, _queueIndex.value)
     }
 
     fun removeFromQueue(index: Int) {
@@ -1608,12 +1685,14 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _queue.value = list
         val cur = _currentSong.value
         _queueIndex.value = list.indexOfFirst { it.id == cur?.id }.coerceAtLeast(0)
+        musicService?.updateQueueSnapshot(list, _queueIndex.value)
     }
 
     fun clearQueue() {
         val cur = _currentSong.value
         _queue.value = if (cur != null) listOf(cur) else emptyList()
         _queueIndex.value = 0
+        musicService?.updateQueueSnapshot(_queue.value, 0)
     }
 
     fun saveQueueAsPlaylist(name: String) {
@@ -1627,6 +1706,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addToQueue(song: Song) {
         _queue.value = _queue.value + song
+        musicService?.updateQueueSnapshot(_queue.value, _queueIndex.value)
     }
 
     fun playNextInQueue(song: Song) {
@@ -1634,6 +1714,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         val insertPos = (_queueIndex.value + 1).coerceAtMost(q.size)
         q.add(insertPos, song)
         _queue.value = q
+        musicService?.updateQueueSnapshot(q, _queueIndex.value)
     }
 
     fun shuffleRemainingQueue() {
@@ -1643,6 +1724,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         val playedAndCurrent = q.subList(0, curIdx + 1)
         val upNextShuffled = q.subList(curIdx + 1, q.size).shuffled()
         _queue.value = playedAndCurrent + upNextShuffled
+        musicService?.updateQueueSnapshot(_queue.value, _queueIndex.value)
     }
 
     // --- Audio Effects & Spatial Controls ---
@@ -2016,6 +2098,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         serviceCollectorsJob?.cancel()
         progressTrackingJob?.cancel()
         sleepTimerJob?.cancel()
+        musicService?.let { svc ->
+            if (svc.playbackCallback === servicePlaybackCallback) {
+                svc.setPlaybackCallback(null)
+            }
+        }
         if (isBound) {
             try {
                 getApplication<Application>().unbindService(serviceConnection)
@@ -2024,5 +2111,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             }
             isBound = false
         }
+        musicService = null
     }
 }

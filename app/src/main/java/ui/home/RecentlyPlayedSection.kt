@@ -12,13 +12,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -31,11 +32,13 @@ import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.CircularArtwork
+import ui.home.animations.HomeAnimationLevel
 import ui.theme.EditorialColors
 
 /**
  * Horizontal scrolling Recently Played section using circular artwork medallions,
  * backed directly by Room lastPlayedTimestamp playback history.
+ * Features staggered floating motion and gentle rotation strictly for the active playing medallion.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -46,6 +49,8 @@ fun RecentlyPlayedSection(
     colors: EditorialColors,
     onSongClick: (Song) -> Unit,
     onSongLongClick: (Song) -> Unit,
+    animationLevel: HomeAnimationLevel = HomeAnimationLevel.BALANCED,
+    screenVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     if (songs.isEmpty()) return
@@ -69,7 +74,7 @@ fun RecentlyPlayedSection(
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            items(songs, key = { "recent_${it.id}" }) { song ->
+            itemsIndexed(songs, key = { _, s -> "recent_${s.id}" }) { index, song ->
                 val isCurrent = currentPlayingSongId == song.id
                 Column(
                     modifier = Modifier
@@ -92,7 +97,15 @@ fun RecentlyPlayedSection(
                         accentColor = if (isCurrent) colors.accentStrong else colors.accentPill,
                         shadowElevation = if (isCurrent) 12.dp else 7.dp,
                         borderWidth = if (isCurrent) 2.5.dp else 0.dp,
-                        borderColor = if (isCurrent) colors.accentStrong else androidx.compose.ui.graphics.Color.Transparent,
+                        borderColor = if (isCurrent) colors.accentStrong else Color.Transparent,
+                        animationLevel = animationLevel,
+                        screenVisible = screenVisible,
+                        enableFloating = true,
+                        floatingAmplitudeDp = 2.6.dp,
+                        floatingDurationMs = 4200 + (index % 3) * 450,
+                        floatingPhaseMs = index * 380,
+                        enableSlowZoom = isCurrent,
+                        decorativeRotation = isCurrent,
                         modifier = Modifier.size(96.dp)
                     )
 

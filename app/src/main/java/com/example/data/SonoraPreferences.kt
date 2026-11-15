@@ -41,6 +41,32 @@ class SonoraPreferences(context: Context) {
                 .remove("saved_band_gains")
                 .apply()
         }
+        migrateLegacySpatialIntensityIfNeeded()
+    }
+
+    private fun migrateLegacySpatialIntensityIfNeeded() {
+        val raw = prefs.all[KEY_SPATIAL_INTENSITY_FLOAT]
+        if (raw is String) {
+            val editor = prefs.edit()
+            if (!prefs.contains(KEY_SPATIAL_INTENSITY_PRESET)) {
+                editor.putString(KEY_SPATIAL_INTENSITY_PRESET, raw)
+            }
+            editor.putFloat(KEY_SPATIAL_INTENSITY_FLOAT, 0.75f)
+            editor.apply()
+        }
+    }
+
+    private fun readFloatSafe(allPrefs: Map<String, *>, key: String, default: Float): Float {
+        val v = allPrefs[key]
+        return (v as? Number)?.toFloat()?.takeIf { it.isFinite() } ?: default
+    }
+
+    private fun readStringSafe(allPrefs: Map<String, *>, key: String, default: String): String {
+        return (allPrefs[key] as? String) ?: default
+    }
+
+    private fun readBooleanSafe(allPrefs: Map<String, *>, key: String, default: Boolean): Boolean {
+        return (allPrefs[key] as? Boolean) ?: default
     }
 
     // Theme Mode
@@ -180,24 +206,29 @@ class SonoraPreferences(context: Context) {
 
     var spatialConfig: SpatialAudioConfig
         get() {
-            val isEnabled = prefs.getBoolean("spatial_enabled", true)
-            val modeName = prefs.getString("spatial_mode", SpatialMode.HEADPHONES.name) ?: SpatialMode.HEADPHONES.name
+            migrateLegacySpatialIntensityIfNeeded()
+            val allPrefs = prefs.all
+            val isEnabled = readBooleanSafe(allPrefs, "spatial_enabled", true)
+            val modeName = readStringSafe(allPrefs, "spatial_mode", SpatialMode.HEADPHONES.name)
             val mode = try {
                 SpatialMode.valueOf(modeName)
             } catch (e: Exception) {
                 SpatialMode.HEADPHONES
             }
-            val intensity = prefs.getFloat("spatial_intensity", 0.75f)
-            val soundstageWidth = prefs.getFloat("spatial_soundstage_width", 0.85f)
-            val listenerX = prefs.getFloat("spatial_listener_x", 0f)
-            val listenerY = prefs.getFloat("spatial_listener_y", 0f)
-            val virtualSurround = prefs.getBoolean("spatial_virtual_surround", true)
-            val stereoWidening = prefs.getFloat("spatial_stereo_widening", 0.80f)
-            val channelBalance = prefs.getFloat("spatial_channel_balance", 0.0f)
-            val twsWideStereo = prefs.getBoolean("spatial_tws_wide_stereo", true)
-            val twsStereoBoost = prefs.getFloat("spatial_tws_stereo_boost", 0.90f)
-            val spatialProfile = SpatialProfile.fromId(prefs.getString("spatial_profile", SpatialProfile.DYNAMIC_360.id))
-            val spatialIntensity = SpatialIntensity.fromId(prefs.getString("spatial_intensity", SpatialIntensity.BALANCED.id))
+            val intensity = readFloatSafe(allPrefs, KEY_SPATIAL_INTENSITY_FLOAT, 0.75f).coerceIn(0f, 1f)
+            val soundstageWidth = readFloatSafe(allPrefs, "spatial_soundstage_width", 0.85f).coerceIn(0f, 1f)
+            val listenerX = readFloatSafe(allPrefs, "spatial_listener_x", 0f).coerceIn(-1f, 1f)
+            val listenerY = readFloatSafe(allPrefs, "spatial_listener_y", 0f).coerceIn(-1f, 1f)
+            val virtualSurround = readBooleanSafe(allPrefs, "spatial_virtual_surround", true)
+            val stereoWidening = readFloatSafe(allPrefs, "spatial_stereo_widening", 0.80f).coerceIn(0f, 1f)
+            val channelBalance = readFloatSafe(allPrefs, "spatial_channel_balance", 0.0f).coerceIn(-1f, 1f)
+            val twsWideStereo = readBooleanSafe(allPrefs, "spatial_tws_wide_stereo", true)
+            val twsStereoBoost = readFloatSafe(allPrefs, "spatial_tws_stereo_boost", 0.90f).coerceIn(0.5f, 1.5f)
+            val spatialProfile = SpatialProfile.fromId(readStringSafe(allPrefs, "spatial_profile", SpatialProfile.DYNAMIC_360.id))
+            val rawPresetId = (allPrefs[KEY_SPATIAL_INTENSITY_PRESET] as? String)
+                ?: (allPrefs[KEY_SPATIAL_INTENSITY_FLOAT] as? String)
+                ?: SpatialIntensity.BALANCED.id
+            val spatialIntensity = SpatialIntensity.fromId(rawPresetId)
 
             return SpatialAudioConfig(
                 isEnabled = isEnabled,
@@ -219,7 +250,7 @@ class SonoraPreferences(context: Context) {
             prefs.edit()
                 .putBoolean("spatial_enabled", value.isEnabled)
                 .putString("spatial_mode", value.mode.name)
-                .putFloat("spatial_intensity", value.intensity)
+                .putFloat(KEY_SPATIAL_INTENSITY_FLOAT, value.intensity)
                 .putFloat("spatial_soundstage_width", value.soundstageWidth)
                 .putFloat("spatial_listener_x", value.listenerX)
                 .putFloat("spatial_listener_y", value.listenerY)
@@ -229,7 +260,7 @@ class SonoraPreferences(context: Context) {
                 .putBoolean("spatial_tws_wide_stereo", value.twsWideStereoEnabled)
                 .putFloat("spatial_tws_stereo_boost", value.twsStereoBoost)
                 .putString("spatial_profile", value.spatialProfile.id)
-                .putString("spatial_intensity", value.spatialIntensity.id)
+                .putString(KEY_SPATIAL_INTENSITY_PRESET, value.spatialIntensity.id)
                 .apply()
         }
 
@@ -334,6 +365,18 @@ class SonoraPreferences(context: Context) {
         get() = prefs.getBoolean("reduce_animations", false)
         set(value) = prefs.edit().putBoolean("reduce_animations", value).apply()
 
+    var homeAnimationLevel: ui.home.animations.HomeAnimationLevel
+        get() = ui.home.animations.HomeAnimationLevel.fromId(
+            prefs.getString("home_animation_level", ui.home.animations.HomeAnimationLevel.DEFAULT.id)
+        )
+        set(value) = prefs.edit().putString("home_animation_level", value.id).apply()
+
+    var dailyMixAnimationStyle: ui.home.animations.DailyMixAnimationStyle
+        get() = ui.home.animations.DailyMixAnimationStyle.fromId(
+            prefs.getString("daily_mix_animation_style", ui.home.animations.DailyMixAnimationStyle.DEFAULT.id)
+        )
+        set(value) = prefs.edit().putString("daily_mix_animation_style", value.id).apply()
+
     // Persisted Recent Search History (max 10 queries)
     var recentSearches: List<String>
         get() {
@@ -423,6 +466,9 @@ class SonoraPreferences(context: Context) {
         }
 
     companion object {
+        private const val KEY_SPATIAL_INTENSITY_FLOAT = "spatial_intensity"
+        private const val KEY_SPATIAL_INTENSITY_PRESET = "spatial_intensity_preset"
+
         fun encodeAppearanceJson(config: PlayerAppearanceConfig): String {
             return JSONObject().apply {
                 put("artworkSize", config.artworkSize.id)
@@ -453,7 +499,7 @@ class SonoraPreferences(context: Context) {
                     controlArrangement = ControlArrangement.fromId(obj.optString("controlArrangement")),
                     buttonShape = ButtonShapeOption.fromId(obj.optString("buttonShape")),
                     typographyScale = obj.optDouble("typographyScale", 1.0).toFloat().coerceIn(0.85f, 1.25f),
-                    seekbarThicknessScale = obj.optDouble("seekbarThicknessScale", 1.0).toFloat().coerceIn(0.8f, 1.4f),
+                    seekbarThicknessScale = obj.optDouble("seekbarThicknessScale", 1.0).toFloat().coerceIn(0.7f, 1.5f),
                     useDynamicAlbumAccent = obj.optBoolean("useDynamicAlbumAccent", true),
                     animationIntensity = AnimationIntensity.fromId(obj.optString("animationIntensity")),
                     artworkAnimation = ArtworkAnimationOption.fromId(obj.optString("artworkAnimation")),

@@ -66,6 +66,7 @@ import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import java.io.File
 import ui.components.CircularArtwork
 import ui.components.CollectionDetailSheet
 import ui.components.EditorialPlaylistPickerDialog
@@ -671,7 +672,7 @@ fun SearchScreen(
                         )
                     }
                     items(matchedFolders, key = { "sr_fld_${it.path}" }) { folder ->
-                        val folderSongs = allSongs.filter { it.dataPath.startsWith(folder.path) }
+                        val folderSongs = allSongs.filter { (File(it.dataPath).parent ?: "/storage") == folder.path }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

@@ -82,6 +82,8 @@ class SonoraNotificationManager(
     private var repeatModeState: RepeatMode = RepeatMode.OFF
     private var currentDeviceName: String = ""
     private var isForegroundActive = false
+    val isForegroundNotificationActive: Boolean
+        get() = isForegroundActive
     private var artworkLoadingJob: Job? = null
     private val prefs by lazy { com.example.data.SonoraPreferences(service) }
 
@@ -94,37 +96,37 @@ class SonoraNotificationManager(
             mediaSession = MediaSessionCompat(service, "SonoraMediaSession").apply {
                 setCallback(object : MediaSessionCompat.Callback() {
                     override fun onPlay() {
-                        service.playbackCallback?.onRemotePlay()
+                        service.handleRemotePlay()
                     }
 
                     override fun onPause() {
-                        service.playbackCallback?.onRemotePause()
+                        service.handleRemotePause()
                     }
 
                     override fun onSkipToNext() {
-                        service.playbackCallback?.onRemoteNext()
+                        service.handleRemoteNext()
                     }
 
                     override fun onSkipToPrevious() {
-                        service.playbackCallback?.onRemotePrev()
+                        service.handleRemotePrev()
                     }
 
                     override fun onSeekTo(pos: Long) {
-                        service.playbackCallback?.onRemoteSeek(pos)
+                        service.handleRemoteSeek(pos)
                     }
 
                     override fun onSetShuffleMode(shuffleMode: Int) {
-                        service.playbackCallback?.onRemoteShuffle()
+                        service.handleRemoteShuffle()
                     }
 
                     override fun onSetRepeatMode(repeatMode: Int) {
-                        service.playbackCallback?.onRemoteRepeat()
+                        service.handleRemoteRepeat()
                     }
 
                     override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
                         when (action) {
-                            ACTION_SHUFFLE -> service.playbackCallback?.onRemoteShuffle()
-                            ACTION_REPEAT -> service.playbackCallback?.onRemoteRepeat()
+                            ACTION_SHUFFLE -> service.handleRemoteShuffle()
+                            ACTION_REPEAT -> service.handleRemoteRepeat()
                         }
                     }
                 })
@@ -306,36 +308,13 @@ class SonoraNotificationManager(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val dismissPendingIntent = PendingIntent.getService(
-            service, 5, Intent(service, SonoraMusicService::class.java).apply { action = ACTION_STOP },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val shufflePendingIntent = PendingIntent.getService(
-            service, 10, Intent(service, SonoraMusicService::class.java).apply { action = ACTION_SHUFFLE },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val prevPendingIntent = PendingIntent.getService(
-            service, 11, Intent(service, SonoraMusicService::class.java).apply { action = ACTION_PREV },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
+        val dismissPendingIntent = createServicePendingIntent(5, ACTION_STOP)
+        val shufflePendingIntent = createServicePendingIntent(10, ACTION_SHUFFLE)
+        val prevPendingIntent = createServicePendingIntent(11, ACTION_PREV)
         val playPauseAction = if (isPlaying) ACTION_PAUSE else ACTION_PLAY
-        val playPausePendingIntent = PendingIntent.getService(
-            service, 12, Intent(service, SonoraMusicService::class.java).apply { action = playPauseAction },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val nextPendingIntent = PendingIntent.getService(
-            service, 13, Intent(service, SonoraMusicService::class.java).apply { action = ACTION_NEXT },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val repeatPendingIntent = PendingIntent.getService(
-            service, 14, Intent(service, SonoraMusicService::class.java).apply { action = ACTION_REPEAT },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val playPausePendingIntent = createServicePendingIntent(12, playPauseAction)
+        val nextPendingIntent = createServicePendingIntent(13, ACTION_NEXT)
+        val repeatPendingIntent = createServicePendingIntent(14, ACTION_REPEAT)
 
         val shuffleIcon = if (isShuffle) R.drawable.ic_notif_shuffle_on else R.drawable.ic_notif_shuffle_off
         val shuffleTitle = if (isShuffle) "Shuffle On" else "Shuffle Off"
@@ -460,6 +439,63 @@ class SonoraNotificationManager(
                 NotificationManagerCompat.from(service).notify(NOTIFICATION_ID, notification)
             } catch (_: Throwable) {
             }
+        }
+    }
+
+    private fun createServicePendingIntent(requestCode: Int, action: String): PendingIntent {
+        val intent = Intent(service, SonoraMusicService::class.java).apply { this.action = action }
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(service, requestCode, intent, flags)
+        } else {
+            PendingIntent.getService(service, requestCode, intent, flags)
+        }
+    }
+
+    /**
+     * Guarantees Android 8.0+ (API 26+) startForegroundService / PendingIntent.getForegroundService
+     * contracts are satisfied synchronously during onStartCommand before stopSelf or playback actions run.
+     */
+    fun ensureForegroundForServiceStart(fallbackSong: Song?, isPlaying: Boolean) {
+        if (isForegroundActive || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val song = fallbackSong ?: currentSong
+        if (song != null) {
+            val cachedArt = roundedBitmapCache.get(song.id) ?: getFallbackArtworkBitmap()
+            val accent = accentColorCache.get(song.id) ?: DEFAULT_ACCENT_COLOR
+            postNotification(
+                song = song,
+                isPlaying = isPlaying,
+                isShuffle = isShuffleState,
+                repeatMode = repeatModeState,
+                artworkBitmap = cachedArt,
+                accentColor = accent,
+                deviceName = currentDeviceName
+            )
+            return
+        }
+
+        val minimalNotification = NotificationCompat.Builder(service, SonoraApplication.PLAYBACK_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notif_sonora_logo)
+            .setContentTitle("SONORA")
+            .setContentText(if (isPlaying) "Playback active" else "Playback paused")
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .build()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    service,
+                    NOTIFICATION_ID,
+                    minimalNotification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                service.startForeground(NOTIFICATION_ID, minimalNotification)
+            }
+            isForegroundActive = true
+        } catch (e: Throwable) {
+            Log.w("SonoraNotifManager", "Minimal startForeground failed: ${e.message}")
         }
     }
 
