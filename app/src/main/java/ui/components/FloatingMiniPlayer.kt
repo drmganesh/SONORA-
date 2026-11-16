@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -89,10 +90,13 @@ fun FloatingMiniPlayer(
         MiniPlayerStyle.WAVE_MINI -> colors.surfaceElevated.copy(alpha = 0.94f)
         else -> colors.miniPlayerBackground
     }
-    val badge = remember(song.mimeType, song.dataPath) {
-        if (song.mimeType.contains("flac", ignoreCase = true) ||
-            song.dataPath.endsWith(".flac", ignoreCase = true)
-        ) "FLAC" else "HI-RES"
+    val badge = remember(song.isOnline, song.streamCodec, song.providerName, song.mimeType, song.dataPath) {
+        when {
+            song.isOnline -> song.streamCodec.ifBlank { song.providerName.ifBlank { "STREAM" } }.uppercase()
+            song.mimeType.contains("flac", ignoreCase = true) ||
+                song.dataPath.endsWith(".flac", ignoreCase = true) -> "FLAC"
+            else -> "HI-RES"
+        }
     }
 
     Surface(
@@ -196,18 +200,28 @@ fun FloatingMiniPlayer(
                             )
                         }
                     }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.dp)
-                            .background(colors.cardBorder.copy(alpha = 0.4f))
-                    ) {
+                    if (playbackInfo.isBuffering) {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(2.dp),
+                            color = colors.accentStrong,
+                            trackColor = colors.cardBorder.copy(alpha = 0.4f)
+                        )
+                    } else {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(progress)
+                                .fillMaxWidth()
                                 .height(2.dp)
-                                .background(colors.accentStrong)
-                        )
+                                .background(colors.cardBorder.copy(alpha = 0.4f))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress)
+                                    .height(2.dp)
+                                    .background(colors.accentStrong)
+                            )
+                        }
                     }
                 }
             }
@@ -240,10 +254,10 @@ fun FloatingMiniPlayer(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${song.artist} • $badge",
+                                text = if (playbackInfo.isBuffering) "Buffering • ${song.artist}" else "${song.artist} • $badge",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
-                                color = colors.textSecondary,
+                                color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -427,10 +441,10 @@ fun FloatingMiniPlayer(
                             Spacer(modifier = Modifier.height(1.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = song.artist,
+                                    text = if (playbackInfo.isBuffering) "Buffering stream..." else song.artist,
                                     fontFamily = PlusJakartaFontFamily,
                                     fontSize = 12.sp,
-                                    color = colors.textSecondary,
+                                    color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false)
@@ -492,18 +506,28 @@ fun FloatingMiniPlayer(
                     }
 
                     // Minimal progress bar along bottom edge
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.5.dp)
-                            .background(colors.cardBorder.copy(alpha = 0.5f))
-                    ) {
+                    if (playbackInfo.isBuffering) {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(2.5.dp),
+                            color = colors.accentStrong,
+                            trackColor = colors.cardBorder.copy(alpha = 0.5f)
+                        )
+                    } else {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth(progress)
+                                .fillMaxWidth()
                                 .height(2.5.dp)
-                                .background(colors.accentStrong)
-                        )
+                                .background(colors.cardBorder.copy(alpha = 0.5f))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(progress)
+                                    .height(2.5.dp)
+                                    .background(colors.accentStrong)
+                            )
+                        }
                     }
                 }
             }

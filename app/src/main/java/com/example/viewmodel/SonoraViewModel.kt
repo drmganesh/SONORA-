@@ -54,10 +54,53 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import data.online.NetworkConnectivityMonitor
+import data.online.NewPipeInitializer
+import data.online.OnlineMusicRepository
+import data.online.OnlineTrackMapper
+import domain.online.AudioQualityPreference
+import domain.online.DiscoverMusicLanguage
+import domain.online.DiscoverSectionState
+import domain.online.DiscoverSectionType
+import domain.online.OnlineAudioStreamOption
+import domain.online.OnlineCollectionDetails
+import domain.online.OnlineErrorKind
+import domain.online.OnlineMusicProvider
+import domain.online.OnlineResult
+import domain.online.OnlineSearchFilter
+import domain.online.OnlineSearchPageResult
+import domain.online.OnlineTrack
+import domain.online.ResolvedOnlineStreamResult
+import domain.online.defaultDiscoverSectionsState
+import playback.UnifiedPlaybackController
 import java.io.File
+
+sealed interface OnlineSearchUiState {
+    data object Idle : OnlineSearchUiState
+    data class Loading(val query: String) : OnlineSearchUiState
+    data class Success(
+        val page: OnlineSearchPageResult,
+        val items: List<OnlineTrack>,
+        val isLoadingMore: Boolean = false
+    ) : OnlineSearchUiState
+    data class Error(
+        val kind: OnlineErrorKind,
+        val message: String,
+        val isRetryable: Boolean = true
+    ) : OnlineSearchUiState
+}
+
+sealed interface OnlineCollectionUiState {
+    data object Idle : OnlineCollectionUiState
+    data class Loading(val title: String) : OnlineCollectionUiState
+    data class Success(val details: OnlineCollectionDetails) : OnlineCollectionUiState
+    data class Error(val message: String, val item: OnlineTrack) : OnlineCollectionUiState
+}
 
 class SonoraViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -70,8 +113,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val db = SonoraDatabase.getDatabase(application)
     private val dao = db.dao()
     private val scanner = LocalMusicScanner(application, dao)
+    private val connectivityMonitor = NetworkConnectivityMonitor(application)
+    val onlineRepository = OnlineMusicRepository(dao, connectivityMonitor)
 
     private var musicService: SonoraMusicService? = null
+    private var unifiedPlaybackController: UnifiedPlaybackController? = null
     private var isBound = false
 
     val folderFilterPreferences = data.preferences.FolderFilterPreferences(application)
@@ -109,6 +155,73 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists.asStateFlow()
+
+    // --- Online Music Streaming State (NewPipe Extractor + Media3) ---
+    val isNetworkOnline: StateFlow<Boolean> = connectivityMonitor.isOnline
+    val isMeteredNetwork: StateFlow<Boolean> = connectivityMonitor.isMeteredConnection
+
+    private val _onlineProviders = MutableStateFlow<List<OnlineMusicProvider>>(emptyList())
+    val onlineProviders: StateFlow<List<OnlineMusicProvider>> = _onlineProviders.asStateFlow()
+
+    private val _selectedOnlineProvider = MutableStateFlow<OnlineMusicProvider?>(null)
+    val selectedOnlineProvider: StateFlow<OnlineMusicProvider?> = _selectedOnlineProvider.asStateFlow()
+
+    private val _selectedOnlineFilter = MutableStateFlow(OnlineSearchFilter.SONGS)
+    val selectedOnlineFilter: StateFlow<OnlineSearchFilter> = _selectedOnlineFilter.asStateFlow()
+
+    private val _onlineSearchQuery = MutableStateFlow("")
+    val onlineSearchQuery: StateFlow<String> = _onlineSearchQuery.asStateFlow()
+
+    private val _onlineSearchSuggestions = MutableStateFlow<List<String>>(emptyList())
+    val onlineSearchSuggestions: StateFlow<List<String>> = _onlineSearchSuggestions.asStateFlow()
+
+    private val _onlineSearchState = MutableStateFlow<OnlineSearchUiState>(OnlineSearchUiState.Idle)
+    val onlineSearchState: StateFlow<OnlineSearchUiState> = _onlineSearchState.asStateFlow()
+
+    private val _discoverSectionsState =
+        MutableStateFlow<Map<DiscoverSectionType, DiscoverSectionState>>(defaultDiscoverSectionsState())
+    val discoverSectionsState: StateFlow<Map<DiscoverSectionType, DiscoverSectionState>> =
+        _discoverSectionsState.asStateFlow()
+
+    private val _onlineCollectionState = MutableStateFlow<OnlineCollectionUiState>(OnlineCollectionUiState.Idle)
+    val onlineCollectionState: StateFlow<OnlineCollectionUiState> = _onlineCollectionState.asStateFlow()
+
+    private val onlineRegionPrefs = data.preferences.OnlineRegionPreferences(application)
+
+    private val _onlineContentCountry = MutableStateFlow(onlineRegionPrefs.getInitialCountryCode())
+    val onlineContentCountry: StateFlow<String> = _onlineContentCountry.asStateFlow()
+
+    private val _onlineContentLanguage = MutableStateFlow(onlineRegionPrefs.getInitialLanguageCode())
+    val onlineContentLanguage: StateFlow<String> = _onlineContentLanguage.asStateFlow()
+
+    private val _discoverMusicLanguage = MutableStateFlow(onlineRegionPrefs.getInitialDiscoverLanguage())
+    val discoverMusicLanguage: StateFlow<DiscoverMusicLanguage> = _discoverMusicLanguage.asStateFlow()
+
+    private val _onlineQualityPreference = MutableStateFlow(preferences.onlineQualityPreference)
+    val onlineQualityPreference: StateFlow<AudioQualityPreference> = _onlineQualityPreference.asStateFlow()
+
+    private val _currentResolvedStream = MutableStateFlow<ResolvedOnlineStreamResult?>(null)
+    val currentResolvedStream: StateFlow<ResolvedOnlineStreamResult?> = _currentResolvedStream.asStateFlow()
+
+    val onlineSavedTracks: StateFlow<List<Song>> = onlineRepository.savedOnlineTracksFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentlyPlayedOnlineTracks: StateFlow<List<Song>> = onlineRepository.recentlyPlayedOnlineTracksFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allOnlineTracks: StateFlow<List<Song>> = onlineRepository.allOnlineTracksFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val onlineSearchHistory: StateFlow<List<String>> = onlineRepository.searchHistoryFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private var onlineSearchJob: Job? = null
+    private var onlineSuggestionJob: Job? = null
+    private val discoverSectionJobs = mutableMapOf<DiscoverSectionType, Job>()
+    private var discoverGeneration: Long = 0L
+    private var activeDiscoverProviderKey: String? = null
+    private var activeSearchSignature: String? = null
+    private var onlineCollectionJob: Job? = null
 
     // Audio FX State (Restored from preferences)
 
@@ -912,6 +1025,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             // Bind audio visualizer & bands flows from AudioEngine
             val engine = connectedService.audioEngine
             engine?.let { eng ->
+                unifiedPlaybackController = UnifiedPlaybackController(eng, onlineRepository)
+
                 // Apply restored settings to audio engine
                 eng.setBassBoost(_bassBoost.value)
                 eng.setVirtualizer(_virtualizer.value)
@@ -926,6 +1041,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     val activeSong = connectedService.currentSongSnapshot ?: _currentSong.value
                     _playbackInfo.value = _playbackInfo.value.copy(
                         isPlaying = eng.isPlaying,
+                        isBuffering = eng.isBuffering.value,
+                        bufferedPositionMs = eng.bufferedPositionMs,
                         currentPositionMs = eng.currentPosition,
                         durationMs = eng.duration.coerceAtLeast(activeSong?.durationMs ?: 0L),
                         playbackSpeed = _playbackSpeed.value
@@ -935,6 +1052,21 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
+                collectorScope.launch {
+                    eng.isBuffering.collect { buffering ->
+                        _playbackInfo.value = _playbackInfo.value.copy(
+                            isBuffering = buffering,
+                            bufferedPositionMs = eng.bufferedPositionMs
+                        )
+                    }
+                }
+                unifiedPlaybackController?.let { controller ->
+                    collectorScope.launch {
+                        controller.currentResolvedStream.collect { resolved ->
+                            _currentResolvedStream.value = resolved
+                        }
+                    }
+                }
                 collectorScope.launch {
                     eng.visualizerFrequencies.collect { _visualizerFrequencies.value = it }
                 }
@@ -974,7 +1106,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
             pendingPlayRequest?.let { req ->
                 pendingPlayRequest = null
-                playSong(req.song, req.queue, req.index)
+                playSong(
+                    song = req.song,
+                    newQueue = req.queue,
+                    startIndex = req.index,
+                    manualStreamId = req.manualStreamId,
+                    resumePositionMs = req.resumePositionMs
+                )
             } ?: run {
                 if (pendingTogglePlayOnConnect) {
                     pendingTogglePlayOnConnect = false
@@ -986,6 +1124,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceCollectorsJob?.cancel()
             serviceCollectorsJob = null
+            unifiedPlaybackController?.cancelPendingResolution()
+            unifiedPlaybackController = null
             musicService?.let { svc ->
                 if (svc.playbackCallback === servicePlaybackCallback) {
                     svc.setPlaybackCallback(null)
@@ -999,13 +1139,17 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private data class PendingPlayRequest(
         val song: Song,
         val queue: List<Song>?,
-        val index: Int
+        val index: Int,
+        val manualStreamId: String? = null,
+        val resumePositionMs: Long = 0L
     )
 
     private var pendingPlayRequest: PendingPlayRequest? = null
     private var pendingTogglePlayOnConnect: Boolean = false
 
     init {
+        NewPipeInitializer.ensureInitialized(application)
+        initOnlineProviders()
         bindMusicService()
         loadLocalSongs()
         observePlaylists()
@@ -1022,6 +1166,33 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             _currentSong.collect { song ->
                 updateDynamicThemeForSong(song)
             }
+        }
+        viewModelScope.launch {
+            onlineRegionPrefs.contentCountryFlow
+                .catch { e -> Log.w(TAG, "Online country DataStore stream error", e) }
+                .collect { savedCountry ->
+                    if (_onlineContentCountry.value != savedCountry) {
+                        _onlineContentCountry.value = savedCountry
+                        NewPipeInitializer.updateLocalization(_onlineContentLanguage.value, savedCountry)
+                    }
+                }
+        }
+        viewModelScope.launch {
+            onlineRegionPrefs.contentLanguageFlow
+                .catch { e -> Log.w(TAG, "Online language DataStore stream error", e) }
+                .collect { savedLang ->
+                    if (_onlineContentLanguage.value != savedLang) {
+                        _onlineContentLanguage.value = savedLang
+                        NewPipeInitializer.updateLocalization(savedLang, _onlineContentCountry.value)
+                    }
+                }
+        }
+        viewModelScope.launch {
+            onlineRegionPrefs.discoverLanguageFlow
+                .catch { e -> Log.w(TAG, "Discover language DataStore stream error", e) }
+                .collect { savedFilter ->
+                    _discoverMusicLanguage.value = savedFilter
+                }
         }
     }
 
@@ -1070,24 +1241,38 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _rawScannedSongs.value = songs
                 val filteredInitial = domain.filter.MusicFolderFilter.filterSongs(songs, folderFilterPreferences.settings.value)
                 _allSongs.value = filteredInitial
-                if (_queue.value.isEmpty() && filteredInitial.isNotEmpty()) {
-                    val byId = filteredInitial.associateBy { it.id }
-                    val savedIds = preferences.lastQueueSongIds
-                    val restoredQueue = savedIds.mapNotNull { byId[it] }.ifEmpty { filteredInitial }
-                    val lastId = preferences.lastPlayedSongId
-                    val savedIdx = preferences.lastQueueIndex
-                    val targetIndex = when {
-                        lastId != -1L -> restoredQueue.indexOfFirst { it.id == lastId }
-                            .takeIf { it >= 0 }
-                            ?: savedIdx.coerceIn(0, restoredQueue.lastIndex)
-                        else -> savedIdx.coerceIn(0, restoredQueue.lastIndex)
+                if (_queue.value.isEmpty()) {
+                    val savedOnline = try {
+                        onlineRepository.allOnlineTracksFlow.first()
+                    } catch (_: Throwable) {
+                        emptyList()
                     }
-                    val targetSong = restoredQueue[targetIndex]
+                    val combinedPool = filteredInitial + savedOnline
+                    if (combinedPool.isNotEmpty()) {
+                        val byId = combinedPool.associateBy { it.id }
+                        val savedIds = preferences.lastQueueSongIds
+                        val restoredQueue = savedIds.mapNotNull { byId[it] }.ifEmpty { filteredInitial.ifEmpty { savedOnline } }
+                        if (restoredQueue.isNotEmpty()) {
+                            val lastId = preferences.lastPlayedSongId
+                            val savedIdx = preferences.lastQueueIndex
+                            val targetIndex = when {
+                                lastId != -1L -> restoredQueue.indexOfFirst { it.id == lastId }
+                                    .takeIf { it >= 0 }
+                                    ?: savedIdx.coerceIn(0, restoredQueue.lastIndex)
+                                else -> savedIdx.coerceIn(0, restoredQueue.lastIndex)
+                            }
+                            val targetSong = restoredQueue[targetIndex]
 
-                    _queue.value = restoredQueue
-                    _queueIndex.value = targetIndex
-                    _currentSong.value = targetSong
-                    _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
+                            _queue.value = restoredQueue
+                            _queueIndex.value = targetIndex
+                            _currentSong.value = targetSong
+                            _currentTrackLyrics.value = if (targetSong.isOnline) {
+                                targetSong.lyrics
+                            } else {
+                                com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
+                            }
+                        }
+                    }
                 }
                 generateDailyMixes(filteredInitial)
                 updateDailyAnalytics()
@@ -1156,9 +1341,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             combine(
                 dao.getAllPlaylistsFlow(),
                 dao.getAllPlaylistSongCrossRefsFlow(),
-                _allSongs
-            ) { entities, crossRefs, songs ->
-                val activeIds = songs.map { it.id }.toSet()
+                _allSongs,
+                onlineRepository.allOnlineTracksFlow
+            ) { entities, crossRefs, localSongs, onlineSongs ->
+                val activeIds = (localSongs + onlineSongs).map { it.id }.toSet()
                 val grouped = crossRefs.filter { it.songId in activeIds }.groupBy { it.playlistId }
                 entities.map { entity ->
                     val refs = grouped[entity.id].orEmpty()
@@ -1300,43 +1486,84 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getSongsForPlaylistFlow(playlistId: Long): kotlinx.coroutines.flow.Flow<List<Song>> {
-        return combine(dao.getPlaylistSongsFlow(playlistId), _allSongs) { refs, songs ->
-            val byId = songs.associateBy { it.id }
+        return combine(
+            dao.getPlaylistSongsFlow(playlistId),
+            _allSongs,
+            onlineRepository.allOnlineTracksFlow
+        ) { refs, localSongs, onlineSongs ->
+            val byId = (localSongs + onlineSongs).associateBy { it.id }
             refs.mapNotNull { byId[it.songId] }
         }
     }
 
     // --- Playback Controls ---
 
-    fun playSong(song: Song, newQueue: List<Song>? = null, startIndex: Int = -1) {
+    fun playSong(
+        song: Song,
+        newQueue: List<Song>? = null,
+        startIndex: Int = -1,
+        manualStreamId: String? = null,
+        resumePositionMs: Long = 0L
+    ) {
         isCrossfadingNext = false
-        val q = newQueue ?: _queue.value
-        val idx = if (startIndex >= 0) startIndex else q.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+        val persistedOnlineById = allOnlineTracks.value.associateBy { it.id }
+        val hydratedSong = if (song.isOnline) {
+            persistedOnlineById[song.id]?.let { saved ->
+                song.copy(
+                    isFavorite = saved.isFavorite || song.isFavorite,
+                    playCount = maxOf(saved.playCount, song.playCount)
+                )
+            } ?: song
+        } else song
+
+        val baseQueue = (newQueue ?: _queue.value).map { item ->
+            if (item.isOnline) {
+                persistedOnlineById[item.id]?.let { saved ->
+                    item.copy(isFavorite = saved.isFavorite || item.isFavorite)
+                } ?: item
+            } else item
+        }
+        val q = if (baseQueue.any { it.id == hydratedSong.id }) {
+            baseQueue.map { if (it.id == hydratedSong.id) hydratedSong else it }
+        } else {
+            listOf(hydratedSong)
+        }
+        val idx = if (startIndex in q.indices) startIndex else q.indexOfFirst { it.id == hydratedSong.id }.coerceAtLeast(0)
         if (newQueue != null && _playbackInfo.value.shuffleMode == ShuffleMode.OFF) {
-            originalQueueBeforeShuffle = newQueue
+            originalQueueBeforeShuffle = q
         }
 
         _queue.value = q
         _queueIndex.value = idx
-        _currentSong.value = song
+        _currentSong.value = hydratedSong
+        _playbackInfo.value = _playbackInfo.value.copy(
+            playbackError = null,
+            isBuffering = hydratedSong.isOnline,
+            currentPositionMs = resumePositionMs.coerceAtLeast(0L)
+        )
 
         // Save last played song and queue to preferences
-        preferences.lastPlayedSongId = song.id
+        preferences.lastPlayedSongId = hydratedSong.id
         preferences.lastQueueIndex = idx
         preferences.lastQueueSongIds = q.map { it.id }
 
         // Find and pre-match the best next track for smooth automix
-        findNextMatchedSong(song, q, idx)
+        findNextMatchedSong(hydratedSong, q, idx)
 
-        // Extract embedded or sidecar lyrics
-        viewModelScope.launch(Dispatchers.IO) {
-            val lyrics = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), song)
-            _currentTrackLyrics.value = lyrics
+        // Extract embedded or sidecar lyrics for local tracks
+        if (hydratedSong.isOnline) {
+            _currentTrackLyrics.value = hydratedSong.lyrics
+        } else {
+            viewModelScope.launch(Dispatchers.IO) {
+                val lyrics = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), hydratedSong)
+                _currentTrackLyrics.value = lyrics
+            }
         }
 
         val engine = musicService?.audioEngine
-        if (engine == null) {
-            pendingPlayRequest = PendingPlayRequest(song, newQueue, idx)
+        val controller = unifiedPlaybackController
+        if (engine == null || controller == null) {
+            pendingPlayRequest = PendingPlayRequest(hydratedSong, q, idx, manualStreamId, resumePositionMs)
             if (!isBound) bindMusicService()
             return
         }
@@ -1346,22 +1573,37 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         ensureServiceStarted()
         musicService?.updateQueueSnapshot(q, idx)
         if (musicService?.requestAudioFocusIfNeeded() == false) {
-            _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
+            _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false, isBuffering = false)
             return
         }
-        syncNotification(song, true)
+        syncNotification(hydratedSong, true)
 
-        engine.prepareAndPlay(
-            uri = song.uri,
-            fallbackPath = song.dataPath,
-            onPrepared = {
+        controller.playSong(
+            song = hydratedSong,
+            qualityPreference = _onlineQualityPreference.value,
+            manualStreamId = manualStreamId,
+            resumePositionMs = resumePositionMs,
+            onResolvingStarted = {
+                _playbackInfo.value = _playbackInfo.value.copy(
+                    isPlaying = false,
+                    isBuffering = true,
+                    playbackError = null
+                )
+            },
+            onPrepared = { updatedSong, _, durMs ->
+                _currentSong.value = updatedSong
+                _queue.value = _queue.value.map { if (it.id == updatedSong.id) updatedSong else it }
+                musicService?.updateQueueSnapshot(_queue.value, _queueIndex.value)
                 _playbackInfo.value = _playbackInfo.value.copy(
                     isPlaying = true,
-                    durationMs = engine.duration.coerceAtLeast(song.durationMs)
+                    isBuffering = false,
+                    bufferedPositionMs = engine.bufferedPositionMs,
+                    durationMs = durMs.coerceAtLeast(updatedSong.durationMs),
+                    playbackError = null
                 )
                 startProgressTracker()
-                syncNotification(song, true)
-                incrementPlayCount(song)
+                syncNotification(updatedSong, true)
+                incrementPlayCount(updatedSong)
 
                 // If crossfade is enabled, smoothly fade in
                 if (_crossfadeSeconds.value > 0) {
@@ -1373,11 +1615,24 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             },
             onError = { errMsg ->
                 isCrossfadingNext = false
-                _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
+                _playbackInfo.value = _playbackInfo.value.copy(
+                    isPlaying = false,
+                    isBuffering = false,
+                    playbackError = errMsg
+                )
                 _dspDiagnosticMessage.value = errMsg
                 syncNotification(_currentSong.value, false)
             }
         )
+    }
+
+    fun retryCurrentPlayback() {
+        val current = _currentSong.value ?: return
+        val lastPos = _playbackInfo.value.currentPositionMs.coerceAtLeast(0L)
+        if (current.isOnline) {
+            onlineRepository.invalidateStreamCache(current.contentUrl.ifBlank { current.uri.toString() })
+        }
+        playSong(current, _queue.value, _queueIndex.value, resumePositionMs = lastPos)
     }
 
     fun resumePlayback() {
@@ -1605,7 +1860,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     val dur = engine.duration.coerceAtLeast(_currentSong.value?.durationMs ?: 0L)
                     _playbackInfo.value = _playbackInfo.value.copy(
                         currentPositionMs = pos,
-                        durationMs = dur
+                        durationMs = dur,
+                        isBuffering = engine.isBuffering.value,
+                        bufferedPositionMs = engine.bufferedPositionMs
                     )
 
                     // Accumulate analytics listening time
@@ -1642,8 +1899,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleFavorite(song: Song) {
         viewModelScope.launch(Dispatchers.IO) {
-            val newFav = !song.isFavorite
-            dao.upsertFavorite(song.id, newFav)
+            val newFav = if (song.isOnline) {
+                onlineRepository.toggleFavoriteOnlineTrack(song)
+            } else {
+                val toggled = !song.isFavorite
+                dao.upsertFavorite(song.id, toggled)
+                toggled
+            }
             _allSongs.value = _allSongs.value.map {
                 if (it.id == song.id) it.copy(isFavorite = newFav) else it
             }
@@ -1658,10 +1920,14 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun incrementPlayCount(song: Song) {
         viewModelScope.launch(Dispatchers.IO) {
-            val now = System.currentTimeMillis()
-            dao.upsertIncrementPlayCount(song.id, now)
-            _allSongs.value = _allSongs.value.map {
-                if (it.id == song.id) it.copy(playCount = it.playCount + 1, lastPlayedTimestamp = now) else it
+            if (song.isOnline) {
+                onlineRepository.recordOnlinePlay(song)
+            } else {
+                val now = System.currentTimeMillis()
+                dao.upsertIncrementPlayCount(song.id, now)
+                _allSongs.value = _allSongs.value.map {
+                    if (it.id == song.id) it.copy(playCount = it.playCount + 1, lastPlayedTimestamp = now) else it
+                }
             }
         }
     }
@@ -1700,6 +1966,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val playlistId = dao.insertPlaylist(PlaylistEntity(name = name))
             _queue.value.forEachIndexed { idx, s ->
+                if (s.isOnline && dao.getOnlineTrackById(s.id) == null) {
+                    val track = OnlineTrackMapper.toOnlineTrack(s)
+                    dao.upsertOnlineTrack(OnlineTrackMapper.mapOnlineTrackToEntity(track))
+                }
                 dao.insertPlaylistSong(PlaylistSongCrossRef(playlistId, s.id, idx))
             }
         }
@@ -2067,6 +2337,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun addSongToPlaylist(playlistId: Long, songId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
+            val candidate = (_queue.value + listOfNotNull(_currentSong.value) + allOnlineTracks.value)
+                .firstOrNull { it.id == songId && it.isOnline }
+            if (candidate != null && dao.getOnlineTrackById(songId) == null) {
+                val track = OnlineTrackMapper.toOnlineTrack(candidate)
+                dao.upsertOnlineTrack(OnlineTrackMapper.mapOnlineTrackToEntity(track))
+            }
             dao.insertPlaylistSong(PlaylistSongCrossRef(playlistId, songId, 0))
         }
     }
@@ -2074,8 +2350,19 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun addSongsToPlaylist(playlistId: Long, songIds: List<Long>) {
         if (songIds.isEmpty()) return
         viewModelScope.launch(Dispatchers.IO) {
+            val knownOnline = (_queue.value + listOfNotNull(_currentSong.value) + allOnlineTracks.value)
+                .filter { it.isOnline }
+                .associateBy { it.id }
+            val distinctIds = songIds.distinct()
+            distinctIds.forEach { id ->
+                val online = knownOnline[id]
+                if (online != null && dao.getOnlineTrackById(id) == null) {
+                    val track = OnlineTrackMapper.toOnlineTrack(online)
+                    dao.upsertOnlineTrack(OnlineTrackMapper.mapOnlineTrackToEntity(track))
+                }
+            }
             val baseTime = (System.currentTimeMillis() % 100000).toInt()
-            val refs = songIds.distinct().mapIndexed { index, id ->
+            val refs = distinctIds.mapIndexed { index, id ->
                 PlaylistSongCrossRef(playlistId, id, baseTime + index)
             }
             dao.insertPlaylistSongs(refs)
@@ -2094,8 +2381,376 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // --- Online Music Discovery, Search & Stream Quality Controls (NewPipe Extractor) ---
+
+    private fun initOnlineProviders() {
+        val providers = onlineRepository.getAvailableProviders()
+        _onlineProviders.value = providers
+        val savedKey = preferences.selectedOnlineProviderKey
+        val selected = providers.firstOrNull { it.key == savedKey }
+            ?: providers.firstOrNull { it.key == OnlineMusicProvider.KEY_YOUTUBE_MUSIC }
+            ?: providers.firstOrNull()
+        _selectedOnlineProvider.value = selected
+        if (selected != null) {
+            _selectedOnlineFilter.value = selected.defaultFilter
+            refreshOnlineDiscovery(forceRefresh = false)
+        }
+    }
+
+    fun selectOnlineProvider(providerKey: String) {
+        val target = _onlineProviders.value.firstOrNull { it.key == providerKey } ?: return
+        if (_selectedOnlineProvider.value?.key == target.key) return
+        _selectedOnlineProvider.value = target
+        preferences.selectedOnlineProviderKey = target.key
+        if (_selectedOnlineFilter.value !in target.supportedFilters) {
+            _selectedOnlineFilter.value = target.defaultFilter
+        }
+        _onlineSearchSuggestions.value = emptyList()
+        refreshOnlineDiscovery(forceRefresh = false)
+        val q = _onlineSearchQuery.value.trim()
+        if (q.isNotBlank()) {
+            executeOnlineSearch(q)
+        } else {
+            _onlineSearchState.value = OnlineSearchUiState.Idle
+        }
+    }
+
+    fun selectOnlineFilter(filter: OnlineSearchFilter) {
+        val provider = _selectedOnlineProvider.value ?: return
+        val resolvedFilter = if (filter in provider.supportedFilters) filter else provider.defaultFilter
+        if (_selectedOnlineFilter.value == resolvedFilter) return
+        _selectedOnlineFilter.value = resolvedFilter
+        val q = _onlineSearchQuery.value.trim()
+        if (q.isNotBlank()) {
+            executeOnlineSearch(q)
+        }
+    }
+
+    fun updateOnlineSearchQuery(query: String) {
+        _onlineSearchQuery.value = query
+        onlineSuggestionJob?.cancel()
+        val provider = _selectedOnlineProvider.value
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) {
+            _onlineSearchSuggestions.value = emptyList()
+            _onlineSearchState.value = OnlineSearchUiState.Idle
+            return
+        }
+        if (provider == null || !provider.supportsSuggestions) {
+            _onlineSearchSuggestions.value = emptyList()
+            return
+        }
+        onlineSuggestionJob = viewModelScope.launch {
+            delay(300L)
+            val suggestions = onlineRepository.getSearchSuggestions(trimmed, provider)
+            _onlineSearchSuggestions.value = suggestions
+        }
+    }
+
+    fun executeOnlineSearch(
+        query: String = _onlineSearchQuery.value,
+        forceRefresh: Boolean = false
+    ) {
+        val trimmed = query.trim()
+        _onlineSearchQuery.value = query
+        onlineSuggestionJob?.cancel()
+        _onlineSearchSuggestions.value = emptyList()
+        if (trimmed.isBlank()) {
+            activeSearchSignature = null
+            onlineSearchJob?.cancel()
+            _onlineSearchState.value = OnlineSearchUiState.Idle
+            return
+        }
+        val provider = _selectedOnlineProvider.value ?: return
+        val filter = _selectedOnlineFilter.value
+        val signature = "${provider.key}|${filter.name}|$trimmed"
+        if (!forceRefresh && onlineSearchJob?.isActive == true && activeSearchSignature == signature) {
+            return
+        }
+        activeSearchSignature = signature
+        onlineSearchJob?.cancel()
+        onlineSearchJob = viewModelScope.launch {
+            _onlineSearchState.value = OnlineSearchUiState.Loading(trimmed)
+            onlineRepository.saveSearchQuery(trimmed, provider.key)
+            when (val res = onlineRepository.search(trimmed, provider, filter)) {
+                is OnlineResult.Success -> {
+                    _onlineSearchState.value = OnlineSearchUiState.Success(
+                        page = res.value,
+                        items = res.value.items,
+                        isLoadingMore = false
+                    )
+                }
+                is OnlineResult.Error -> {
+                    _onlineSearchState.value = OnlineSearchUiState.Error(
+                        kind = res.kind,
+                        message = res.message,
+                        isRetryable = res.isRetryable
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadMoreOnlineSearchResults() {
+        val currentState = _onlineSearchState.value as? OnlineSearchUiState.Success ?: return
+        val token = currentState.page.nextPageToken
+        if (currentState.isLoadingMore || !currentState.page.hasNextPage || token.isNullOrBlank()) return
+
+        onlineSearchJob?.cancel()
+        onlineSearchJob = viewModelScope.launch {
+            _onlineSearchState.value = currentState.copy(isLoadingMore = true)
+            when (val res = onlineRepository.loadMoreSearchResults(token)) {
+                is OnlineResult.Success -> {
+                    val combined = (currentState.items + res.value.items).distinctBy { it.contentUrl }
+                    _onlineSearchState.value = OnlineSearchUiState.Success(
+                        page = res.value,
+                        items = combined,
+                        isLoadingMore = false
+                    )
+                }
+                is OnlineResult.Error -> {
+                    _onlineSearchState.value = currentState.copy(isLoadingMore = false)
+                    _dspDiagnosticMessage.value = res.message
+                }
+            }
+        }
+    }
+
+    fun removeOnlineSearchHistory(query: String) {
+        viewModelScope.launch {
+            onlineRepository.removeSearchQuery(query)
+        }
+    }
+
+    fun clearOnlineSearchHistory() {
+        viewModelScope.launch {
+            onlineRepository.clearSearchHistory()
+        }
+    }
+
+    fun refreshOnlineDiscovery(forceRefresh: Boolean = true) {
+        val provider = _selectedOnlineProvider.value ?: return
+        if (!forceRefresh &&
+            activeDiscoverProviderKey == provider.key &&
+            discoverSectionJobs.values.any { it.isActive }
+        ) {
+            return
+        }
+        activeDiscoverProviderKey = provider.key
+        discoverGeneration += 1L
+        val generation = discoverGeneration
+
+        discoverSectionJobs.values.forEach { it.cancel() }
+        discoverSectionJobs.clear()
+        _discoverSectionsState.value = defaultDiscoverSectionsState()
+
+        val recentArtistSeed = recentlyPlayedOnlineTracks.value.firstOrNull()?.artist
+        for (section in DiscoverSectionType.entries) {
+            launchDiscoverSection(
+                section = section,
+                provider = provider,
+                generation = generation,
+                recentArtistSeed = recentArtistSeed,
+                forceRefresh = forceRefresh
+            )
+        }
+    }
+
+    fun retryDiscoverSection(section: DiscoverSectionType) {
+        val provider = _selectedOnlineProvider.value ?: return
+        // Prevent duplicate concurrent requests for the same section while already loading
+        if (discoverSectionJobs[section]?.isActive == true &&
+            _discoverSectionsState.value[section] is DiscoverSectionState.Loading
+        ) {
+            return
+        }
+        discoverSectionJobs[section]?.cancel()
+        val generation = discoverGeneration
+        _discoverSectionsState.update { current ->
+            current.toMutableMap().apply { put(section, DiscoverSectionState.Loading) }
+        }
+        val recentArtistSeed = recentlyPlayedOnlineTracks.value.firstOrNull()?.artist
+        launchDiscoverSection(
+            section = section,
+            provider = provider,
+            generation = generation,
+            recentArtistSeed = recentArtistSeed,
+            forceRefresh = true
+        )
+    }
+
+    fun setOnlineContentCountry(countryCode: String) {
+        viewModelScope.launch {
+            val clean = onlineRegionPrefs.setContentCountry(countryCode)
+            if (_onlineContentCountry.value != clean) {
+                _onlineContentCountry.value = clean
+                NewPipeInitializer.updateLocalization(_onlineContentLanguage.value, clean)
+                onlineRepository.clearDiscoverCache()
+                refreshOnlineDiscovery(forceRefresh = true)
+                val q = _onlineSearchQuery.value.trim()
+                if (q.isNotBlank()) executeOnlineSearch(q, forceRefresh = true)
+            }
+        }
+    }
+
+    fun setOnlineContentLanguage(languageCode: String) {
+        viewModelScope.launch {
+            val clean = onlineRegionPrefs.setContentLanguage(languageCode)
+            if (_onlineContentLanguage.value != clean) {
+                _onlineContentLanguage.value = clean
+                NewPipeInitializer.updateLocalization(clean, _onlineContentCountry.value)
+                onlineRepository.clearDiscoverCache()
+                refreshOnlineDiscovery(forceRefresh = true)
+                val q = _onlineSearchQuery.value.trim()
+                if (q.isNotBlank()) executeOnlineSearch(q, forceRefresh = true)
+            }
+        }
+    }
+
+    fun setDiscoverMusicLanguage(language: DiscoverMusicLanguage) {
+        if (_discoverMusicLanguage.value == language) return
+        _discoverMusicLanguage.value = language
+        viewModelScope.launch {
+            onlineRegionPrefs.setDiscoverLanguage(language)
+        }
+        refreshOnlineDiscovery(forceRefresh = true)
+    }
+
+    private fun launchDiscoverSection(
+        section: DiscoverSectionType,
+        provider: OnlineMusicProvider,
+        generation: Long,
+        recentArtistSeed: String?,
+        forceRefresh: Boolean
+    ) {
+        val countryCode = _onlineContentCountry.value
+        val languageCode = _onlineContentLanguage.value
+        val discoverLanguage = _discoverMusicLanguage.value
+        val job = viewModelScope.launch {
+            val resultState = onlineRepository.fetchDiscoverSection(
+                sectionType = section,
+                provider = provider,
+                countryCode = countryCode,
+                languageCode = languageCode,
+                discoverLanguage = discoverLanguage,
+                recentArtistSeed = recentArtistSeed,
+                forceRefresh = forceRefresh
+            )
+            if (generation == discoverGeneration && _selectedOnlineProvider.value?.key == provider.key) {
+                _discoverSectionsState.update { current ->
+                    current.toMutableMap().apply { put(section, resultState) }
+                }
+            }
+        }
+        discoverSectionJobs[section] = job
+    }
+
+    fun openOnlineCollection(item: OnlineTrack) {
+        onlineCollectionJob?.cancel()
+        onlineCollectionJob = viewModelScope.launch {
+            _onlineCollectionState.value = OnlineCollectionUiState.Loading(item.title)
+            when (val res = onlineRepository.fetchCollectionDetails(item)) {
+                is OnlineResult.Success -> {
+                    _onlineCollectionState.value = OnlineCollectionUiState.Success(res.value)
+                }
+                is OnlineResult.Error -> {
+                    _onlineCollectionState.value = OnlineCollectionUiState.Error(res.message, item)
+                }
+            }
+        }
+    }
+
+    fun dismissOnlineCollection() {
+        onlineCollectionJob?.cancel()
+        _onlineCollectionState.value = OnlineCollectionUiState.Idle
+    }
+
+    fun playOnlineTrack(track: OnlineTrack, collection: List<OnlineTrack> = emptyList()) {
+        val savedById = allOnlineTracks.value.associateBy { it.id }
+        val playablePool = collection.filter { it.kind == domain.online.OnlineItemKind.TRACK }
+            .ifEmpty { listOf(track) }
+        val songQueue = playablePool.map { item ->
+            val baseSong = OnlineTrackMapper.toUnifiedSong(item)
+            savedById[baseSong.id]?.let { saved ->
+                baseSong.copy(
+                    isFavorite = saved.isFavorite || baseSong.isFavorite,
+                    playCount = maxOf(saved.playCount, baseSong.playCount)
+                )
+            } ?: baseSong
+        }
+        val targetSong = songQueue.firstOrNull { it.contentUrl == track.contentUrl }
+            ?: OnlineTrackMapper.toUnifiedSong(track)
+        val idx = songQueue.indexOfFirst { it.id == targetSong.id }.coerceAtLeast(0)
+        playSong(targetSong, songQueue, idx)
+    }
+
+    fun enqueueOnlineTrackNext(track: OnlineTrack) {
+        playNextInQueue(OnlineTrackMapper.toUnifiedSong(track))
+    }
+
+    fun addOnlineTrackToQueue(track: OnlineTrack) {
+        addToQueue(OnlineTrackMapper.toUnifiedSong(track))
+    }
+
+    fun toggleSaveOnlineTrack(song: Song) {
+        if (!song.isOnline) return
+        viewModelScope.launch {
+            onlineRepository.toggleSaveOnlineTrack(song)
+        }
+    }
+
+    fun toggleSaveOnlineTrack(track: OnlineTrack) {
+        toggleSaveOnlineTrack(OnlineTrackMapper.toUnifiedSong(track))
+    }
+
+    fun addOnlineTrackToPlaylist(playlistId: Long, song: Song) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (song.isOnline && dao.getOnlineTrackById(song.id) == null) {
+                val baseTrack = OnlineTrackMapper.toOnlineTrack(song)
+                dao.upsertOnlineTrack(OnlineTrackMapper.mapOnlineTrackToEntity(baseTrack))
+            }
+            dao.insertPlaylistSong(PlaylistSongCrossRef(playlistId, song.id, 0))
+        }
+    }
+
+    fun selectOnlineQualityPreference(preference: AudioQualityPreference) {
+        _onlineQualityPreference.value = preference
+        preferences.onlineQualityPreference = preference
+        val cur = _currentSong.value
+        if (cur != null && cur.isOnline) {
+            val pos = musicService?.audioEngine?.currentPosition ?: _playbackInfo.value.currentPositionMs
+            playSong(
+                song = cur,
+                newQueue = _queue.value,
+                startIndex = _queueIndex.value,
+                manualStreamId = null,
+                resumePositionMs = pos
+            )
+        }
+    }
+
+    fun selectManualOnlineStreamOption(option: OnlineAudioStreamOption) {
+        val cur = _currentSong.value ?: return
+        if (!cur.isOnline) return
+        val pos = musicService?.audioEngine?.currentPosition ?: _playbackInfo.value.currentPositionMs
+        playSong(
+            song = cur,
+            newQueue = _queue.value,
+            startIndex = _queueIndex.value,
+            manualStreamId = option.id,
+            resumePositionMs = pos
+        )
+    }
+
     override fun onCleared() {
         super.onCleared()
+        onlineSearchJob?.cancel()
+        onlineSuggestionJob?.cancel()
+        discoverSectionJobs.values.forEach { it.cancel() }
+        discoverSectionJobs.clear()
+        onlineCollectionJob?.cancel()
+        unifiedPlaybackController?.cancelPendingResolution()
+        connectivityMonitor.unregister()
         serviceCollectorsJob?.cancel()
         progressTrackingJob?.cancel()
         sleepTimerJob?.cancel()

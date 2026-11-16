@@ -1,0 +1,36 @@
+--- a/extractor/src/main/java/org/schabi/newpipe/extractor/utils/Utils.java
++++ b/extractor/src/main/java/org/schabi/newpipe/extractor/utils/Utils.java
+@@ -4,6 +4,7 @@
+ 
+ import java.net.MalformedURLException;
+ import java.net.URL;
++import java.io.UnsupportedEncodingException;
+ import java.net.URLDecoder;
+ import java.net.URLEncoder;
+ import java.nio.charset.StandardCharsets;
+@@ -34,7 +35,11 @@
+      * @return The encoded URL.
+      */
+     public static String encodeUrlUtf8(final String string) {
+-        return URLEncoder.encode(string, StandardCharsets.UTF_8);
++        try {
++            return URLEncoder.encode(string, StandardCharsets.UTF_8.name());
++        } catch (final UnsupportedEncodingException e) {
++            throw new IllegalStateException("UTF-8 encoding is unavailable", e);
++        }
+     }
+ 
+     /**
+@@ -43,7 +48,11 @@
+      * @return The decoded URL.
+      */
+     public static String decodeUrlUtf8(final String url) {
+-        return URLDecoder.decode(url, StandardCharsets.UTF_8);
++        try {
++            return URLDecoder.decode(url, StandardCharsets.UTF_8.name());
++        } catch (final UnsupportedEncodingException e) {
++            throw new IllegalStateException("UTF-8 decoding is unavailable", e);
++        }
+     }
+ 
+     /**

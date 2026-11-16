@@ -59,9 +59,33 @@ class SonoraAudioEngine(private val context: Context) {
         }
     )
 
+    private val onlinePlaybackHandler = playback.OnlinePlaybackHandler(
+        context = context,
+        dspProcessor = dspProcessor,
+        onVisualizerFrame = { fft, wave ->
+            _visualizerFrequencies.value = fft
+            _waveformSamples.value = wave
+            lastRealTelemetryMs = System.currentTimeMillis()
+        },
+        onAzimuthChanged = { azimuth ->
+            _orbitAzimuthRad.value = azimuth
+            _dspDiagnosticMessage.value = dspProcessor.lastDspError
+        },
+        onBufferingChanged = { buffering ->
+            _isBuffering.value = buffering
+        }
+    )
+
     // Fallback MediaPlayer used ONLY if MediaExtractor/MediaCodec cannot open an exotic source
     private var fallbackMediaPlayer: MediaPlayer? = null
     private var usingFallbackPlayer: Boolean = false
+    private var usingOnlinePlayer: Boolean = false
+
+    private val _isBuffering = MutableStateFlow(false)
+    val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
+
+    val bufferedPositionMs: Long
+        get() = if (usingOnlinePlayer) onlinePlaybackHandler.cachedBufferedPositionMs else 0L
 
     @Volatile
     private var lastRealTelemetryMs: Long = 0L
@@ -70,31 +94,49 @@ class SonoraAudioEngine(private val context: Context) {
     @Volatile
     private var _isPreparedState: Boolean = false
     val isPrepared: Boolean
-        get() = if (usingFallbackPlayer) _isPreparedState else pcmPlayer.isPrepared
+        get() = when {
+            usingOnlinePlayer -> onlinePlaybackHandler.isPrepared
+            usingFallbackPlayer -> _isPreparedState
+            else -> pcmPlayer.isPrepared
+        }
 
     @Volatile
     private var _isPlayingState: Boolean = false
     val isPlaying: Boolean
-        get() = if (usingFallbackPlayer) _isPlayingState else pcmPlayer.isPlaying
+        get() = when {
+            usingOnlinePlayer -> onlinePlaybackHandler.isPlaying
+            usingFallbackPlayer -> _isPlayingState
+            else -> pcmPlayer.isPlaying
+        }
 
     @Volatile
     private var cachedDurationMs: Long = 0L
     val duration: Long
-        get() = if (usingFallbackPlayer) cachedDurationMs else pcmPlayer.durationMs.coerceAtLeast(cachedDurationMs)
+        get() = when {
+            usingOnlinePlayer -> onlinePlaybackHandler.cachedDurationMs.coerceAtLeast(cachedDurationMs)
+            usingFallbackPlayer -> cachedDurationMs
+            else -> pcmPlayer.durationMs.coerceAtLeast(cachedDurationMs)
+        }
 
     @Volatile
     private var cachedPositionMs: Long = 0L
     val currentPosition: Long
-        get() = if (usingFallbackPlayer) {
-            if (_isPreparedState && fallbackMediaPlayer != null) {
-                try {
-                    fallbackMediaPlayer?.currentPosition?.toLong()?.also { cachedPositionMs = it } ?: cachedPositionMs
-                } catch (_: Exception) {
-                    cachedPositionMs
-                }
-            } else cachedPositionMs
-        } else {
-            pcmPlayer.currentPositionMs.also { cachedPositionMs = it }
+        get() = when {
+            usingOnlinePlayer -> {
+                onlinePlaybackHandler.refreshPositionSnapshot().also { cachedPositionMs = it }
+            }
+            usingFallbackPlayer -> {
+                if (_isPreparedState && fallbackMediaPlayer != null) {
+                    try {
+                        fallbackMediaPlayer?.currentPosition?.toLong()?.also { cachedPositionMs = it } ?: cachedPositionMs
+                    } catch (_: Exception) {
+                        cachedPositionMs
+                    }
+                } else cachedPositionMs
+            }
+            else -> {
+                pcmPlayer.currentPositionMs.also { cachedPositionMs = it }
+            }
         }
 
     // Real-time Visualizer Flows
@@ -314,7 +356,10 @@ class SonoraAudioEngine(private val context: Context) {
         pushDspSnapshot()
 
         stopFallbackMediaPlayer()
+        onlinePlaybackHandler.stop()
         usingFallbackPlayer = false
+        usingOnlinePlayer = false
+        _isBuffering.value = false
         _isPreparedState = false
         _isPlayingState = false
         cachedPositionMs = 0L
@@ -358,6 +403,70 @@ class SonoraAudioEngine(private val context: Context) {
                     onCompletion = onCompletion,
                     onError = onError
                 )
+            }
+        )
+    }
+
+    fun prepareAndPlayOnlineStream(
+        resolved: domain.online.ResolvedOnlineStreamResult,
+        startPositionMs: Long = 0L,
+        onPrepared: (durationMs: Long) -> Unit,
+        onCompletion: () -> Unit,
+        onError: (message: String, mayBeExpiredStream: Boolean) -> Unit
+    ) {
+        val reqGen = ++playbackRequestGeneration
+        crossfadeJob?.cancel()
+        crossfadeJob = null
+        currentVolumeScale = 1.0f
+        focusDuckScale = 1.0f
+        pushDspSnapshot()
+
+        pcmPlayer.stop()
+        stopFallbackMediaPlayer()
+        usingFallbackPlayer = false
+        usingOnlinePlayer = true
+        _isPreparedState = false
+        _isPlayingState = false
+        _isBuffering.value = true
+        cachedPositionMs = startPositionMs.coerceAtLeast(0L)
+        cachedDurationMs = resolved.durationMs
+        _dspDiagnosticMessage.value = null
+
+        onlinePlaybackHandler.prepareAndPlayStream(
+            resolved = resolved,
+            startPositionMs = startPositionMs,
+            speed = currentPlaybackSpeed,
+            pitch = 1.0f,
+            onPrepared = { dur ->
+                if (reqGen != playbackRequestGeneration) return@prepareAndPlayStream
+                cachedDurationMs = dur.coerceAtLeast(resolved.durationMs)
+                _isPreparedState = true
+                _isPlayingState = true
+                _isBuffering.value = false
+                _isBassBoostSupported.value = true
+                _isVirtualizerSupported.value = true
+                _isReverbSupported.value = true
+                _isLoudnessSupported.value = true
+                val sid = onlinePlaybackHandler.audioSessionId
+                if (sid != 0) {
+                    currentSessionId = sid
+                    adaptiveEqualizer.attachToAudioSession(sid, softwareDspHandled = true)
+                }
+                onPrepared(cachedDurationMs)
+            },
+            onCompletion = {
+                if (reqGen != playbackRequestGeneration) return@prepareAndPlayStream
+                _isPreparedState = false
+                _isPlayingState = false
+                _isBuffering.value = false
+                onCompletion()
+            },
+            onError = { msg, mayBeExpired ->
+                if (reqGen != playbackRequestGeneration) return@prepareAndPlayStream
+                _isPreparedState = false
+                _isPlayingState = false
+                _isBuffering.value = false
+                onError(msg, mayBeExpired)
             }
         )
     }
@@ -490,55 +599,72 @@ class SonoraAudioEngine(private val context: Context) {
     }
 
     fun play() {
-        if (usingFallbackPlayer) {
-            if (!_isPreparedState) return
-            try {
-                fallbackMediaPlayer?.start()
+        when {
+            usingOnlinePlayer -> {
+                if (!onlinePlaybackHandler.isPrepared) return
+                onlinePlaybackHandler.play()
                 _isPlayingState = true
-                if (orbit8dEnabled && !globalEffectsBypass) startFallbackOrbitLoop()
-            } catch (e: Exception) {
-                _isPlayingState = false
-                Log.e(tag, "Play error", e)
             }
-        } else {
-            if (!pcmPlayer.isPrepared) return
-            pcmPlayer.play()
-            _isPlayingState = true
+            usingFallbackPlayer -> {
+                if (!_isPreparedState) return
+                try {
+                    fallbackMediaPlayer?.start()
+                    _isPlayingState = true
+                    if (orbit8dEnabled && !globalEffectsBypass) startFallbackOrbitLoop()
+                } catch (e: Exception) {
+                    _isPlayingState = false
+                    Log.e(tag, "Play error", e)
+                }
+            }
+            else -> {
+                if (!pcmPlayer.isPrepared) return
+                pcmPlayer.play()
+                _isPlayingState = true
+            }
         }
     }
 
     fun pause() {
-        if (usingFallbackPlayer) {
-            if (!_isPreparedState) return
-            try {
-                fallbackMediaPlayer?.pause()
+        when {
+            usingOnlinePlayer -> {
+                onlinePlaybackHandler.pause()
                 _isPlayingState = false
-                fallbackOrbitJob?.cancel()
-            } catch (e: Exception) {
-                Log.e(tag, "Pause error", e)
             }
-        } else {
-            if (!pcmPlayer.isPrepared) return
-            pcmPlayer.pause()
-            _isPlayingState = false
+            usingFallbackPlayer -> {
+                if (!_isPreparedState) return
+                try {
+                    fallbackMediaPlayer?.pause()
+                    _isPlayingState = false
+                    fallbackOrbitJob?.cancel()
+                } catch (e: Exception) {
+                    Log.e(tag, "Pause error", e)
+                }
+            }
+            else -> {
+                if (!pcmPlayer.isPrepared) return
+                pcmPlayer.pause()
+                _isPlayingState = false
+            }
         }
     }
 
     fun seekTo(positionMs: Long) {
         cachedPositionMs = positionMs.coerceAtLeast(0L)
-        if (usingFallbackPlayer) {
-            if (!_isPreparedState) return
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    fallbackMediaPlayer?.seekTo(positionMs, MediaPlayer.SEEK_CLOSEST)
-                } else {
-                    fallbackMediaPlayer?.seekTo(positionMs.toInt())
+        when {
+            usingOnlinePlayer -> onlinePlaybackHandler.seekTo(cachedPositionMs)
+            usingFallbackPlayer -> {
+                if (!_isPreparedState) return
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        fallbackMediaPlayer?.seekTo(positionMs, MediaPlayer.SEEK_CLOSEST)
+                    } else {
+                        fallbackMediaPlayer?.seekTo(positionMs.toInt())
+                    }
+                } catch (e: Exception) {
+                    Log.e(tag, "Seek error", e)
                 }
-            } catch (e: Exception) {
-                Log.e(tag, "Seek error", e)
             }
-        } else {
-            pcmPlayer.seekTo(positionMs)
+            else -> pcmPlayer.seekTo(positionMs)
         }
     }
 
@@ -596,19 +722,21 @@ class SonoraAudioEngine(private val context: Context) {
 
     fun setPlaybackSpeed(speed: Float, pitch: Float = 1.0f) {
         currentPlaybackSpeed = speed.coerceIn(0.5f, 2.0f)
-        if (usingFallbackPlayer) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && _isPreparedState) {
-                try {
-                    val params = fallbackMediaPlayer?.playbackParams ?: android.media.PlaybackParams()
-                    params.speed = currentPlaybackSpeed
-                    params.pitch = pitch.coerceIn(0.5f, 2.0f)
-                    fallbackMediaPlayer?.playbackParams = params
-                } catch (e: Exception) {
-                    Log.w(tag, "Failed to set playback params: ${e.message}")
+        when {
+            usingOnlinePlayer -> onlinePlaybackHandler.setPlaybackSpeed(currentPlaybackSpeed, pitch)
+            usingFallbackPlayer -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && _isPreparedState) {
+                    try {
+                        val params = fallbackMediaPlayer?.playbackParams ?: android.media.PlaybackParams()
+                        params.speed = currentPlaybackSpeed
+                        params.pitch = pitch.coerceIn(0.5f, 2.0f)
+                        fallbackMediaPlayer?.playbackParams = params
+                    } catch (e: Exception) {
+                        Log.w(tag, "Failed to set playback params: ${e.message}")
+                    }
                 }
             }
-        } else {
-            pcmPlayer.setPlaybackSpeed(currentPlaybackSpeed, pitch)
+            else -> pcmPlayer.setPlaybackSpeed(currentPlaybackSpeed, pitch)
         }
     }
 
@@ -829,9 +957,11 @@ class SonoraAudioEngine(private val context: Context) {
         eqObserverJob?.cancel()
         pcmPlayer.stop()
         stopFallbackMediaPlayer()
+        onlinePlaybackHandler.release()
         adaptiveEqualizer.releaseHardwareEffects()
         scope.cancel()
         _isPreparedState = false
         _isPlayingState = false
+        _isBuffering.value = false
     }
 }

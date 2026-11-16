@@ -20,6 +20,7 @@ import com.example.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
@@ -54,6 +55,8 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
+    private var autonomousController: playback.UnifiedPlaybackController? = null
+    private var connectivityMonitor: data.online.NetworkConnectivityMonitor? = null
 
     private var audioManager: AudioManager? = null
     private var isNoisyReceiverRegistered = false
@@ -361,6 +364,18 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         )
     }
 
+    private fun ensureAutonomousController(): playback.UnifiedPlaybackController {
+        autonomousController?.let { return it }
+        val monitor = connectivityMonitor ?: data.online.NetworkConnectivityMonitor(applicationContext).also {
+            connectivityMonitor = it
+        }
+        val dao = com.example.data.SonoraDatabase.getDatabase(applicationContext).dao()
+        val repo = data.online.OnlineMusicRepository(dao = dao, connectivityMonitor = monitor)
+        return playback.UnifiedPlaybackController(audioEngine, repo).also {
+            autonomousController = it
+        }
+    }
+
     private fun playSongAutonomously(song: Song) {
         if (!::audioEngine.isInitialized) return
         if (!requestAudioFocusIfNeeded()) return
@@ -372,12 +387,15 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             repeatMode = currentRepeatModeSnapshot,
             deviceName = currentDeviceNameSnapshot
         )
-        audioEngine.prepareAndPlay(
-            uri = song.uri,
-            fallbackPath = song.dataPath,
-            onPrepared = {
+        val controller = ensureAutonomousController()
+        controller.playSong(
+            song = song,
+            qualityPreference = domain.online.AudioQualityPreference.AUTO,
+            onResolvingStarted = {},
+            onPrepared = { updatedSong, _, _ ->
+                currentSongSnapshot = updatedSong
                 updateForegroundNotification(
-                    song = song,
+                    song = updatedSong,
                     isPlaying = true,
                     isShuffle = currentIsShuffleSnapshot,
                     repeatMode = currentRepeatModeSnapshot,
@@ -393,7 +411,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                             handleRemoteNext()
                         } else {
                             updateForegroundNotification(
-                                song = song,
+                                song = currentSongSnapshot ?: song,
                                 isPlaying = false,
                                 isShuffle = currentIsShuffleSnapshot,
                                 repeatMode = currentRepeatModeSnapshot,
@@ -480,6 +498,8 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         if (::notificationManager.isInitialized) {
             notificationManager.release()
         }
+        autonomousController?.cancelPendingResolution()
+        connectivityMonitor?.unregister()
         if (::audioEngine.isInitialized) {
             audioEngine.release()
         }

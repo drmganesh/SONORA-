@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
@@ -71,6 +72,7 @@ fun NowPlayingTopHeader(
     onOpenOutputDevice: (() -> Unit)? = null,
     onToggleFocusMode: (() -> Unit)? = null,
     onOpenCustomization: (() -> Unit)? = null,
+    onOpenStreamQuality: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
@@ -120,8 +122,13 @@ fun NowPlayingTopHeader(
                         shape = RoundedCornerShape(6.dp),
                         color = colors.accentPill
                     ) {
+                        val badgeLabel = if (song?.isOnline == true) {
+                            song.providerName.ifBlank { "ONLINE" }.uppercase()
+                        } else {
+                            "HI-FI"
+                        }
                         Text(
-                            text = "HI-FI",
+                            text = badgeLabel,
                             fontFamily = PlusJakartaFontFamily,
                             color = colors.onAccentPill,
                             fontSize = 9.sp,
@@ -181,6 +188,17 @@ fun NowPlayingTopHeader(
                         .background(colors.surface)
                         .border(BorderStroke(1.dp, colors.cardBorder), RoundedCornerShape(18.dp))
                 ) {
+                    if (song?.isOnline == true && onOpenStreamQuality != null) {
+                        DropdownMenuItem(
+                            text = { Text("Stream Quality", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Default.HighQuality, contentDescription = null, tint = colors.accentStrong, modifier = Modifier.size(18.dp)) },
+                            onClick = {
+                                showMenu = false
+                                onOpenStreamQuality()
+                            }
+                        )
+                    }
+
                     if (onOpenEqualizer != null) {
                         DropdownMenuItem(
                             text = { Text("15-Band Equalizer", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },

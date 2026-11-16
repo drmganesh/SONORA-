@@ -25,6 +25,8 @@ import com.example.model.SpatialMode
 import com.example.model.SpatialProfile
 import com.example.model.SwipeAction
 import com.example.model.ThemeMode
+import domain.online.AudioQualityPreference
+import domain.online.OnlineMusicProvider
 import org.json.JSONArray
 import org.json.JSONObject
 import ui.player.seekbar.SeekbarStyle
@@ -431,6 +433,33 @@ class SonoraPreferences(context: Context) {
     var showNotificationFormatBadge: Boolean
         get() = prefs.getBoolean("show_notification_format_badge", true)
         set(value) = prefs.edit().putBoolean("show_notification_format_badge", value).apply()
+
+    // Online Music Streaming Preferences (NewPipe Extractor)
+    var onlineQualityPreference: AudioQualityPreference
+        get() = AudioQualityPreference.fromId(
+            prefs.getString("online_quality_preference", AudioQualityPreference.AUTO.id)
+        )
+        set(value) = prefs.edit().putString("online_quality_preference", value.id).apply()
+
+    var selectedOnlineProviderKey: String
+        get() = prefs.getString("selected_online_provider_key", OnlineMusicProvider.KEY_YOUTUBE_MUSIC)
+            ?: OnlineMusicProvider.KEY_YOUTUBE_MUSIC
+        set(value) = prefs.edit().putString("selected_online_provider_key", value).apply()
+
+    var onlineContentCountry: String
+        get() = prefs.getString("online_content_country", domain.online.OnlineRegionCatalog.DEFAULT_COUNTRY_CODE)
+            ?.takeIf { it.isNotBlank() } ?: domain.online.OnlineRegionCatalog.DEFAULT_COUNTRY_CODE
+        set(value) = prefs.edit().putString("online_content_country", value).apply()
+
+    var onlineContentLanguage: String
+        get() = prefs.getString("online_content_language", domain.online.OnlineRegionCatalog.DEFAULT_LANGUAGE_CODE)
+            ?.takeIf { it.isNotBlank() } ?: domain.online.OnlineRegionCatalog.DEFAULT_LANGUAGE_CODE
+        set(value) = prefs.edit().putString("online_content_language", value).apply()
+
+    var discoverMusicLanguageId: String
+        get() = prefs.getString("online_discover_music_language", domain.online.DiscoverMusicLanguage.DEFAULT.id)
+            ?: domain.online.DiscoverMusicLanguage.DEFAULT.id
+        set(value) = prefs.edit().putString("online_discover_music_language", value).apply()
 
     var playerAppearanceConfig: PlayerAppearanceConfig
         get() = decodeAppearanceJson(prefs.getString("player_appearance_json", null))

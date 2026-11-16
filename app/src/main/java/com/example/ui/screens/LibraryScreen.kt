@@ -118,6 +118,8 @@ import java.io.File
 
 private enum class LibraryCategory(val label: String) {
     ALL_SONGS("All Songs"),
+    ONLINE_SAVED("Online Saved"),
+    ONLINE_RECENT("Streamed"),
     ALBUMS("Albums"),
     ARTISTS("Artists"),
     FOLDERS("Folders"),
@@ -145,6 +147,8 @@ fun LibraryScreen(
     val haptic = LocalHapticFeedback.current
 
     val allLibrarySongs by viewModel.allSongs.collectAsState()
+    val onlineSavedTracks by viewModel.onlineSavedTracks.collectAsState()
+    val recentlyPlayedOnlineTracks by viewModel.recentlyPlayedOnlineTracks.collectAsState()
     val filteredSongs by viewModel.filteredSongs.collectAsState()
     val albums by viewModel.albums.collectAsState()
     val artists by viewModel.artists.collectAsState()
@@ -213,6 +217,8 @@ fun LibraryScreen(
         }
     }
 
+    val displayedOnlineSaved = remember(onlineSavedTracks, searchQuery, sortOption) { filterListByQueryAndSort(onlineSavedTracks) }
+    val displayedOnlineRecent = remember(recentlyPlayedOnlineTracks, searchQuery, sortOption) { filterListByQueryAndSort(recentlyPlayedOnlineTracks) }
     val displayedRecentSongs = remember(recentlyAdded, searchQuery, sortOption) { filterListByQueryAndSort(recentlyAdded) }
     val displayedMostPlayedSongs = remember(mostPlayed, searchQuery, sortOption) { filterListByQueryAndSort(mostPlayed) }
     val displayedFavSongs = remember(favorites, searchQuery, sortOption) { filterListByQueryAndSort(favorites) }
@@ -225,6 +231,8 @@ fun LibraryScreen(
 
     val currentSelectablePool: List<Song> = when (selectedCategory) {
         LibraryCategory.ALL_SONGS -> filteredSongs
+        LibraryCategory.ONLINE_SAVED -> displayedOnlineSaved
+        LibraryCategory.ONLINE_RECENT -> displayedOnlineRecent
         LibraryCategory.RECENTLY_ADDED -> displayedRecentSongs
         LibraryCategory.MOST_PLAYED -> displayedMostPlayedSongs
         LibraryCategory.FAVOURITES -> displayedFavSongs
@@ -539,6 +547,60 @@ fun LibraryScreen(
                         } else {
                             selectedSongIds = selectedSongIds + song.id
                         }
+                    },
+                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                    onOpenMore = { contextMenuSong = it }
+                )
+
+                LibraryCategory.ONLINE_SAVED -> SongsCollectionContent(
+                    songs = displayedOnlineSaved,
+                    emptyText = "Save online tracks from Online Music to see them here",
+                    isGridView = isGridView,
+                    isMultiSelectMode = isMultiSelectMode,
+                    selectedIds = selectedSongIds,
+                    currentSongId = currentSong?.id,
+                    isPlaying = playbackInfo.isPlaying,
+                    colors = colors,
+                    onPlayAll = { if (displayedOnlineSaved.isNotEmpty()) viewModel.playCollection(displayedOnlineSaved, shuffle = false) },
+                    onShuffleAll = { if (displayedOnlineSaved.isNotEmpty()) viewModel.playCollection(displayedOnlineSaved, shuffle = true) },
+                    onSongClick = { song ->
+                        if (isMultiSelectMode) {
+                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                        } else {
+                            viewModel.playSong(song, displayedOnlineSaved)
+                        }
+                    },
+                    onSongLongClick = { song ->
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        isMultiSelectMode = true
+                        selectedSongIds = selectedSongIds + song.id
+                    },
+                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                    onOpenMore = { contextMenuSong = it }
+                )
+
+                LibraryCategory.ONLINE_RECENT -> SongsCollectionContent(
+                    songs = displayedOnlineRecent,
+                    emptyText = "Streamed online tracks will appear here",
+                    isGridView = isGridView,
+                    isMultiSelectMode = isMultiSelectMode,
+                    selectedIds = selectedSongIds,
+                    currentSongId = currentSong?.id,
+                    isPlaying = playbackInfo.isPlaying,
+                    colors = colors,
+                    onPlayAll = { if (displayedOnlineRecent.isNotEmpty()) viewModel.playCollection(displayedOnlineRecent, shuffle = false) },
+                    onShuffleAll = { if (displayedOnlineRecent.isNotEmpty()) viewModel.playCollection(displayedOnlineRecent, shuffle = true) },
+                    onSongClick = { song ->
+                        if (isMultiSelectMode) {
+                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                        } else {
+                            viewModel.playSong(song, displayedOnlineRecent)
+                        }
+                    },
+                    onSongLongClick = { song ->
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        isMultiSelectMode = true
+                        selectedSongIds = selectedSongIds + song.id
                     },
                     onToggleFavorite = { viewModel.toggleFavorite(it) },
                     onOpenMore = { contextMenuSong = it }
@@ -909,8 +971,10 @@ fun LibraryScreen(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 144.dp)
         ) {
-            val selectedSongsList = remember(selectedSongIds, allLibrarySongs) {
-                allLibrarySongs.filter { it.id in selectedSongIds }
+            val selectedSongsList = remember(selectedSongIds, allLibrarySongs, onlineSavedTracks, recentlyPlayedOnlineTracks) {
+                (allLibrarySongs + onlineSavedTracks + recentlyPlayedOnlineTracks)
+                    .distinctBy { it.id }
+                    .filter { it.id in selectedSongIds }
             }
             Surface(
                 shape = RoundedCornerShape(26.dp),
@@ -1056,7 +1120,14 @@ fun LibraryScreen(
             song = target,
             colors = colors,
             onDismiss = { contextMenuSong = null },
-            onPlayNow = { viewModel.playSong(target, allLibrarySongs) },
+            onPlayNow = {
+                val pool = if (target.isOnline) {
+                    (onlineSavedTracks + recentlyPlayedOnlineTracks).distinctBy { it.id }.ifEmpty { listOf(target) }
+                } else {
+                    allLibrarySongs
+                }
+                viewModel.playSong(target, pool)
+            },
             onAddToQueue = { viewModel.addToQueue(target) },
             onPlayNext = { viewModel.playNextInQueue(target) },
             onAddToPlaylist = { singleSongForPlaylist = target },

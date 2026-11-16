@@ -25,7 +25,19 @@ data class Song(
     val playCount: Int = 0,
     val lastPlayedTimestamp: Long = 0L,
     val lyrics: String? = null,
-    val isDemoTrack: Boolean = false
+    val isDemoTrack: Boolean = false,
+    val isOnline: Boolean = false,
+    val sourceType: String = "LOCAL",
+    val serviceId: Int = -1,
+    val providerKey: String = "",
+    val providerName: String = "",
+    val contentUrl: String = "",
+    val artworkUrl: String? = null,
+    val uploaderUrl: String? = null,
+    val streamCodec: String = "",
+    val streamQualityLabel: String = "",
+    val isBitrateKnown: Boolean = true,
+    val isSampleRateKnown: Boolean = true
 ) {
     val durationFormatted: String
         get() {
@@ -37,6 +49,32 @@ data class Song(
 
     val audioFormatInfo: String
         get() {
+            if (isOnline) {
+                val sourceLabel = providerName.ifBlank { "Online" }
+                if (streamQualityLabel.isNotBlank()) {
+                    return "$sourceLabel • $streamQualityLabel"
+                }
+                val codecOrMime = when {
+                    streamCodec.isNotBlank() -> streamCodec.uppercase()
+                    mimeType.isNotBlank() -> mimeType.substringAfter('/').uppercase()
+                    else -> ""
+                }
+                return buildString {
+                    append(sourceLabel)
+                    if (codecOrMime.isNotBlank()) {
+                        append(" • ")
+                        append(codecOrMime)
+                    }
+                    if (isBitrateKnown && bitrateKbps > 0) {
+                        append(" • ")
+                        append(bitrateKbps)
+                        append(" kbps")
+                    }
+                    if (codecOrMime.isBlank() && (!isBitrateKnown || bitrateKbps <= 0)) {
+                        append(" • Stream")
+                    }
+                }
+            }
             val ext = when {
                 mimeType.contains("flac", ignoreCase = true) || dataPath.endsWith(".flac", ignoreCase = true) -> "FLAC"
                 mimeType.contains("wav", ignoreCase = true) || dataPath.endsWith(".wav", ignoreCase = true) -> "WAV"

@@ -42,6 +42,9 @@ credentials = "1.5.0"
 googleid = "1.1.1"
 palette = "1.0.0"
 media = "1.7.0"
+media3 = "1.11.1"
+newpipeExtractor = "v0.27.1-sonora.1"
+desugarJdkLibs = "2.1.5"
 
 
 [libraries]
@@ -98,6 +101,13 @@ androidx-credentials-play-services = { group = "androidx.credentials", name = "c
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 androidx-palette = { group = "androidx.palette", name = "palette-ktx", version.ref = "palette" }
 androidx-media = { group = "androidx.media", name = "media", version.ref = "media" }
+androidx-media3-common = { group = "androidx.media3", name = "media3-common", version.ref = "media3" }
+androidx-media3-datasource-okhttp = { group = "androidx.media3", name = "media3-datasource-okhttp", version.ref = "media3" }
+androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+androidx-media3-exoplayer-dash = { group = "androidx.media3", name = "media3-exoplayer-dash", version.ref = "media3" }
+androidx-media3-exoplayer-hls = { group = "androidx.media3", name = "media3-exoplayer-hls", version.ref = "media3" }
+newpipe-extractor = { group = "com.github.TeamNewPipe", name = "NewPipeExtractor", version.ref = "newpipeExtractor" }
+desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 
 
 [plugins]

@@ -239,8 +239,13 @@ fun QueueScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    val activeMeta = if (active.isOnline && active.providerName.isNotBlank()) {
+                                        "${active.artist} • ${active.providerName}"
+                                    } else {
+                                        "${active.artist} • ${active.album}"
+                                    }
                                     Text(
-                                        text = "${active.artist} • ${active.album}",
+                                        text = activeMeta,
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 12.sp,
                                         color = colors.onAccentPill.copy(alpha = 0.78f),
@@ -328,8 +333,13 @@ fun QueueScreen(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    val rowMeta = if (song.isOnline && song.providerName.isNotBlank()) {
+                                        "${song.artist} • ${song.durationFormatted} • ${song.providerName}"
+                                    } else {
+                                        "${song.artist} • ${song.durationFormatted}"
+                                    }
                                     Text(
-                                        text = "${song.artist} • ${song.durationFormatted}",
+                                        text = rowMeta,
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 12.sp,
                                         color = colors.textSecondary,
@@ -434,7 +444,7 @@ fun QueueScreen(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = song.artist,
+                                        text = if (song.isOnline && song.providerName.isNotBlank()) "${song.artist} • ${song.providerName}" else song.artist,
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 12.sp,
                                         color = colors.textSecondary,

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
@@ -89,6 +90,7 @@ fun SearchScreen(
     viewModel: SonoraViewModel,
     colors: EditorialColors,
     onOpenSettings: () -> Unit,
+    onSearchOnline: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val allSongs by viewModel.allSongs.collectAsState()
@@ -298,6 +300,61 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 184.dp, top = 6.dp)
             ) {
+                item(key = "online_search_handoff") {
+                    Surface(
+                        onClick = { onSearchOnline(query.trim()) },
+                        shape = RoundedCornerShape(20.dp),
+                        color = colors.accentPill.copy(alpha = 0.55f),
+                        border = androidx.compose.foundation.BorderStroke(0.75.dp, colors.accentStrong.copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 6.dp)
+                            .testTag("search_online_handoff_card")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.accentStrong),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Explore,
+                                    contentDescription = "Search Online Music",
+                                    tint = colors.onAccentStrong,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (query.isNotBlank()) "Search \"${query.trim()}\" online" else "Search Online Music",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Stream songs, artists, albums & playlists via NewPipe Extractor",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontSize = 11.sp,
+                                    color = colors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+
                 if (query.isBlank() && recentSearches.isNotEmpty()) {
                     item(key = "recent_searches_block") {
                         Row(
@@ -799,18 +856,45 @@ fun SearchScreen(
 
                 if (query.isNotBlank() && matchedSongs.isEmpty() && matchedAlbums.isEmpty() && matchedArtists.isEmpty() && matchedPlaylists.isEmpty() && matchedFolders.isEmpty()) {
                     item(key = "no_results") {
-                        Box(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(40.dp),
-                            contentAlignment = Alignment.Center
+                                .padding(horizontal = 24.dp, vertical = 32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "No tracks, albums, or artists found for \"$query\"",
+                                text = "No local tracks, albums, or artists found for \"$query\"",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 14.sp,
                                 color = colors.textSecondary
                             )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Surface(
+                                onClick = { onSearchOnline(query.trim()) },
+                                shape = RoundedCornerShape(20.dp),
+                                color = colors.accentStrong,
+                                modifier = Modifier.height(48.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 18.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Explore,
+                                        contentDescription = null,
+                                        tint = colors.onAccentStrong,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Search Online Instead",
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = colors.onAccentStrong
+                                    )
+                                }
+                            }
                         }
                     }
                 }

@@ -38,7 +38,9 @@ object FolderScannerHelper {
         }
 
         val decodedDocId = try {
-            URLDecoder.decode(docId, "UTF-8")
+            URLDecoder.decode(docId, java.nio.charset.StandardCharsets.UTF_8.name())
+        } catch (_: java.io.UnsupportedEncodingException) {
+            docId
         } catch (_: Exception) {
             docId
         }

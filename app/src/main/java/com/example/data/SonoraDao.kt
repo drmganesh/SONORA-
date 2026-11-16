@@ -103,4 +103,45 @@ interface SonoraDao {
 
     @Query("DELETE FROM custom_eq_presets WHERE name = :name")
     suspend fun deleteCustomEqPreset(name: String)
+
+    // --- Online Music Persistence (canonical content URLs only, zero expiring stream URLs) ---
+
+    @Query("SELECT * FROM online_tracks WHERE isSaved = 1 ORDER BY savedTimestamp DESC")
+    fun getSavedOnlineTracksFlow(): Flow<List<OnlineTrackEntity>>
+
+    @Query("SELECT * FROM online_tracks WHERE lastPlayedTimestamp > 0 ORDER BY lastPlayedTimestamp DESC LIMIT :limit")
+    fun getRecentlyPlayedOnlineTracksFlow(limit: Int = 20): Flow<List<OnlineTrackEntity>>
+
+    @Query("SELECT * FROM online_tracks WHERE isFavorite = 1 ORDER BY lastPlayedTimestamp DESC")
+    fun getFavoriteOnlineTracksFlow(): Flow<List<OnlineTrackEntity>>
+
+    @Query("SELECT * FROM online_tracks")
+    fun getAllOnlineTracksFlow(): Flow<List<OnlineTrackEntity>>
+
+    @Query("SELECT * FROM online_tracks WHERE stableId = :stableId")
+    suspend fun getOnlineTrackById(stableId: Long): OnlineTrackEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertOnlineTrack(track: OnlineTrackEntity)
+
+    @Query("UPDATE online_tracks SET isSaved = :isSaved, savedTimestamp = :savedTimestamp WHERE stableId = :stableId")
+    suspend fun updateOnlineTrackSaved(stableId: Long, isSaved: Boolean, savedTimestamp: Long)
+
+    @Query("UPDATE online_tracks SET isFavorite = :isFavorite WHERE stableId = :stableId")
+    suspend fun updateOnlineTrackFavorite(stableId: Long, isFavorite: Boolean)
+
+    @Query("UPDATE online_tracks SET playCount = playCount + 1, lastPlayedTimestamp = :timestamp WHERE stableId = :stableId")
+    suspend fun incrementOnlinePlayCount(stableId: Long, timestamp: Long = System.currentTimeMillis())
+
+    @Query("SELECT * FROM online_search_history ORDER BY timestamp DESC LIMIT :limit")
+    fun getOnlineSearchHistoryFlow(limit: Int = 15): Flow<List<OnlineSearchHistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertOnlineSearchHistory(entry: OnlineSearchHistoryEntity)
+
+    @Query("DELETE FROM online_search_history WHERE `query` = :query")
+    suspend fun deleteOnlineSearchHistory(query: String)
+
+    @Query("DELETE FROM online_search_history")
+    suspend fun clearOnlineSearchHistory()
 }

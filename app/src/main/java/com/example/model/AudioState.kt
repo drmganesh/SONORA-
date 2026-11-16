@@ -123,5 +123,8 @@ data class PlaybackInfo(
     val repeatMode: RepeatMode = RepeatMode.OFF,
     val playbackSpeed: Float = 1.0f,
     val playbackPitch: Float = 1.0f,
-    val sleepTimerMinutesRemaining: Int? = null
+    val sleepTimerMinutesRemaining: Int? = null,
+    val isBuffering: Boolean = false,
+    val bufferedPositionMs: Long = 0L,
+    val playbackError: String? = null
 )

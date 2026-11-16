@@ -24,8 +24,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.LibraryMusic
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Search
@@ -55,11 +57,12 @@ enum class EditorialNavTab(
 ) {
     HOME(0, "Home", Icons.Rounded.Home, Icons.Outlined.Home),
     SEARCH(1, "Search", Icons.Rounded.Search, Icons.Rounded.Search),
-    LIBRARY(2, "Library", Icons.Rounded.LibraryMusic, Icons.Outlined.LibraryMusic)
+    LIBRARY(2, "Library", Icons.Rounded.LibraryMusic, Icons.Outlined.LibraryMusic),
+    ONLINE(3, "Online", Icons.Rounded.Explore, Icons.Outlined.Explore)
 }
 
 /**
- * Floating pill-shaped 3-destination Bottom Navigation Bar (Home, Search, Library)
+ * Floating pill-shaped 4-destination Bottom Navigation Bar (Home, Search, Library, Online)
  * with pastel active indicator pill and subtle drop shadow.
  */
 @Composable
@@ -74,7 +77,7 @@ fun FloatingBottomNavigation(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 28.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {
         Surface(
@@ -82,7 +85,7 @@ fun FloatingBottomNavigation(
             color = colors.floatingNavBackground.copy(alpha = 0.96f),
             shadowElevation = 16.dp,
             modifier = Modifier
-                .widthIn(max = 420.dp)
+                .widthIn(max = 460.dp)
                 .fillMaxWidth()
                 .shadow(18.dp, pillShape, ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
                 .border(0.75.dp, colors.cardBorder.copy(alpha = 0.85f), pillShape)
@@ -113,7 +116,7 @@ fun FloatingBottomNavigation(
                             .clip(RoundedCornerShape(28.dp))
                             .background(pillColor, RoundedCornerShape(28.dp))
                             .clickable { onSelectTab(tab.index) }
-                            .padding(horizontal = if (isSelected) 20.dp else 18.dp)
+                            .padding(horizontal = if (isSelected) 14.dp else 12.dp)
                             .testTag("nav_tab_${tab.label.lowercase()}"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -125,7 +128,7 @@ fun FloatingBottomNavigation(
                                 imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
                                 contentDescription = tab.label,
                                 tint = contentTint,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(21.dp)
                             )
                             AnimatedVisibility(
                                 visible = isSelected,
@@ -133,7 +136,7 @@ fun FloatingBottomNavigation(
                                 exit = fadeOut() + shrinkHorizontally()
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = tab.label,
                                         fontFamily = PlusJakartaFontFamily,

@@ -18,6 +18,7 @@ class SonoraApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        data.online.NewPipeInitializer.ensureInitialized(this)
         Log.i(TAG, "SONORA startup initialized (SDK=${Build.VERSION.SDK_INT})")
         createNotificationChannel()
     }

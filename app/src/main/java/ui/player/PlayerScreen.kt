@@ -50,9 +50,11 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SpatialAudio
 import androidx.compose.material.icons.filled.Speaker
@@ -61,6 +63,7 @@ import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -103,6 +106,7 @@ import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.util.LyricsExtractor
 import com.example.viewmodel.SonoraViewModel
 import ui.components.GestureOverlay
+import ui.online.OnlineQualitySelectorSheet
 import ui.player.styles.GlassPlayer
 import ui.player.styles.MaterialYouPlayer
 import ui.player.styles.MinimalPlayer
@@ -153,6 +157,10 @@ fun PlayerScreen(
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val connectedAudioDevice by viewModel.connectedAudioDeviceName.collectAsState()
     val isTwsConnected by viewModel.isTwsConnected.collectAsState()
+    val qualityPreference by viewModel.onlineQualityPreference.collectAsState()
+    val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
+    val isMeteredNetwork by viewModel.isMeteredNetwork.collectAsState()
+    val isNetworkOnline by viewModel.isNetworkOnline.collectAsState()
 
     val playerAppearance by viewModel.playerAppearance.collectAsState()
     val playerGestureConfig by viewModel.playerGestureConfig.collectAsState()
@@ -172,6 +180,7 @@ fun PlayerScreen(
     var showOutputDeviceSheet by remember { mutableStateOf(false) }
     var showAudioEffectsModal by remember { mutableStateOf(false) }
     var showEqualizerModal by remember { mutableStateOf(false) }
+    var showQualitySelectorSheet by remember { mutableStateOf(false) }
 
     BackHandler(enabled = showCustomizationScreen) {
         showCustomizationScreen = false
@@ -605,16 +614,104 @@ fun PlayerScreen(
                 }
             }
 
+            // Online Buffering & Playback Error Status Strip
+            if (currentSong?.isOnline == true && playbackInfo.isBuffering) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 2.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = colors.accentPill.copy(alpha = 0.85f),
+                        border = BorderStroke(0.75.dp, colors.accentStrong.copy(alpha = 0.4f)),
+                        modifier = Modifier.testTag("player_buffering_pill")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = colors.onAccentPill
+                            )
+                            Text(
+                                text = "Resolving & buffering ${currentSong?.providerName?.ifBlank { "online" }} stream...",
+                                fontFamily = PlusJakartaFontFamily,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.onAccentPill
+                            )
+                        }
+                    }
+                }
+            }
+
+            playbackInfo.playbackError?.takeIf { it.isNotBlank() }?.let { errMsg ->
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = colors.surfaceElevated,
+                    border = BorderStroke(1.dp, colors.accentStrong.copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 4.dp)
+                        .testTag("player_error_banner")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = errMsg,
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 12.sp,
+                            color = colors.textPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = { viewModel.retryCurrentPlayback() },
+                            modifier = Modifier.testTag("player_retry_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Retry",
+                                tint = colors.accentStrong,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Retry",
+                                fontFamily = PlusJakartaFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = colors.accentStrong
+                            )
+                        }
+                    }
+                }
+            }
+
             // Sleek Shared Bottom Utility & Queue Swipe Dock across all 19 Player Styles
             PlayerUtilityStrip(
                 connectedDevice = connectedAudioDevice,
                 playbackSpeed = playbackSpeed,
+                isOnlineTrack = currentSong?.isOnline == true,
                 onOpenOutputDevice = { showOutputDeviceSheet = true },
                 onCycleSpeed = {
                     val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
                     val next = speeds.firstOrNull { it > playbackSpeed + 0.05f } ?: speeds.first()
                     viewModel.setPlaybackSpeed(next)
                 },
+                onOpenStreamQuality = { showQualitySelectorSheet = true },
                 onOpenEqualizer = openEqualizerAction,
                 onOpenAudioStudio = openAudioStudioAction,
                 onToggleFocusMode = { isArtworkFocusMode = true },
@@ -1139,6 +1236,19 @@ fun PlayerScreen(
                 }
             }
         }
+
+        if (showQualitySelectorSheet) {
+            OnlineQualitySelectorSheet(
+                currentPreference = qualityPreference,
+                resolvedStream = currentResolvedStream,
+                isMeteredNetwork = isMeteredNetwork,
+                isNetworkOnline = isNetworkOnline,
+                colors = colors,
+                onSelectPreference = { viewModel.selectOnlineQualityPreference(it) },
+                onSelectManualStream = { viewModel.selectManualOnlineStreamOption(it) },
+                onDismiss = { showQualitySelectorSheet = false }
+            )
+        }
     }
 }
 
@@ -1146,8 +1256,10 @@ fun PlayerScreen(
 private fun PlayerUtilityStrip(
     connectedDevice: String,
     playbackSpeed: Float,
+    isOnlineTrack: Boolean,
     onOpenOutputDevice: () -> Unit,
     onCycleSpeed: () -> Unit,
+    onOpenStreamQuality: () -> Unit,
     onOpenEqualizer: () -> Unit,
     onOpenAudioStudio: () -> Unit,
     onToggleFocusMode: () -> Unit,
@@ -1250,6 +1362,17 @@ private fun PlayerUtilityStrip(
                         .testTag("player_studio_button")
                 ) {
                     Icon(Icons.Default.SpatialAudio, contentDescription = "Audio Effects Studio", tint = colors.textPrimary, modifier = Modifier.size(18.dp))
+                }
+
+                if (isOnlineTrack) {
+                    IconButton(
+                        onClick = onOpenStreamQuality,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("player_stream_quality_button")
+                    ) {
+                        Icon(Icons.Default.HighQuality, contentDescription = "Stream Quality", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
+                    }
                 }
 
                 IconButton(

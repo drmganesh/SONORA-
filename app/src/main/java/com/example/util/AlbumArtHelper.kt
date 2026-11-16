@@ -32,20 +32,67 @@ object AlbumArtHelper {
     // Negative cache to prevent repeated disk I/O and JNI calls for tracks without artwork
     private val noArtCache = object : LruCache<String, Boolean>(1000) {}
 
+    private fun buildCacheKey(song: Song): String {
+        return if (song.isOnline) {
+            "online_${song.artworkUrl ?: song.id}"
+        } else {
+            "art_${song.albumId}_${song.id}"
+        }
+    }
+
     fun getCachedBitmap(song: Song?): Bitmap? {
-        if (song == null || song.isDemoTrack || song.id < 0) return null
-        return memoryCache.get("art_${song.albumId}_${song.id}")
+        if (song == null || song.isDemoTrack || (!song.isOnline && song.id < 0)) return null
+        return memoryCache.get(buildCacheKey(song))
     }
 
     suspend fun loadAlbumArt(context: Context, song: Song?): Bitmap? = withContext(Dispatchers.IO) {
         if (song == null) return@withContext null
 
         // Demo tracks synthesized on device do not contain embedded image tags
-        if (song.isDemoTrack || song.id < 0) return@withContext null
+        if (song.isDemoTrack || (!song.isOnline && song.id < 0)) return@withContext null
 
-        val cacheKey = "art_${song.albumId}_${song.id}"
+        val cacheKey = buildCacheKey(song)
         memoryCache.get(cacheKey)?.let { return@withContext it }
         if (noArtCache.get(cacheKey) == true) return@withContext null
+
+        if (song.isOnline) {
+            val remoteUrl = song.artworkUrl?.takeIf { it.isNotBlank() }
+            if (remoteUrl == null) {
+                noArtCache.put(cacheKey, true)
+                return@withContext null
+            }
+            val loadedRemote = try {
+                val client = data.online.NewPipeInitializer.getDownloader().okHttpClient
+                val request = okhttp3.Request.Builder().url(remoteUrl).get().build()
+                client.newCall(request).execute().use { response ->
+                    val bytes = if (response.isSuccessful) response.body?.bytes() else null
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                        var inSampleSize = 1
+                        while (bounds.outWidth / inSampleSize > 768 || bounds.outHeight / inSampleSize > 768) {
+                            inSampleSize *= 2
+                        }
+                        val decodeOpts = BitmapFactory.Options().apply {
+                            this.inSampleSize = inSampleSize
+                            inPreferredConfig = Bitmap.Config.RGB_565
+                        }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
+                    } else null
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed loading online artwork for ${song.title}: ${t.message}")
+                null
+            }
+            if (loadedRemote != null) {
+                memoryCache.put(cacheKey, loadedRemote)
+            } else {
+                noArtCache.put(cacheKey, true)
+            }
+            return@withContext loadedRemote
+        }
 
         var bitmap: Bitmap? = null
         try {

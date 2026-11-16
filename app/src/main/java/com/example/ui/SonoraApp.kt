@@ -47,6 +47,7 @@ import ui.components.FloatingMiniPlayer
 import ui.home.FloatingBottomNavigation
 import ui.home.HomeScreen
 import ui.home.SearchScreen
+import ui.online.OnlineMusicScreen
 import ui.queue.QueueScreen
 import ui.settings.LibraryFolderManagementScreen
 import ui.theme.rememberEditorialColors
@@ -66,7 +67,8 @@ fun SonoraApp(viewModel: SonoraViewModel) {
         viewModel.updateSystemDarkTheme(systemDark)
     }
 
-    var currentTab by remember { mutableIntStateOf(0) } // 0 = Home, 1 = Search, 2 = Library
+    var currentTab by remember { mutableIntStateOf(0) } // 0 = Home, 1 = Search, 2 = Library, 3 = Online
+    var launchOnlineSearch by remember { mutableStateOf(false) }
     var showSettingsScreen by remember { mutableStateOf(false) }
     var isNowPlayingExpanded by remember { mutableStateOf(false) }
     var showEqualizerScreen by remember { mutableStateOf(false) }
@@ -192,6 +194,7 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                         screenVisible = showBottomChrome && currentTab == 0,
                         onOpenSettings = { showSettingsScreen = true },
                         onNavigateToLibrary = { currentTab = 2 },
+                        onOpenOnlineMusic = { currentTab = 3 },
                         onOpenNowPlaying = { isNowPlayingExpanded = true },
                         onOpenEqualizer = { showEqualizerScreen = true },
                         onOpenAudioStudio = { showAudioStudioScreen = true },
@@ -203,12 +206,27 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                     1 -> SearchScreen(
                         viewModel = viewModel,
                         colors = editorialColors,
-                        onOpenSettings = { showSettingsScreen = true }
+                        onOpenSettings = { showSettingsScreen = true },
+                        onSearchOnline = { queryText ->
+                            viewModel.updateOnlineSearchQuery(queryText)
+                            if (queryText.isNotBlank()) {
+                                viewModel.executeOnlineSearch(queryText)
+                            }
+                            launchOnlineSearch = true
+                            currentTab = 3
+                        }
                     )
                     2 -> LibraryScreen(
                         viewModel = viewModel,
                         onOpenFolderManagement = { showFolderManagementScreen = true },
                         onOpenPlaylists = { showPlaylistsScreen = true }
+                    )
+                    3 -> OnlineMusicScreen(
+                        viewModel = viewModel,
+                        colors = editorialColors,
+                        initialSearchOpen = launchOnlineSearch,
+                        onInitialSearchConsumed = { launchOnlineSearch = false },
+                        onOpenSettings = { showSettingsScreen = true }
                     )
                 }
             }

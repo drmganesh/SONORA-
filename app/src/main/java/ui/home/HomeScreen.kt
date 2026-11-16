@@ -108,6 +108,7 @@ fun HomeScreen(
     colors: EditorialColors,
     onOpenSettings: () -> Unit,
     onNavigateToLibrary: () -> Unit,
+    onOpenOnlineMusic: () -> Unit = {},
     onOpenNowPlaying: () -> Unit,
     onOpenEqualizer: () -> Unit = {},
     onOpenAudioStudio: () -> Unit = {},
@@ -232,7 +233,8 @@ fun HomeScreen(
                         EmptyLibraryEditorialCard(
                             colors = colors,
                             onScanLibrary = { viewModel.loadLocalSongs() },
-                            onOpenLibrary = onNavigateToLibrary
+                            onOpenLibrary = onNavigateToLibrary,
+                            onOpenOnlineMusic = onOpenOnlineMusic
                         )
                     }
                 } else {
@@ -298,6 +300,7 @@ fun HomeScreen(
                         QuickToolsEditorialStrip(
                             playlistCount = playlists.size,
                             colors = colors,
+                            onOpenOnlineMusic = onOpenOnlineMusic,
                             onOpenEqualizer = onOpenEqualizer,
                             onOpenAudioStudio = onOpenAudioStudio,
                             onOpenPlaylists = onOpenPlaylists,
@@ -1054,7 +1057,8 @@ private fun MostPlayedArchSection(
 private fun EmptyLibraryEditorialCard(
     colors: EditorialColors,
     onScanLibrary: () -> Unit,
-    onOpenLibrary: () -> Unit
+    onOpenLibrary: () -> Unit,
+    onOpenOnlineMusic: () -> Unit = {}
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
@@ -1100,7 +1104,7 @@ private fun EmptyLibraryEditorialCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "No local audio files matched yet. Scan your device storage or check your folder filters to populate Your Mix and Daily Mixes.",
+                text = "No local audio files matched yet. Scan your device storage, check folder filters, or explore Online Music.",
                 fontFamily = PlusJakartaFontFamily,
                 fontSize = 13.sp,
                 color = colors.textSecondary,
@@ -1142,6 +1146,25 @@ private fun EmptyLibraryEditorialCard(
                 ) {
                     Text("Library", fontFamily = PlusJakartaFontFamily, fontWeight = FontWeight.Bold)
                 }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Button(
+                onClick = onOpenOnlineMusic,
+                shape = RoundedCornerShape(24.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceTinted,
+                    contentColor = colors.textPrimary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("empty_library_explore_online_button")
+            ) {
+                Icon(Icons.Rounded.Explore, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Explore Online Music", fontFamily = PlusJakartaFontFamily, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -1380,12 +1403,14 @@ private fun DiscoveryAndThemeSheet(
 private fun QuickToolsEditorialStrip(
     playlistCount: Int,
     colors: EditorialColors,
+    onOpenOnlineMusic: () -> Unit,
     onOpenEqualizer: () -> Unit,
     onOpenAudioStudio: () -> Unit,
     onOpenPlaylists: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
     val entries = listOf(
+        Triple("Online Music", Icons.Rounded.Explore, onOpenOnlineMusic),
         Triple("15-Band EQ", Icons.Rounded.Tune, onOpenEqualizer),
         Triple("Audio Studio", Icons.Rounded.SpatialAudio, onOpenAudioStudio),
         Triple("Playlists ($playlistCount)", Icons.Rounded.LibraryMusic, onOpenPlaylists),

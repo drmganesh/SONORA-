@@ -145,6 +145,8 @@ fun SettingsScreen(
     val folderFilterSettings by viewModel.folderFilterSettings.collectAsState()
     val showLockScreenControls by viewModel.showLockScreenControls.collectAsState()
     val showNotificationFormatBadge by viewModel.showNotificationFormatBadge.collectAsState()
+    val onlineContentCountry by viewModel.onlineContentCountry.collectAsState()
+    val onlineContentLanguage by viewModel.onlineContentLanguage.collectAsState()
 
     var showHomeAnimationSettings by remember { mutableStateOf(false) }
     var showPlayerStyleSelector by remember { mutableStateOf(false) }
@@ -160,6 +162,7 @@ fun SettingsScreen(
     var playbackExpanded by remember { mutableStateOf(true) }
     var audioExpanded by remember { mutableStateOf(true) }
     var libraryExpanded by remember { mutableStateOf(true) }
+    var onlineExpanded by remember { mutableStateOf(true) }
     var notificationsExpanded by remember { mutableStateOf(true) }
     var aboutExpanded by remember { mutableStateOf(true) }
 
@@ -996,7 +999,67 @@ fun SettingsScreen(
                     }
                 }
 
-                // 5. NOTIFICATIONS
+                // 5. ONLINE MUSIC & REGION
+                item {
+                    val countryName = domain.online.OnlineRegionCatalog.supportedCountries
+                        .firstOrNull { it.code.equals(onlineContentCountry, ignoreCase = true) }
+                        ?.name ?: onlineContentCountry
+                    val languageName = domain.online.OnlineRegionCatalog.supportedLanguages
+                        .firstOrNull { it.code.equals(onlineContentLanguage, ignoreCase = true) }
+                        ?.name ?: onlineContentLanguage
+                    ExpandableSettingsSection(
+                        title = "ONLINE MUSIC & REGION",
+                        subtitle = "$countryName ($onlineContentCountry) • $languageName ($onlineContentLanguage)",
+                        expanded = onlineExpanded,
+                        onToggle = { onlineExpanded = !onlineExpanded },
+                        colors = colors
+                    ) {
+                        Text(
+                            text = "Content Country",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = "Sets charts and discovery country without changing language",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 11.sp,
+                            color = colors.textSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        GestureOptionChipRow(
+                            options = domain.online.OnlineRegionCatalog.supportedCountries.map { it.code to "${it.name} (${it.code})" },
+                            selected = onlineContentCountry,
+                            onSelect = { viewModel.setOnlineContentCountry(it) },
+                            colors = colors
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Preferred Language",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = "Sets Accept-Language (${onlineContentLanguage.lowercase()}-${onlineContentCountry.uppercase()}) without changing country",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 11.sp,
+                            color = colors.textSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        GestureOptionChipRow(
+                            options = domain.online.OnlineRegionCatalog.supportedLanguages.map { it.code to "${it.name} (${it.code})" },
+                            selected = onlineContentLanguage,
+                            onSelect = { viewModel.setOnlineContentLanguage(it) },
+                            colors = colors
+                        )
+                    }
+                }
+
+                // 6. NOTIFICATIONS
                 item {
                     ExpandableSettingsSection(
                         title = "NOTIFICATIONS",
@@ -1073,14 +1136,14 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column {
                                 Text(
-                                    text = "SONORA Offline Player",
+                                    text = "SONORA Music Player",
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 16.sp,
                                     color = colors.textPrimary
                                 )
                                 Text(
-                                    text = "Version 1.0.0 Pro • 100% Local Audio",
+                                    text = "Version 1.0.0 Pro • Local Hi-Fi & Online Streaming",
                                     fontFamily = PlusJakartaFontFamily,
                                     fontSize = 12.sp,
                                     color = colors.accentStrong
@@ -1095,14 +1158,14 @@ fun SettingsScreen(
                         SettingsLinkRow(
                             icon = Icons.Rounded.Policy,
                             title = "Privacy Policy",
-                            subtitle = "Zero telemetry • All files remain offline on device",
+                            subtitle = "Zero telemetry • Local playback stays offline",
                             colors = colors,
                             onClick = { showPrivacyDialog = true }
                         )
                         SettingsLinkRow(
                             icon = Icons.Rounded.Source,
                             title = "Open-Source Libraries",
-                            subtitle = "Jetpack Compose, Material 3, Room & AndroidX Media",
+                            subtitle = "NewPipe Extractor (GPL-3.0), Media3, Jetpack Compose & Room",
                             colors = colors,
                             onClick = { showLicensesDialog = true }
                         )
@@ -1121,7 +1184,7 @@ fun SettingsScreen(
             },
             text = {
                 Text(
-                    text = "SONORA operates 100% offline. No audio files, listening history, playlists, equalizer curves, or folder preferences ever leave your device. Permissions are requested strictly to index and play local audio files and display system media notifications.",
+                    text = "SONORA collects zero telemetry and requires no accounts. Local library scanning, playlists, equalizer curves, and folder rules never leave your device. When you choose to use Online Music, search and stream metadata requests are sent directly to your selected provider via NewPipe Extractor.",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
@@ -1145,10 +1208,13 @@ fun SettingsScreen(
             },
             text = {
                 Text(
-                    text = "• AndroidX Core, Activity Compose & Lifecycle (Apache 2.0)\n" +
+                    text = "• NewPipe Extractor v0.27.1-sonora.1 — TeamNewPipe (GNU GPL-3.0)\n" +
+                        "  https://github.com/TeamNewPipe/NewPipeExtractor\n" +
+                        "• Jetpack Media3 ExoPlayer & OkHttp DataSource (Apache 2.0)\n" +
+                        "• AndroidX Core, Activity Compose & Lifecycle (Apache 2.0)\n" +
                         "• Jetpack Compose & Material Design 3 (Apache 2.0)\n" +
-                        "• AndroidX Media & MediaStyle NotificationCompat (Apache 2.0)\n" +
                         "• AndroidX Room Database & Preferences DataStore (Apache 2.0)\n" +
+                        "• Coil Image Loading & OkHttp (Apache 2.0)\n" +
                         "• Kotlin Coroutines & Serialization (Apache 2.0)",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 13.sp,
