@@ -573,6 +573,9 @@ class SonoraNotificationManager(
         canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, paint)
         paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
         canvas.drawBitmap(scaled, rect, rect, paint)
+        if (scaled !== source && !scaled.isRecycled) {
+            scaled.recycle()
+        }
         return output
     }
 
@@ -587,7 +590,11 @@ class SonoraNotificationManager(
         } else {
             canvas.drawColor(0xFF18112C.toInt())
         }
-        createRoundedBitmap(bitmap, 32f)
+        val rounded = createRoundedBitmap(bitmap, 32f)
+        if (rounded !== bitmap && !bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+        rounded
     }
 
     private fun getFallbackArtworkBitmap(): Bitmap = cachedFallbackArtwork

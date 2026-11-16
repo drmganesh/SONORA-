@@ -36,13 +36,14 @@ object LyricsExtractor {
                     val baseName = audioFile.nameWithoutExtension
                     val parentDir = audioFile.parentFile
 
+                    val maxLyricsBytes = 512L * 1024L
                     val lrcFile = File(parentDir, "$baseName.lrc")
-                    if (lrcFile.exists() && lrcFile.length() > 0) {
+                    if (lrcFile.exists() && lrcFile.length() in 1L..maxLyricsBytes) {
                         return@withContext lrcFile.readText()
                     }
 
                     val txtFile = File(parentDir, "$baseName.txt")
-                    if (txtFile.exists() && txtFile.length() > 0) {
+                    if (txtFile.exists() && txtFile.length() in 1L..maxLyricsBytes) {
                         return@withContext txtFile.readText()
                     }
                 }
@@ -107,7 +108,10 @@ object LyricsExtractor {
                               (header[8].toInt() and 0x7F shl 7) or
                               (header[9].toInt() and 0x7F)
 
-                val tagBuffer = ByteArray(tagSize.coerceAtMost(256 * 1024))
+                val remainingBytes = (file.length() - 10L).coerceAtLeast(0L)
+                val safeSize = tagSize.toLong().coerceAtMost(remainingBytes).coerceAtMost(256L * 1024L).toInt()
+                if (safeSize <= 0) return null
+                val tagBuffer = ByteArray(safeSize)
                 raf.readFully(tagBuffer)
 
                 // Search for "USLT" frame in ID3v2.3 / ID3v2.4 or "ULT" in ID3v2.2

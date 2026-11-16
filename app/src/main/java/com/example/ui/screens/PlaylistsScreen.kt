@@ -149,16 +149,18 @@ fun PlaylistsScreen(
                 .fillMaxSize()
                 .widthIn(max = 760.dp)
         ) {
-            if (selectedCustomPlaylist != null || selectedSmartTarget != null) {
-                val detailTitle = selectedCustomPlaylist?.name ?: selectedSmartTarget!!.title
-                val detailSongs = if (selectedCustomPlaylist != null) activePlaylistSongs else selectedSmartTarget!!.songs
-                val isCustom = selectedCustomPlaylist != null
+            val customPlaylist = selectedCustomPlaylist
+            val smartTarget = selectedSmartTarget
+            if (customPlaylist != null || smartTarget != null) {
+                val detailTitle = customPlaylist?.name ?: smartTarget?.title.orEmpty()
+                val detailSongs = if (customPlaylist != null) activePlaylistSongs else smartTarget?.songs.orEmpty()
+                val isCustom = customPlaylist != null
                 val totalDurationLabel = remember(detailSongs) { formatTotalDuration(detailSongs) }
 
                 PlaylistDetailView(
                     title = detailTitle,
                     subtitle = "${detailSongs.size} tracks • $totalDurationLabel",
-                    coverTag = selectedCustomPlaylist?.coverArtUri ?: selectedSmartTarget?.badgeTag,
+                    coverTag = customPlaylist?.coverArtUri ?: smartTarget?.badgeTag,
                     songs = detailSongs,
                     allLibrarySongs = allSongs,
                     isCustom = isCustom,

@@ -82,8 +82,12 @@ fun SonoraApp(viewModel: SonoraViewModel) {
     val permissionsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        val granted = results.values.any { it }
-        if (granted) {
+        val audioPermissionGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            results[Manifest.permission.READ_MEDIA_AUDIO] == true
+        } else {
+            results[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+        }
+        if (audioPermissionGranted) {
             viewModel.loadLocalSongs()
         }
     }

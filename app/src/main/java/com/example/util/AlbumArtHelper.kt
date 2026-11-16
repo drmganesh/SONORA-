@@ -76,8 +76,22 @@ object AlbumArtHelper {
                     Uri.parse("content://media/external/audio/albumart"),
                     song.albumId
                 )
+                val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 context.contentResolver.openInputStream(albumArtUri)?.use { stream ->
-                    bitmap = BitmapFactory.decodeStream(stream)
+                    BitmapFactory.decodeStream(stream, null, boundsOpts)
+                }
+                if (boundsOpts.outWidth > 0 && boundsOpts.outHeight > 0) {
+                    var inSampleSize = 1
+                    while (boundsOpts.outWidth / inSampleSize > 768 || boundsOpts.outHeight / inSampleSize > 768) {
+                        inSampleSize *= 2
+                    }
+                    val decodeOpts = BitmapFactory.Options().apply {
+                        this.inSampleSize = inSampleSize
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    }
+                    context.contentResolver.openInputStream(albumArtUri)?.use { stream ->
+                        bitmap = BitmapFactory.decodeStream(stream, null, decodeOpts)
+                    }
                 }
             } catch (_: Exception) {
                 // Legacy URI unavailable

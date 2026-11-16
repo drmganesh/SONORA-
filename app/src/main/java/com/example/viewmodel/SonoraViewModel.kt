@@ -905,8 +905,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             serviceCollectorsJob?.cancel()
-            serviceCollectorsJob = kotlinx.coroutines.SupervisorJob()
-            val collectorScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + serviceCollectorsJob!!)
+            val collectorJob = kotlinx.coroutines.SupervisorJob()
+            serviceCollectorsJob = collectorJob
+            val collectorScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + collectorJob)
 
             // Bind audio visualizer & bands flows from AudioEngine
             val engine = connectedService.audioEngine

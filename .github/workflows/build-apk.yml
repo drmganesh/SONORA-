@@ -248,4 +248,4 @@ jobs:
 
       - name: Clean up temporary files
         if: always()
-        run: rm -f ./debug.keystore /tmp/release_info.json
+        run: rm -f ./debug.keystore /tmp/release_info.json /tmp/gradle-build.log
