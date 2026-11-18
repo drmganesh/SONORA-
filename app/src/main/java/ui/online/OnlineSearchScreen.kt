@@ -41,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -66,6 +67,7 @@ import com.example.viewmodel.SonoraViewModel
 import data.online.OnlineTrackMapper
 import domain.online.OnlineErrorKind
 import domain.online.OnlineItemKind
+import domain.online.OnlineMusicProvider
 import domain.online.OnlineTrack
 import ui.components.EditorialPlaylistPickerDialog
 import ui.theme.EditorialColors
@@ -373,6 +375,27 @@ fun OnlineSearchScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(top = 6.dp, bottom = 184.dp)
             ) {
+                val activePlayErr = playbackInfo.playbackError
+                if (!activePlayErr.isNullOrBlank()) {
+                    item(key = "online_search_playback_error") {
+                        val errKind = playbackInfo.playbackErrorKind ?: OnlineErrorKind.EXTRACTION_FAILED
+                        val canSwitchSc = errKind == OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA &&
+                            selectedProvider?.key != OnlineMusicProvider.KEY_SOUNDCLOUD
+                        OnlineErrorCard(
+                            kind = errKind,
+                            message = activePlayErr,
+                            showRetry = currentSong != null,
+                            colors = colors,
+                            onRetry = { viewModel.retryCurrentPlayback() },
+                            secondaryActionLabel = if (canSwitchSc) "Try SoundCloud" else null,
+                            onSecondaryAction = if (canSwitchSc) {
+                                { viewModel.switchToSoundCloudFallback() }
+                            } else null,
+                            onDismiss = { viewModel.clearPlaybackError() }
+                        )
+                    }
+                }
+
                 when (val state = searchState) {
                     is OnlineSearchUiState.Idle -> {
                         if (searchHistory.isNotEmpty()) {
@@ -523,12 +546,18 @@ fun OnlineSearchScreen(
 
                     is OnlineSearchUiState.Error -> {
                         item(key = "online_search_error") {
+                            val canSwitchSc = state.kind == OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA &&
+                                selectedProvider?.key != OnlineMusicProvider.KEY_SOUNDCLOUD
                             OnlineErrorCard(
                                 kind = state.kind,
                                 message = state.message,
                                 showRetry = state.isRetryable,
                                 colors = colors,
-                                onRetry = { viewModel.executeOnlineSearch(query, forceRefresh = true) }
+                                onRetry = { viewModel.executeOnlineSearch(query, forceRefresh = true) },
+                                secondaryActionLabel = if (canSwitchSc) "Try SoundCloud" else null,
+                                onSecondaryAction = if (canSwitchSc) {
+                                    { viewModel.switchToSoundCloudFallback() }
+                                } else null
                             )
                         }
                     }
@@ -715,7 +744,10 @@ fun OnlineErrorCard(
     showRetry: Boolean,
     colors: EditorialColors,
     onRetry: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null
 ) {
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -733,7 +765,7 @@ fun OnlineErrorCard(
             val title = when (kind) {
                 OnlineErrorKind.OFFLINE -> "You're Offline"
                 OnlineErrorKind.TIMEOUT -> "Connection Timed Out"
-                OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA -> "Provider Rate Limited"
+                OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA -> "Provider Verification / Rate Limit"
                 OnlineErrorKind.AGE_OR_GEO_RESTRICTED -> "Track Restricted"
                 OnlineErrorKind.STREAM_EXPIRED -> "Stream URL Expired"
                 OnlineErrorKind.NO_PLAYABLE_AUDIO_STREAM -> "No Playable Audio"
@@ -756,18 +788,61 @@ fun OnlineErrorCard(
                 color = colors.textSecondary,
                 textAlign = TextAlign.Center
             )
-            if (showRetry) {
+            if (showRetry || (!secondaryActionLabel.isNullOrBlank() && onSecondaryAction != null) || onDismiss != null) {
                 Spacer(modifier = Modifier.height(14.dp))
-                Button(
-                    onClick = onRetry,
-                    shape = RoundedCornerShape(18.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.accentStrong,
-                        contentColor = colors.onAccentStrong
-                    ),
-                    modifier = Modifier.height(48.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Try Again", fontFamily = PlusJakartaFontFamily, fontWeight = FontWeight.Bold)
+                    if (showRetry) {
+                        Button(
+                            onClick = onRetry,
+                            shape = RoundedCornerShape(18.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.accentStrong,
+                                contentColor = colors.onAccentStrong
+                            ),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("online_error_retry_button")
+                        ) {
+                            Text("Try Again", fontFamily = PlusJakartaFontFamily, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (!secondaryActionLabel.isNullOrBlank() && onSecondaryAction != null) {
+                        Button(
+                            onClick = onSecondaryAction,
+                            shape = RoundedCornerShape(18.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.accentPill,
+                                contentColor = colors.onAccentPill
+                            ),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("online_error_secondary_button")
+                        ) {
+                            Text(
+                                text = secondaryActionLabel,
+                                fontFamily = PlusJakartaFontFamily,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    if (onDismiss != null) {
+                        TextButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("online_error_dismiss_button")
+                        ) {
+                            Text(
+                                text = "Dismiss",
+                                fontFamily = PlusJakartaFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.textSecondary
+                            )
+                        }
+                    }
                 }
             }
         }

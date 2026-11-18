@@ -1,5 +1,6 @@
 package ui.player
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,9 @@ import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.ArtworkContainer
 import ui.components.PlaybackControls
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -73,6 +77,8 @@ fun EditorialPlayer(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
     val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
 
@@ -218,28 +224,36 @@ fun EditorialPlayer(
                                 }
                             }
                         }
-                        Text(
-                            text = song?.title ?: "No Song Selected",
-                            fontFamily = OutfitFontFamily,
-                            color = colors.textPrimary,
-                            fontSize = (24f * scale).sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
-                                "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
-                            } else {
-                                song?.artist ?: "Unknown Artist"
-                            },
-                            fontFamily = PlusJakartaFontFamily,
-                            color = colors.textSecondary,
-                            fontSize = (15f * scale).sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        AnimatedContent(
+                            targetState = song?.id,
+                            transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                            label = "editorialMetadataTransition"
+                        ) { _ ->
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = song?.title ?: "No Song Selected",
+                                    fontFamily = OutfitFontFamily,
+                                    color = colors.textPrimary,
+                                    fontSize = (24f * scale).sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
+                                        "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
+                                    } else {
+                                        song?.artist ?: "Unknown Artist"
+                                    },
+                                    fontFamily = PlusJakartaFontFamily,
+                                    color = colors.textSecondary,
+                                    fontSize = (15f * scale).sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
 
                     SeekbarRenderer(

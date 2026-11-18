@@ -1,5 +1,6 @@
 package ui.player
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
@@ -59,7 +60,12 @@ import com.example.ui.theme.PlusJakartaFontFamily
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import ui.components.PlaybackControls
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
+import ui.motion.rememberMotionAwareHaptic
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -93,6 +99,9 @@ fun DialPlayer(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
+    val performHaptic = rememberMotionAwareHaptic()
     var isUserDraggingDial by remember { mutableStateOf(false) }
     var dialDragAngle by remember { mutableFloatStateOf(0f) }
     var showLinearSeeker by remember { mutableStateOf(false) }
@@ -178,6 +187,7 @@ fun DialPlayer(
                             detectDragGestures(
                                 onDragStart = { offset ->
                                     isUserDraggingDial = true
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
                                     val center = Offset(size.width / 2f, size.height / 2f)
                                     val dx = offset.x - center.x
                                     val dy = offset.y - center.y
@@ -263,6 +273,9 @@ fun DialPlayer(
                         .graphicsLayer {
                             scaleX = gestureController.artworkZoomScale
                             scaleY = gestureController.artworkZoomScale
+                            translationX = if (motionState.animationsEnabled) {
+                                (gestureController.artworkDragOffsetX * 0.25f).coerceIn(-68f, 68f)
+                            } else 0f
                         }
                         .clip(CircleShape)
                         .border(3.dp, colors.accentStrong.copy(alpha = 0.55f), CircleShape)
@@ -285,12 +298,19 @@ fun DialPlayer(
                         .testTag("player_artwork_box"),
                     contentAlignment = Alignment.Center
                 ) {
-                    ArtworkAlbumView(
-                        song = song,
+                    AnimatedContent(
+                        targetState = song?.id,
+                        transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
                         modifier = Modifier.fillMaxSize(),
-                        isVinylRotating = true,
-                        isPlaying = playbackInfo.isPlaying
-                    )
+                        label = "dialArtworkTrackTransition"
+                    ) { _ ->
+                        ArtworkAlbumView(
+                            song = song,
+                            modifier = Modifier.fillMaxSize(),
+                            isVinylRotating = true,
+                            isPlaying = playbackInfo.isPlaying
+                        )
+                    }
                 }
             }
 
@@ -314,23 +334,31 @@ fun DialPlayer(
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = song?.title ?: "No Song Selected",
-                    fontFamily = OutfitFontFamily,
-                    color = colors.textPrimary,
-                    fontSize = (20f * scale).sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = song?.artist ?: "Unknown Artist",
-                    fontFamily = PlusJakartaFontFamily,
-                    color = colors.textSecondary,
-                    fontSize = (14f * scale).sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                AnimatedContent(
+                    targetState = song?.id,
+                    transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                    label = "dialMetadataTransition"
+                ) { _ ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = song?.title ?: "No Song Selected",
+                            fontFamily = OutfitFontFamily,
+                            color = colors.textPrimary,
+                            fontSize = (20f * scale).sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = song?.artist ?: "Unknown Artist",
+                            fontFamily = PlusJakartaFontFamily,
+                            color = colors.textSecondary,
+                            fontSize = (14f * scale).sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
 
             if (showLinearSeeker) {

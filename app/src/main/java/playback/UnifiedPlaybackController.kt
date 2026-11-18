@@ -4,6 +4,7 @@ import com.example.audio.SonoraAudioEngine
 import com.example.model.Song
 import data.online.OnlineMusicRepository
 import domain.online.AudioQualityPreference
+import domain.online.OnlineErrorKind
 import domain.online.OnlineResult
 import domain.online.PlaybackSource
 import domain.online.ResolvedOnlineStreamResult
@@ -30,12 +31,26 @@ class UnifiedPlaybackController(
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var resolveJob: Job? = null
+    @Volatile
+    private var resolvingContentUrl: String? = null
+    @Volatile
+    private var resolvingManualStreamId: String? = null
 
     private val _currentResolvedStream = MutableStateFlow<ResolvedOnlineStreamResult?>(null)
     val currentResolvedStream: StateFlow<ResolvedOnlineStreamResult?> = _currentResolvedStream.asStateFlow()
 
     @Volatile
     private var activePlaybackGeneration = 0L
+
+    fun isCurrentlyResolving(song: Song, manualStreamId: String? = null): Boolean {
+        if (!song.isOnline) return false
+        val job = resolveJob ?: return false
+        if (!job.isActive) return false
+        val targetUrl = song.contentUrl.ifBlank { song.uri.toString() }
+        return targetUrl.isNotBlank() &&
+            targetUrl == resolvingContentUrl &&
+            manualStreamId == resolvingManualStreamId
+    }
 
     fun playSong(
         song: Song,
@@ -45,7 +60,7 @@ class UnifiedPlaybackController(
         onResolvingStarted: () -> Unit,
         onPrepared: (updatedSong: Song, resolved: ResolvedOnlineStreamResult?, durationMs: Long) -> Unit,
         onCompletion: () -> Unit,
-        onError: (String) -> Unit
+        onError: (String, OnlineErrorKind?) -> Unit
     ) {
         val generation = ++activePlaybackGeneration
         resolveJob?.cancel()
@@ -81,7 +96,7 @@ class UnifiedPlaybackController(
                     },
                     onError = { msg ->
                         if (generation != activePlaybackGeneration) return@prepareAndPlay
-                        onError(msg)
+                        onError(msg, null)
                     }
                 )
             }
@@ -112,8 +127,10 @@ class UnifiedPlaybackController(
         allowReExtractRetry: Boolean,
         onPrepared: (updatedSong: Song, resolved: ResolvedOnlineStreamResult?, durationMs: Long) -> Unit,
         onCompletion: () -> Unit,
-        onError: (String) -> Unit
+        onError: (String, OnlineErrorKind?) -> Unit
     ) {
+        resolvingContentUrl = song.contentUrl.ifBlank { song.uri.toString() }
+        resolvingManualStreamId = manualStreamId
         resolveJob = scope.launch {
             try {
                 val forceRefresh = !allowReExtractRetry
@@ -171,7 +188,10 @@ class UnifiedPlaybackController(
                                         onError = onError
                                     )
                                 } else {
-                                    onError(errMsg)
+                                    onError(
+                                        errMsg,
+                                        if (mayBeExpiredStream) OnlineErrorKind.STREAM_EXPIRED else OnlineErrorKind.EXTRACTION_FAILED
+                                    )
                                 }
                             }
                         )
@@ -179,14 +199,19 @@ class UnifiedPlaybackController(
 
                     is OnlineResult.Error -> {
                         if (generation != activePlaybackGeneration) return@launch
-                        onError(result.message)
+                        onError(result.message, result.kind)
                     }
                 }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
                 if (generation == activePlaybackGeneration) {
-                    onError(t.message ?: "Failed resolving online track.")
+                    onError(t.message ?: "Failed resolving online track.", OnlineErrorKind.EXTRACTION_FAILED)
+                }
+            } finally {
+                if (generation == activePlaybackGeneration) {
+                    resolvingContentUrl = null
+                    resolvingManualStreamId = null
                 }
             }
         }
@@ -194,6 +219,8 @@ class UnifiedPlaybackController(
 
     fun cancelPendingResolution() {
         activePlaybackGeneration++
+        resolvingContentUrl = null
+        resolvingManualStreamId = null
         resolveJob?.cancel()
         resolveJob = null
     }

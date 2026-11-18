@@ -1,10 +1,10 @@
 package ui.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,15 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Explore
-import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
@@ -44,8 +37,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -55,34 +48,37 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
+import com.example.viewmodel.OnlineSearchUiState
 import com.example.viewmodel.SonoraViewModel
-import java.io.File
-import ui.components.CircularArtwork
+import data.online.OnlineTrackMapper
+import domain.home.HomeMusicMode
+import domain.online.OnlineItemKind
+import domain.online.OnlineTrack
 import ui.components.CollectionDetailSheet
 import ui.components.EditorialPlaylistPickerDialog
 import ui.components.MusicContextMenuSheet
+import ui.online.OnlineCollectionDetailsSheet
+import ui.online.OnlineQualitySelectorSheet
+import ui.online.OnlineTrackOptionsSheet
+import ui.online.buildArtistExploreTrack
 import ui.theme.EditorialColors
 
-private data class SearchCollectionModal(
-    val title: String,
-    val subtitle: String,
-    val songs: List<Song>
-)
-
 /**
- * Editorial Search Screen for the Floating Bottom Navigation's Search destination.
- * Searches across real local songs, albums, artists, genres, and playlists cleanly.
+ * Mode-aware Search Screen for SONORA.
+ * Automatically aligns default scope with [SonoraViewModel.homeMusicMode]:
+ * - [HomeMusicMode.OFFLINE]: Searches strictly within local MediaStore tracks/albums/artists/playlists/folders.
+ * - [HomeMusicMode.ONLINE]: Searches NewPipe Extractor inline across YT Music, SoundCloud, Bandcamp, Jamendo & Piped.
+ * - Users may also explicitly select Combined ("All") scope when they want both in one view.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -93,6 +89,7 @@ fun SearchScreen(
     onSearchOnline: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val homeMusicMode by viewModel.homeMusicMode.collectAsState()
     val allSongs by viewModel.allSongs.collectAsState()
     val albums by viewModel.albums.collectAsState()
     val artists by viewModel.artists.collectAsState()
@@ -103,20 +100,60 @@ fun SearchScreen(
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
 
-    var query by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableIntStateOf(0) } // 0=All, 1=Songs, 2=Albums, 3=Artists, 4=Playlists, 5=Folders
+    val onlineProviders by viewModel.onlineProviders.collectAsState()
+    val selectedOnlineProvider by viewModel.selectedOnlineProvider.collectAsState()
+    val selectedOnlineFilter by viewModel.selectedOnlineFilter.collectAsState()
+    val onlineQuery by viewModel.onlineSearchQuery.collectAsState()
+    val onlineSuggestions by viewModel.onlineSearchSuggestions.collectAsState()
+    val onlineSearchState by viewModel.onlineSearchState.collectAsState()
+    val onlineSearchHistory by viewModel.onlineSearchHistory.collectAsState()
+    val isNetworkOnline by viewModel.isNetworkOnline.collectAsState()
+    val isMeteredNetwork by viewModel.isMeteredNetwork.collectAsState()
+    val onlineQualityPreference by viewModel.onlineQualityPreference.collectAsState()
+    val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
+    val savedOnlineTracks by viewModel.onlineSavedTracks.collectAsState()
+    val allOnlineTracks by viewModel.allOnlineTracks.collectAsState()
+    val onlineCollectionState by viewModel.onlineCollectionState.collectAsState()
+
+    val savedOnlineIds = remember(savedOnlineTracks) { savedOnlineTracks.map { it.id }.toSet() }
+    val favoriteOnlineIds = remember(allOnlineTracks) {
+        allOnlineTracks.filter { it.isFavorite }.map { it.id }.toSet()
+    }
+
+    var searchScope by remember {
+        mutableStateOf(
+            if (homeMusicMode == HomeMusicMode.ONLINE) SearchSourceScope.ONLINE else SearchSourceScope.LOCAL
+        )
+    }
+
+    LaunchedEffect(homeMusicMode) {
+        searchScope = if (homeMusicMode == HomeMusicMode.ONLINE) {
+            SearchSourceScope.ONLINE
+        } else {
+            SearchSourceScope.LOCAL
+        }
+    }
+
+    var query by remember { mutableStateOf(onlineQuery) }
+    var selectedLocalFilter by remember { mutableIntStateOf(0) }
     var activeModal by remember { mutableStateOf<SearchCollectionModal?>(null) }
     var contextMenuSong by remember { mutableStateOf<Song?>(null) }
+    var onlineOptionsTarget by remember { mutableStateOf<OnlineTrack?>(null) }
     var playlistPickerSong by remember { mutableStateOf<Song?>(null) }
+    var showQualitySheet by remember { mutableStateOf(false) }
 
     val haptic = LocalHapticFeedback.current
-    val filters = listOf("All", "Songs", "Albums", "Artists", "Playlists", "Folders")
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val localFilters = listOf("All", "Songs", "Albums", "Artists", "Playlists", "Folders")
 
     val smartSuggestions = remember(artists, genres, albums) {
         val topArtists = artists.take(4).map { it.name }
         val topGenres = genres.take(3).map { it.name }
         val topAlbums = albums.take(2).map { it.title }
-        (topArtists + topGenres + topAlbums).filter { it.isNotBlank() && !it.equals("<unknown>", ignoreCase = true) }.distinct().take(8)
+        (topArtists + topGenres + topAlbums)
+            .filter { it.isNotBlank() && !it.equals("<unknown>", ignoreCase = true) }
+            .distinct()
+            .take(8)
     }
 
     val matchedSongs = remember(allSongs, query) {
@@ -153,6 +190,24 @@ fun SearchScreen(
         }
     }
 
+    val executeSearchForCurrentScope: (String, Boolean) -> Unit = { term, force ->
+        query = term
+        keyboardController?.hide()
+        if (searchScope == SearchSourceScope.LOCAL || searchScope == SearchSourceScope.COMBINED) {
+            if (term.isNotBlank()) viewModel.addRecentSearch(term)
+        }
+        if (searchScope == SearchSourceScope.ONLINE || searchScope == SearchSourceScope.COMBINED) {
+            viewModel.updateOnlineSearchQuery(term)
+            if (term.isNotBlank()) {
+                viewModel.executeOnlineSearch(term, forceRefresh = force)
+            }
+        }
+    }
+
+    // Keep reference parameter live for caller compatibility
+    @Suppress("UNUSED_EXPRESSION")
+    onSearchOnline
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -166,7 +221,7 @@ fun SearchScreen(
                 .widthIn(max = 760.dp)
                 .fillMaxSize()
         ) {
-            // Editorial Title Row + Settings icon
+            // Editorial Title Row + Quality/Settings controls
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -174,46 +229,120 @@ fun SearchScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Search",
-                    fontFamily = OutfitFontFamily,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 36.sp,
-                    letterSpacing = (-0.8).sp,
-                    color = colors.textPrimary
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Search",
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 36.sp,
+                        letterSpacing = (-0.8).sp,
+                        color = colors.textPrimary
+                    )
+                    Text(
+                        text = when (searchScope) {
+                            SearchSourceScope.LOCAL -> "Offline library only"
+                            SearchSourceScope.ONLINE -> "Streaming via ${selectedOnlineProvider?.displayName ?: "YT Music"}"
+                            SearchSourceScope.COMBINED -> "Searching local & online music"
+                        },
+                        fontFamily = PlusJakartaFontFamily,
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.testTag("search_scope_subtitle")
+                    )
+                }
 
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .clickable { onOpenSettings() },
-                    contentAlignment = Alignment.Center
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (searchScope != SearchSourceScope.LOCAL) {
+                        Surface(
+                            onClick = { showQualitySheet = true },
+                            shape = RoundedCornerShape(18.dp),
+                            color = colors.surfaceTinted,
+                            border = BorderStroke(0.75.dp, colors.cardBorder),
+                            modifier = Modifier
+                                .height(42.dp)
+                                .testTag("search_quality_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.HighQuality,
+                                    contentDescription = "Online Stream Quality",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = onlineQualityPreference.title,
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = colors.textPrimary
+                                )
+                            }
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
-                            .background(colors.accentPill),
+                            .clickable { onOpenSettings() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Settings,
-                            contentDescription = "Settings",
-                            tint = colors.onAccentPill,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(colors.accentPill),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Settings,
+                                contentDescription = "Settings",
+                                tint = colors.onAccentPill,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            // Pill Search Field
+            // Explicit Source Scope Toggle (Defaults cleanly to active Home mode)
+            SearchScopeSelectorRow(
+                selectedScope = searchScope,
+                onSelectScope = { newScope ->
+                    searchScope = newScope
+                    if (newScope != SearchSourceScope.LOCAL && query.isNotBlank()) {
+                        viewModel.updateOnlineSearchQuery(query)
+                    }
+                },
+                colors = colors
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Unified Search Field
             OutlinedTextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = { updated ->
+                    query = updated
+                    if (searchScope != SearchSourceScope.LOCAL) {
+                        viewModel.updateOnlineSearchQuery(updated)
+                    }
+                },
                 placeholder = {
+                    val hint = when (searchScope) {
+                        SearchSourceScope.LOCAL -> "Local songs, artists, albums, or folders..."
+                        SearchSourceScope.ONLINE -> "Search songs, artists, albums online..."
+                        SearchSourceScope.COMBINED -> "Search offline & online music..."
+                    }
                     Text(
-                        text = "Songs, artists, albums, or genres...",
+                        text = hint,
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 14.sp,
                         color = colors.textMuted
@@ -228,7 +357,15 @@ fun SearchScreen(
                 },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
+                        IconButton(
+                            onClick = {
+                                query = ""
+                                if (searchScope != SearchSourceScope.LOCAL) {
+                                    viewModel.updateOnlineSearchQuery("")
+                                }
+                            },
+                            modifier = Modifier.size(48.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Rounded.Close,
                                 contentDescription = "Clear search",
@@ -241,9 +378,7 @@ fun SearchScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
-                    onSearch = {
-                        if (query.isNotBlank()) viewModel.addRecentSearch(query)
-                    }
+                    onSearch = { executeSearchForCurrentScope(query, false) }
                 ),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = colors.surface,
@@ -259,644 +394,128 @@ fun SearchScreen(
                     .testTag("editorial_search_input")
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Filter Pills
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(filters.indices.toList()) { idx ->
-                    val selected = selectedFilter == idx
-                    Surface(
-                        onClick = { selectedFilter = idx },
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (selected) colors.accentPill else colors.surface,
-                        border = androidx.compose.foundation.BorderStroke(
-                            width = 0.75.dp,
-                            color = if (selected) colors.accentStrong else colors.cardBorder
-                        ),
-                        modifier = Modifier.height(38.dp)
+            // Mode-specific Filter & Provider Strip
+            AnimatedVisibility(visible = searchScope == SearchSourceScope.LOCAL || searchScope == SearchSourceScope.COMBINED) {
+                Column {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.testTag("search_local_filters")
                     ) {
-                        Box(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = filters[idx],
-                                fontFamily = PlusJakartaFontFamily,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 13.sp,
-                                color = if (selected) colors.onAccentPill else colors.textSecondary
-                            )
+                        items(localFilters.indices.toList(), key = { "loc_flt_$it" }) { idx ->
+                            val selected = selectedLocalFilter == idx
+                            Surface(
+                                onClick = { selectedLocalFilter = idx },
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (selected) colors.accentPill else colors.surface,
+                                border = BorderStroke(
+                                    width = 0.75.dp,
+                                    color = if (selected) colors.accentStrong else colors.cardBorder
+                                ),
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = localFilters[idx],
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 13.sp,
+                                        color = if (selected) colors.onAccentPill else colors.textSecondary
+                                    )
+                                }
+                            }
                         }
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            AnimatedVisibility(visible = searchScope == SearchSourceScope.ONLINE || searchScope == SearchSourceScope.COMBINED) {
+                Column {
+                    SearchOnlineControlsHeader(
+                        isNetworkOnline = isNetworkOnline,
+                        providers = onlineProviders,
+                        selectedProvider = selectedOnlineProvider,
+                        selectedFilter = selectedOnlineFilter,
+                        query = query,
+                        suggestions = onlineSuggestions,
+                        colors = colors,
+                        onSelectProvider = { viewModel.selectOnlineProvider(it.key) },
+                        onSelectFilter = { viewModel.selectOnlineFilter(it) },
+                        onExecuteSuggestion = { sug -> executeSearchForCurrentScope(sug, false) }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
 
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 184.dp, top = 6.dp)
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("search_results_list"),
+                contentPadding = PaddingValues(bottom = 184.dp, top = 4.dp)
             ) {
-                item(key = "online_search_handoff") {
-                    Surface(
-                        onClick = { onSearchOnline(query.trim()) },
-                        shape = RoundedCornerShape(20.dp),
-                        color = colors.accentPill.copy(alpha = 0.55f),
-                        border = androidx.compose.foundation.BorderStroke(0.75.dp, colors.accentStrong.copy(alpha = 0.45f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 6.dp)
-                            .testTag("search_online_handoff_card")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.accentStrong),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Explore,
-                                    contentDescription = "Search Online Music",
-                                    tint = colors.onAccentStrong,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (query.isNotBlank()) "Search \"${query.trim()}\" online" else "Search Online Music",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = colors.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Stream songs, artists, albums & playlists via NewPipe Extractor",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 11.sp,
-                                    color = colors.textSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
+                if (searchScope == SearchSourceScope.ONLINE || searchScope == SearchSourceScope.COMBINED) {
+                    onlineSearchLazyContent(
+                        searchState = onlineSearchState,
+                        searchHistory = onlineSearchHistory,
+                        selectedProvider = selectedOnlineProvider,
+                        selectedFilter = selectedOnlineFilter,
+                        query = query,
+                        currentSong = currentSong,
+                        playbackInfo = playbackInfo,
+                        savedIds = savedOnlineIds,
+                        colors = colors,
+                        showCombinedHeader = searchScope == SearchSourceScope.COMBINED,
+                        onExecuteSearch = { term, force -> executeSearchForCurrentScope(term, force) },
+                        onRemoveHistory = { viewModel.removeOnlineSearchHistory(it) },
+                        onClearHistory = { viewModel.clearOnlineSearchHistory() },
+                        onPlayTrack = { track, pool -> viewModel.playOnlineTrack(track, pool) },
+                        onOpenCollection = { viewModel.openOnlineCollection(it) },
+                        onMoreClick = { onlineOptionsTarget = it },
+                        onLoadMore = { viewModel.loadMoreOnlineSearchResults() },
+                        onRetryPlayback = { viewModel.retryCurrentPlayback() },
+                        onSwitchSoundCloudFallback = { viewModel.switchToSoundCloudFallback() },
+                        onDismissPlaybackError = { viewModel.clearPlaybackError() }
+                    )
                 }
 
-                if (query.isBlank() && recentSearches.isNotEmpty()) {
-                    item(key = "recent_searches_block") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 22.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Rounded.History,
-                                    contentDescription = null,
-                                    tint = colors.accentStrong,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Recent Searches",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = colors.textPrimary
-                                )
-                            }
-                            Text(
-                                text = "Clear All",
-                                fontFamily = PlusJakartaFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp,
-                                color = colors.accentStrong,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable { viewModel.clearRecentSearches() }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(recentSearches, key = { "rec_$it" }) { term ->
-                                Surface(
-                                    onClick = { query = term },
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = colors.surface,
-                                    border = androidx.compose.foundation.BorderStroke(0.75.dp, colors.cardBorder),
-                                    modifier = Modifier.height(38.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(start = 12.dp, end = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = term,
-                                            fontFamily = PlusJakartaFontFamily,
-                                            fontSize = 12.sp,
-                                            color = colors.textPrimary
-                                        )
-                                        IconButton(
-                                            onClick = { viewModel.removeRecentSearch(term) },
-                                            modifier = Modifier.size(28.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.Close,
-                                                contentDescription = "Remove search $term",
-                                                tint = colors.textMuted,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                    }
+                if (searchScope == SearchSourceScope.LOCAL || searchScope == SearchSourceScope.COMBINED) {
+                    localSearchLazyContent(
+                        query = query,
+                        selectedFilter = selectedLocalFilter,
+                        allSongs = allSongs,
+                        genres = genres,
+                        recentSearches = recentSearches,
+                        smartSuggestions = smartSuggestions,
+                        matchedSongs = matchedSongs,
+                        matchedAlbums = matchedAlbums,
+                        matchedArtists = matchedArtists,
+                        matchedPlaylists = matchedPlaylists,
+                        matchedFolders = matchedFolders,
+                        currentSong = currentSong,
+                        playbackInfo = playbackInfo,
+                        colors = colors,
+                        haptic = haptic,
+                        viewModel = viewModel,
+                        showCombinedHeader = searchScope == SearchSourceScope.COMBINED,
+                        onSelectQuery = { term -> query = term },
+                        onOpenModal = { activeModal = it },
+                        onOpenContextMenu = { contextMenuSong = it },
+                        onSwitchToOnlineSearch = if (searchScope == SearchSourceScope.LOCAL) {
+                            {
+                                searchScope = SearchSourceScope.ONLINE
+                                if (query.isNotBlank()) {
+                                    viewModel.updateOnlineSearchQuery(query)
+                                    viewModel.executeOnlineSearch(query)
                                 }
                             }
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                    }
-                }
-
-                if (query.isBlank() && smartSuggestions.isNotEmpty()) {
-                    item(key = "smart_suggestions") {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.AutoAwesome,
-                                contentDescription = null,
-                                tint = colors.accentStrong,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Smart Suggestions",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = colors.textPrimary
-                            )
-                        }
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(smartSuggestions, key = { "sug_$it" }) { term ->
-                                Surface(
-                                    onClick = {
-                                        query = term
-                                        viewModel.addRecentSearch(term)
-                                    },
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = colors.accentPill.copy(alpha = 0.65f),
-                                    modifier = Modifier.height(36.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier.padding(horizontal = 14.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = term,
-                                            fontFamily = PlusJakartaFontFamily,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 12.sp,
-                                            color = colors.onAccentPill
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(10.dp))
-                    }
-                }
-
-                if (query.isBlank() && genres.isNotEmpty()) {
-                    item(key = "browse_genres") {
-                        Text(
-                            text = "Browse Genres",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = colors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 8.dp)
-                        )
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            items(genres.take(12), key = { it.name }) { g ->
-                                Surface(
-                                    onClick = {
-                                        val genreSongs = allSongs.filter { it.genre == g.name }
-                                        activeModal = SearchCollectionModal(
-                                            title = g.name,
-                                            subtitle = "Genre Collection",
-                                            songs = genreSongs
-                                        )
-                                    },
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = colors.surfaceTinted,
-                                    border = androidx.compose.foundation.BorderStroke(0.75.dp, colors.cardBorder)
-                                ) {
-                                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                                        Text(
-                                            text = g.name,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 14.sp,
-                                            color = colors.textPrimary
-                                        )
-                                        Text(
-                                            text = "${g.songCount} tracks",
-                                            fontFamily = PlusJakartaFontFamily,
-                                            fontSize = 11.sp,
-                                            color = colors.textSecondary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-                }
-
-                // Matched Artists
-                if ((selectedFilter == 0 || selectedFilter == 3) && matchedArtists.isNotEmpty()) {
-                    item(key = "artists_header") {
-                        Text(
-                            text = "Artists",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = colors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp)
-                        )
-                    }
-                    items(matchedArtists, key = { "sr_art_${it.name}" }) { artist ->
-                        val artistSongs = allSongs.filter { it.artist == artist.name }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 4.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(colors.surface)
-                                .clickable {
-                                    activeModal = SearchCollectionModal(
-                                        title = artist.name,
-                                        subtitle = "${artist.albumCount} albums",
-                                        songs = artistSongs
-                                    )
-                                }
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(colors.accentPill, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Rounded.Person, contentDescription = null, tint = colors.onAccentPill)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = artist.name,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
-                                    color = colors.textPrimary
-                                )
-                                Text(
-                                    text = "${artist.songCount} songs",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.textSecondary
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Matched Albums
-                if ((selectedFilter == 0 || selectedFilter == 2) && matchedAlbums.isNotEmpty()) {
-                    item(key = "albums_header") {
-                        Text(
-                            text = "Albums",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = colors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp)
-                        )
-                    }
-                    items(matchedAlbums, key = { "sr_alb_${it.id}_${it.title}" }) { album ->
-                        val albumSongs = allSongs.filter { it.album == album.title }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 4.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(colors.surface)
-                                .clickable {
-                                    activeModal = SearchCollectionModal(
-                                        title = album.title,
-                                        subtitle = album.artist,
-                                        songs = albumSongs
-                                    )
-                                }
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularArtwork(
-                                song = albumSongs.firstOrNull(),
-                                fallbackLabel = album.title,
-                                accentColor = colors.accentPill,
-                                shadowElevation = 3.dp,
-                                modifier = Modifier.size(44.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = album.title,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
-                                    color = colors.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "${album.artist} • ${album.songCount} tracks",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.textSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Icon(Icons.Rounded.Album, contentDescription = null, tint = colors.textMuted)
-                        }
-                    }
-                }
-
-                // Matched Playlists
-                if ((selectedFilter == 0 || selectedFilter == 4) && matchedPlaylists.isNotEmpty()) {
-                    item(key = "playlists_header") {
-                        Text(
-                            text = "Playlists",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = colors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp)
-                        )
-                    }
-                    items(matchedPlaylists, key = { "sr_pl_${it.id}" }) { playlist ->
-                        val playlistSongs by viewModel.getSongsForPlaylistFlow(playlist.id).collectAsState(initial = emptyList())
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 4.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(colors.surface)
-                                .clickable {
-                                    if (query.isNotBlank()) viewModel.addRecentSearch(query)
-                                    activeModal = SearchCollectionModal(
-                                        title = playlist.name,
-                                        subtitle = "Custom Playlist",
-                                        songs = playlistSongs
-                                    )
-                                }
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(colors.accentPill, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = colors.onAccentPill)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    text = playlist.name,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
-                                    color = colors.textPrimary
-                                )
-                                Text(
-                                    text = "${playlistSongs.size} songs",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.textSecondary
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Matched Folders
-                if ((selectedFilter == 0 || selectedFilter == 5) && matchedFolders.isNotEmpty()) {
-                    item(key = "folders_header") {
-                        Text(
-                            text = "Folders",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = colors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp)
-                        )
-                    }
-                    items(matchedFolders, key = { "sr_fld_${it.path}" }) { folder ->
-                        val folderSongs = allSongs.filter { (File(it.dataPath).parent ?: "/storage") == folder.path }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 4.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(colors.surface)
-                                .clickable {
-                                    if (query.isNotBlank()) viewModel.addRecentSearch(query)
-                                    activeModal = SearchCollectionModal(
-                                        title = folder.name,
-                                        subtitle = folder.path,
-                                        songs = folderSongs
-                                    )
-                                }
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .background(colors.accentPill, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Rounded.Folder, contentDescription = null, tint = colors.onAccentPill)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = folder.name,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
-                                    color = colors.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "${folder.songCount} songs • ${folder.path}",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 11.sp,
-                                    color = colors.textSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Matched Songs
-                if ((selectedFilter == 0 || selectedFilter == 1) && matchedSongs.isNotEmpty()) {
-                    item(key = "songs_header") {
-                        Text(
-                            text = if (query.isBlank()) "Quick Library Picks" else "Songs (${matchedSongs.size})",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = colors.textPrimary,
-                            modifier = Modifier.padding(horizontal = 22.dp, vertical = 8.dp)
-                        )
-                    }
-
-                    items(matchedSongs, key = { "sr_song_${it.id}" }) { song ->
-                        val isCurrent = currentSong?.id == song.id
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 3.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(if (isCurrent) colors.accentPill.copy(alpha = 0.55f) else colors.surface)
-                                .combinedClickable(
-                                    onClick = {
-                                        if (query.isNotBlank()) viewModel.addRecentSearch(query)
-                                        viewModel.playSong(song, matchedSongs)
-                                    },
-                                    onLongClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        contextMenuSong = song
-                                    }
-                                )
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularArtwork(
-                                song = song,
-                                isPlaying = isCurrent && playbackInfo.isPlaying,
-                                accentColor = colors.accentPill,
-                                shadowElevation = 2.dp,
-                                modifier = Modifier.size(44.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = song.title,
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 14.sp,
-                                    color = if (isCurrent) colors.accentStrong else colors.textPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "${song.artist} • ${song.album}",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.textSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            IconButton(
-                                onClick = { contextMenuSong = song },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MoreVert,
-                                    contentDescription = "Options",
-                                    tint = colors.textMuted
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if (query.isNotBlank() && matchedSongs.isEmpty() && matchedAlbums.isEmpty() && matchedArtists.isEmpty() && matchedPlaylists.isEmpty() && matchedFolders.isEmpty()) {
-                    item(key = "no_results") {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 24.dp, vertical = 32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "No local tracks, albums, or artists found for \"$query\"",
-                                fontFamily = PlusJakartaFontFamily,
-                                fontSize = 14.sp,
-                                color = colors.textSecondary
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Surface(
-                                onClick = { onSearchOnline(query.trim()) },
-                                shape = RoundedCornerShape(20.dp),
-                                color = colors.accentStrong,
-                                modifier = Modifier.height(48.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 18.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Explore,
-                                        contentDescription = null,
-                                        tint = colors.onAccentStrong,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "Search Online Instead",
-                                        fontFamily = PlusJakartaFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = colors.onAccentStrong
-                                    )
-                                }
-                            }
-                        }
-                    }
+                        } else null
+                    )
                 }
             }
         }
@@ -929,6 +548,34 @@ fun SearchScreen(
         )
     }
 
+    onlineOptionsTarget?.let { target ->
+        OnlineTrackOptionsSheet(
+            track = target,
+            isSaved = target.stableId in savedOnlineIds,
+            isFavorite = target.stableId in favoriteOnlineIds,
+            resolvedStream = currentResolvedStream,
+            colors = colors,
+            onPlayNow = {
+                if (target.kind == OnlineItemKind.TRACK) {
+                    val pool = (onlineSearchState as? OnlineSearchUiState.Success)?.items.orEmpty()
+                    viewModel.playOnlineTrack(target, pool)
+                } else {
+                    viewModel.openOnlineCollection(target)
+                }
+            },
+            onPlayNext = { viewModel.enqueueOnlineTrackNext(target) },
+            onAddToQueue = { viewModel.addOnlineTrackToQueue(target) },
+            onToggleSave = { viewModel.toggleSaveOnlineTrack(target) },
+            onToggleFavorite = { viewModel.toggleFavorite(OnlineTrackMapper.toUnifiedSong(target)) },
+            onAddToPlaylist = { playlistPickerSong = OnlineTrackMapper.toUnifiedSong(target) },
+            onOpenQualitySettings = { showQualitySheet = true },
+            onViewArtistChannel = buildArtistExploreTrack(target)?.let { channelItem ->
+                { viewModel.openOnlineCollection(channelItem) }
+            },
+            onDismiss = { onlineOptionsTarget = null }
+        )
+    }
+
     playlistPickerSong?.let { target ->
         EditorialPlaylistPickerDialog(
             song = target,
@@ -936,10 +583,44 @@ fun SearchScreen(
             colors = colors,
             onDismiss = { playlistPickerSong = null },
             onSelectPlaylist = { pid ->
-                viewModel.addSongToPlaylist(pid, target.id)
+                if (target.isOnline) {
+                    viewModel.addOnlineTrackToPlaylist(pid, target)
+                } else {
+                    viewModel.addSongToPlaylist(pid, target.id)
+                }
                 playlistPickerSong = null
             },
             onCreatePlaylist = { name -> viewModel.createPlaylist(name) }
+        )
+    }
+
+    OnlineCollectionDetailsSheet(
+        state = onlineCollectionState,
+        currentSongId = currentSong?.id,
+        isPlaying = playbackInfo.isPlaying,
+        isBuffering = playbackInfo.isBuffering,
+        savedIds = savedOnlineIds,
+        colors = colors,
+        onPlayTrack = { track, tracks -> viewModel.playOnlineTrack(track, tracks) },
+        onPlayAll = { tracks, shuffle ->
+            val songs = tracks.map { OnlineTrackMapper.toUnifiedSong(it) }
+            viewModel.playCollection(songs, shuffle = shuffle)
+        },
+        onRetry = { item -> viewModel.openOnlineCollection(item) },
+        onTrackMoreClick = { track -> onlineOptionsTarget = track },
+        onDismiss = { viewModel.dismissOnlineCollection() }
+    )
+
+    if (showQualitySheet) {
+        OnlineQualitySelectorSheet(
+            currentPreference = onlineQualityPreference,
+            resolvedStream = currentResolvedStream,
+            isMeteredNetwork = isMeteredNetwork,
+            isNetworkOnline = isNetworkOnline,
+            colors = colors,
+            onSelectPreference = { viewModel.selectOnlineQualityPreference(it) },
+            onSelectManualStream = { viewModel.selectManualOnlineStreamOption(it) },
+            onDismiss = { showQualitySheet = false }
         )
     }
 

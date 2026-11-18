@@ -126,5 +126,6 @@ data class PlaybackInfo(
     val sleepTimerMinutesRemaining: Int? = null,
     val isBuffering: Boolean = false,
     val bufferedPositionMs: Long = 0L,
-    val playbackError: String? = null
+    val playbackError: String? = null,
+    val playbackErrorKind: domain.online.OnlineErrorKind? = null
 )

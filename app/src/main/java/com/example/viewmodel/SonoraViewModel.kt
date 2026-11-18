@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -71,12 +72,20 @@ import domain.online.OnlineAudioStreamOption
 import domain.online.OnlineCollectionDetails
 import domain.online.OnlineErrorKind
 import domain.online.OnlineMusicProvider
+import domain.online.OnlineRecommendationEngine
+import domain.online.OnlineRecommendationProfile
 import domain.online.OnlineResult
 import domain.online.OnlineSearchFilter
 import domain.online.OnlineSearchPageResult
 import domain.online.OnlineTrack
 import domain.online.ResolvedOnlineStreamResult
 import domain.online.defaultDiscoverSectionsState
+import domain.home.HomeMusicMode
+import domain.home.LocalLibraryStats
+import domain.online.OnlineItemKind
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import playback.UnifiedPlaybackController
 import java.io.File
 
@@ -187,6 +196,15 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     val onlineCollectionState: StateFlow<OnlineCollectionUiState> = _onlineCollectionState.asStateFlow()
 
     private val onlineRegionPrefs = data.preferences.OnlineRegionPreferences(application)
+    private val homeModePrefs = data.preferences.HomeModePreferences(application)
+
+    @Volatile
+    var hasCompletedLaunchAnimation: Boolean = false
+
+    @Volatile
+    private var userUpdatedHomeMode = false
+    private val _homeMusicMode = MutableStateFlow(homeModePrefs.getInitialHomeMusicMode())
+    val homeMusicMode: StateFlow<HomeMusicMode> = _homeMusicMode.asStateFlow()
 
     private val _onlineContentCountry = MutableStateFlow(onlineRegionPrefs.getInitialCountryCode())
     val onlineContentCountry: StateFlow<String> = _onlineContentCountry.asStateFlow()
@@ -215,11 +233,30 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     val onlineSearchHistory: StateFlow<List<String>> = onlineRepository.searchHistoryFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _onlineRecommendationProfile = MutableStateFlow(
+        OnlineRecommendationEngine.buildDailyRecommendationProfile(
+            recentlyPlayedLocal = emptyList(),
+            recentlyPlayedOnline = emptyList(),
+            favouriteArtists = emptyList(),
+            allSongs = emptyList(),
+            onlineTracks = emptyList(),
+            onlineSearchHistory = emptyList(),
+            dailyMixes = emptyList(),
+            countryCode = _onlineContentCountry.value,
+            languageCode = _onlineContentLanguage.value,
+            discoverLanguage = _discoverMusicLanguage.value
+        )
+    )
+    val onlineRecommendationProfile: StateFlow<OnlineRecommendationProfile> =
+        _onlineRecommendationProfile.asStateFlow()
+
     private var onlineSearchJob: Job? = null
     private var onlineSuggestionJob: Job? = null
     private val discoverSectionJobs = mutableMapOf<DiscoverSectionType, Job>()
+    private val discoverLoadMoreJobs = mutableMapOf<DiscoverSectionType, Job>()
     private var discoverGeneration: Long = 0L
     private var activeDiscoverProviderKey: String? = null
+    private var lastRecommendationSeedQueried: String? = null
     private var activeSearchSignature: String? = null
     private var onlineCollectionJob: Job? = null
 
@@ -453,6 +490,23 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             playerStylePrefs.setGestureConfig(updated)
         }
+        val mappedSens = domain.motion.GestureSensitivityLevel.fromPlayerConfig(
+            sensitivity = updated.swipeSensitivity,
+            thresholdDp = updated.swipeThresholdDp
+        )
+        val currentMotion = _motionConfig.value
+        if (currentMotion.hapticFeedbackEnabled != updated.hapticFeedbackEnabled ||
+            currentMotion.gestureSensitivity != mappedSens
+        ) {
+            val syncedMotion = currentMotion.copy(
+                hapticFeedbackEnabled = updated.hapticFeedbackEnabled,
+                gestureSensitivity = mappedSens
+            )
+            _motionConfig.value = syncedMotion
+            viewModelScope.launch(Dispatchers.IO) {
+                motionPrefs.saveConfig(syncedMotion)
+            }
+        }
     }
 
     fun resetPlayerGestureConfigToDefault() {
@@ -527,7 +581,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             themePrefs.setDynamicColorsEnabled(enabled)
         }
-        updateDynamicThemeForSong(_currentSong.value)
+        updateDynamicThemeForCurrentMode()
     }
 
     fun setDynamicThemeMode(mode: DynamicThemeMode) {
@@ -536,7 +590,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             themePrefs.setDynamicThemeMode(mode)
         }
-        updateDynamicThemeForSong(_currentSong.value)
+        updateDynamicThemeForCurrentMode()
     }
 
     fun setDynamicAppearanceMode(mode: com.example.model.DynamicAppearanceMode) {
@@ -548,7 +602,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             themePrefs.setDynamicAppearanceMode(mode)
         }
-        updateDynamicThemeForSong(_currentSong.value)
+        updateDynamicThemeForCurrentMode()
     }
 
     fun setDynamicColorIntensity(intensity: com.example.model.DynamicColorIntensity) {
@@ -557,7 +611,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             themePrefs.setDynamicColorIntensity(intensity)
         }
-        updateDynamicThemeForSong(_currentSong.value)
+        updateDynamicThemeForCurrentMode()
     }
 
     fun setDynamicGradientEnabled(enabled: Boolean) {
@@ -566,18 +620,25 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             themePrefs.setDynamicGradientEnabled(enabled)
         }
-        updateDynamicThemeForSong(_currentSong.value)
+        updateDynamicThemeForCurrentMode()
     }
 
     fun updateSystemDarkTheme(isDark: Boolean) {
         if (currentSystemIsDark != isDark) {
             currentSystemIsDark = isDark
-            updateDynamicThemeForSong(_currentSong.value)
+            updateDynamicThemeForCurrentMode()
         }
     }
 
     private val _reduceAnimations = MutableStateFlow(preferences.reduceAnimations)
     val reduceAnimations: StateFlow<Boolean> = _reduceAnimations.asStateFlow()
+
+    private val motionPrefs = data.preferences.MotionPreferences(application)
+    private val _motionConfig = MutableStateFlow(motionPrefs.getInitialConfig())
+    val motionConfig: StateFlow<domain.motion.GlobalMotionConfig> = _motionConfig.asStateFlow()
+
+    private val _trackTransitionDirection = MutableStateFlow(0)
+    val trackTransitionDirection: StateFlow<Int> = _trackTransitionDirection.asStateFlow()
 
     private val homeAnimationPrefs = data.preferences.HomeAnimationPreferences(application)
     private val _homeAnimationLevel = MutableStateFlow(homeAnimationPrefs.getInitialSettings().animationLevel)
@@ -631,15 +692,112 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         preferences.homeThemeMode = mode
     }
 
+    fun setHomeMusicMode(mode: HomeMusicMode) {
+        userUpdatedHomeMode = true
+        homeModePrefs.setCachedHomeMusicMode(mode)
+        val changed = _homeMusicMode.value != mode
+        _homeMusicMode.value = mode
+        viewModelScope.launch(Dispatchers.IO) {
+            homeModePrefs.setHomeMusicMode(_homeMusicMode.value)
+        }
+        if (!changed) return
+        if (mode == HomeMusicMode.ONLINE) {
+            val hasLoadedSection = _discoverSectionsState.value.values.any { it is DiscoverSectionState.Success }
+            val anyJobRunning = discoverSectionJobs.values.any { it.isActive }
+            if (!hasLoadedSection && !anyJobRunning && _selectedOnlineProvider.value != null) {
+                refreshOnlineDiscovery(forceRefresh = false)
+            }
+        }
+        updateDynamicThemeForCurrentMode()
+    }
+
     fun setHomeCustomAccentArgb(argb: Long?) {
         _homeCustomAccentArgb.value = argb
         preferences.homeCustomAccentArgb = argb ?: -1L
-        updateDynamicThemeForSong(_currentSong.value)
+        updateDynamicThemeForCurrentMode()
     }
 
     fun setReduceAnimations(reduce: Boolean) {
         _reduceAnimations.value = reduce
         preferences.reduceAnimations = reduce
+        val current = _motionConfig.value
+        val targetIntensity = if (reduce) {
+            domain.motion.MotionIntensity.OFF
+        } else if (current.intensity == domain.motion.MotionIntensity.OFF) {
+            domain.motion.MotionIntensity.BALANCED
+        } else {
+            current.intensity
+        }
+        if (current.intensity != targetIntensity) {
+            val updated = current.copy(intensity = targetIntensity)
+            _motionConfig.value = updated
+            viewModelScope.launch(Dispatchers.IO) {
+                motionPrefs.saveConfig(updated)
+            }
+        }
+    }
+
+    fun updateMotionConfig(
+        transform: (domain.motion.GlobalMotionConfig) -> domain.motion.GlobalMotionConfig
+    ) {
+        val previous = _motionConfig.value
+        val updated = transform(previous)
+        if (updated == previous) return
+        _motionConfig.value = updated
+        viewModelScope.launch(Dispatchers.IO) {
+            motionPrefs.saveConfig(updated)
+        }
+
+        val shouldReduce = updated.intensity == domain.motion.MotionIntensity.OFF
+        if (_reduceAnimations.value != shouldReduce) {
+            _reduceAnimations.value = shouldReduce
+            preferences.reduceAnimations = shouldReduce
+        }
+
+        if (previous.intensity != updated.intensity) {
+            val syncedHomeLevel = when (updated.intensity) {
+                domain.motion.MotionIntensity.OFF -> ui.home.animations.HomeAnimationLevel.OFF
+                domain.motion.MotionIntensity.SUBTLE -> ui.home.animations.HomeAnimationLevel.SUBTLE
+                domain.motion.MotionIntensity.BALANCED -> ui.home.animations.HomeAnimationLevel.MEDIUM
+                domain.motion.MotionIntensity.EXPRESSIVE -> ui.home.animations.HomeAnimationLevel.HIGH
+            }
+            setHomeAnimationLevel(syncedHomeLevel)
+        }
+
+        val currentGestures = _playerGestureConfig.value
+        val nextGestures = currentGestures.copy(
+            swipeSensitivity = if (previous.gestureSensitivity != updated.gestureSensitivity) {
+                updated.gestureSensitivity.playerSensitivity
+            } else {
+                currentGestures.swipeSensitivity
+            },
+            swipeThresholdDp = if (previous.gestureSensitivity != updated.gestureSensitivity) {
+                updated.gestureSensitivity.thresholdDp
+            } else {
+                currentGestures.swipeThresholdDp
+            },
+            hapticFeedbackEnabled = updated.hapticFeedbackEnabled
+        )
+        if (nextGestures != currentGestures) {
+            _playerGestureConfig.value = nextGestures
+            preferences.playerGestureConfig = nextGestures
+            viewModelScope.launch(Dispatchers.IO) {
+                playerStylePrefs.setGestureConfig(nextGestures)
+            }
+        }
+    }
+
+    fun setMotionIntensity(intensity: domain.motion.MotionIntensity) =
+        updateMotionConfig { it.copy(intensity = intensity) }
+
+    fun setScreenTransitionStyle(style: domain.motion.ScreenTransitionStyle) =
+        updateMotionConfig { it.copy(transitionStyle = style) }
+
+    fun setGestureSensitivityLevel(level: domain.motion.GestureSensitivityLevel) =
+        updateMotionConfig { it.copy(gestureSensitivity = level) }
+
+    fun resetMotionConfigToDefaults() {
+        updateMotionConfig { domain.motion.GlobalMotionConfig.DEFAULT }
     }
 
     fun setHomeAnimationLevel(level: ui.home.animations.HomeAnimationLevel) {
@@ -728,7 +886,43 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             themePrefs.resetToDefault()
         }
-        updateDynamicThemeForSong(_currentSong.value)
+        updateDynamicThemeForCurrentMode()
+    }
+
+    fun resolveThemeSongForMode(
+        mode: HomeMusicMode = _homeMusicMode.value,
+        activeSong: Song? = _currentSong.value
+    ): Song? {
+        return when (mode) {
+            HomeMusicMode.OFFLINE -> {
+                activeSong?.takeIf { !it.isOnline }
+                    ?: recentlyPlayedSongs.value.firstOrNull { !it.isOnline }
+                    ?: yourMixSongs.value.firstOrNull { !it.isOnline }
+                    ?: _allSongs.value.firstOrNull { !it.isOnline }
+            }
+            HomeMusicMode.ONLINE -> {
+                activeSong?.takeIf { it.isOnline }
+                    ?: recentlyPlayedOnlineTracks.value.firstOrNull()
+                    ?: run {
+                        val sections = _discoverSectionsState.value
+                        val candidates = listOf(
+                            DiscoverSectionType.MUSIC_RECOMMENDATIONS,
+                            DiscoverSectionType.TRENDING_MUSIC,
+                            DiscoverSectionType.POPULAR_SONGS
+                        ).flatMap { type ->
+                            (sections[type] as? DiscoverSectionState.Success)?.items.orEmpty()
+                        }
+                        val chosen = candidates.firstOrNull {
+                            it.kind == OnlineItemKind.TRACK && !it.artworkUrl.isNullOrBlank()
+                        } ?: candidates.firstOrNull { !it.artworkUrl.isNullOrBlank() }
+                        chosen?.let { OnlineTrackMapper.toUnifiedSong(it) }
+                    }
+            }
+        }
+    }
+
+    fun updateDynamicThemeForCurrentMode() {
+        updateDynamicThemeForSong(resolveThemeSongForMode())
     }
 
     fun updateDynamicThemeForSong(song: Song?) {
@@ -1147,6 +1341,131 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private var pendingPlayRequest: PendingPlayRequest? = null
     private var pendingTogglePlayOnConnect: Boolean = false
 
+    // --- Filtered and Organized Library Categories (Declared before init so init observers see initialized StateFlows) ---
+
+    val filteredSongs: StateFlow<List<Song>> = combine(
+        _allSongs, _searchQuery, _sortOption
+    ) { songs, query, sort ->
+        val filtered = if (query.isBlank()) songs else {
+            songs.filter {
+                it.title.contains(query, ignoreCase = true) ||
+                it.artist.contains(query, ignoreCase = true) ||
+                it.album.contains(query, ignoreCase = true) ||
+                it.genre.contains(query, ignoreCase = true)
+            }
+        }
+
+        when (sort) {
+            SortOption.TITLE_ASC -> filtered.sortedBy { it.title.lowercase() }
+            SortOption.TITLE_DESC -> filtered.sortedByDescending { it.title.lowercase() }
+            SortOption.ARTIST_ASC -> filtered.sortedBy { it.artist.lowercase() }
+            SortOption.ALBUM_ASC -> filtered.sortedBy { it.album.lowercase() }
+            SortOption.DURATION_DESC -> filtered.sortedByDescending { it.durationMs }
+            SortOption.DATE_ADDED_DESC -> filtered.sortedByDescending { it.dateAdded }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val albums: StateFlow<List<Album>> = _allSongs.combine(_searchQuery) { songs, query ->
+        songs.groupBy { it.album }
+            .map { (albumTitle, songList) ->
+                val first = songList.first()
+                Album(
+                    id = first.albumId,
+                    title = albumTitle,
+                    artist = first.artist,
+                    songCount = songList.size,
+                    year = first.year,
+                    artworkUri = first.uri
+                )
+            }
+            .filter { query.isBlank() || it.title.contains(query, ignoreCase = true) || it.artist.contains(query, ignoreCase = true) }
+            .sortedBy { it.title.lowercase() }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val artists: StateFlow<List<Artist>> = _allSongs.combine(_searchQuery) { songs, query ->
+        songs.groupBy { it.artist }
+            .entries
+            .toList()
+            .mapIndexed { idx, entry ->
+                Artist(
+                    id = idx.toLong(),
+                    name = entry.key,
+                    songCount = entry.value.size,
+                    albumCount = entry.value.map { it.album }.distinct().size
+                )
+            }
+            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            .sortedBy { it.name.lowercase() }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val genres: StateFlow<List<Genre>> = _allSongs.combine(_searchQuery) { songs, query ->
+        songs.groupBy { it.genre }
+            .map { (genreName, songList) ->
+                Genre(name = genreName, songCount = songList.size)
+            }
+            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            .sortedBy { it.name.lowercase() }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val folders: StateFlow<List<MusicFolder>> = _allSongs.combine(_searchQuery) { songs, query ->
+        songs.groupBy { File(it.dataPath).parent ?: "/storage" }
+            .map { (dirPath, songList) ->
+                val dirName = File(dirPath).name.ifBlank { "Root Storage" }
+                MusicFolder(path = dirPath, name = dirName, songCount = songList.size)
+            }
+            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            .sortedBy { it.name.lowercase() }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val favoriteSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, query ->
+        songs.filter { it.isFavorite }
+            .filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val mostPlayedSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, _ ->
+        songs.sortedByDescending { it.playCount }.take(15)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentlyPlayedSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, _ ->
+        songs.filter { it.lastPlayedTimestamp > 0 }
+            .sortedByDescending { it.lastPlayedTimestamp }
+            .take(15)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentlyAddedSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, _ ->
+        songs.sortedByDescending { it.dateAdded }.take(15)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val yourMixSongs: StateFlow<List<Song>> = _allSongs.combine(_playbackInfo) { songs, _ ->
+        domain.home.HomeDiscoveryEngine.buildYourMix(songs)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val yourMixContributorsSummary: StateFlow<String> = yourMixSongs.combine(_allSongs) { mix, all ->
+        domain.home.HomeDiscoveryEngine.buildContributorsSummary(mix.ifEmpty { all })
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val favouriteAlbums: StateFlow<List<Album>> = combine(_allSongs, albums) { songs, albumList ->
+        domain.home.HomeDiscoveryEngine.rankFavouriteAlbums(songs, albumList)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val favouriteArtists: StateFlow<List<Artist>> = combine(_allSongs, artists) { songs, artistList ->
+        domain.home.HomeDiscoveryEngine.rankFavouriteArtists(songs, artistList)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val localLibraryStats: StateFlow<LocalLibraryStats> = combine(
+        _allSongs,
+        albums,
+        artists,
+        favoriteSongs
+    ) { songs, albumList, artistList, favs ->
+        domain.home.HomeDiscoveryEngine.computeLocalLibraryStats(
+            songs = songs,
+            albums = albumList,
+            artists = artistList,
+            favorites = favs
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LocalLibraryStats())
+
     init {
         NewPipeInitializer.ensureInitialized(application)
         initOnlineProviders()
@@ -1163,9 +1482,38 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 }
         }
         viewModelScope.launch {
-            _currentSong.collect { song ->
-                updateDynamicThemeForSong(song)
+            motionPrefs.motionConfigFlow
+                .catch { e -> Log.w(TAG, "Motion DataStore stream error", e) }
+                .take(1)
+                .collect { saved ->
+                    _motionConfig.value = saved
+                }
+        }
+        viewModelScope.launch {
+            homeModePrefs.homeMusicModeFlow
+                .catch { e -> Log.w(TAG, "Home mode DataStore stream error", e) }
+                .take(1)
+                .collect { savedMode ->
+                    if (!userUpdatedHomeMode && _homeMusicMode.value != savedMode) {
+                        _homeMusicMode.value = savedMode
+                    }
+                }
+        }
+        viewModelScope.launch {
+            combine(
+                _currentSong,
+                _homeMusicMode,
+                _allSongs,
+                _discoverSectionsState
+            ) { song, mode, _, _ ->
+                resolveThemeSongForMode(mode = mode, activeSong = song)
             }
+                .distinctUntilChanged { a, b ->
+                    a?.id == b?.id && a?.albumId == b?.albumId && a?.artworkUrl == b?.artworkUrl
+                }
+                .collect { themeSong ->
+                    updateDynamicThemeForSong(themeSong)
+                }
         }
         viewModelScope.launch {
             onlineRegionPrefs.contentCountryFlow
@@ -1194,6 +1542,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     _discoverMusicLanguage.value = savedFilter
                 }
         }
+        observeOnlineRecommendationProfile()
     }
 
     private fun observeFolderFiltering() {
@@ -1364,116 +1713,98 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- Filtered and Organized Library Categories ---
-
-    val filteredSongs: StateFlow<List<Song>> = combine(
-        _allSongs, _searchQuery, _sortOption
-    ) { songs, query, sort ->
-        val filtered = if (query.isBlank()) songs else {
-            songs.filter {
-                it.title.contains(query, ignoreCase = true) ||
-                it.artist.contains(query, ignoreCase = true) ||
-                it.album.contains(query, ignoreCase = true) ||
-                it.genre.contains(query, ignoreCase = true)
-            }
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun observeOnlineRecommendationProfile() {
+        val listeningSignalsFlow = combine(
+            recentlyPlayedSongs,
+            recentlyPlayedOnlineTracks,
+            favouriteArtists,
+            _allSongs,
+            allOnlineTracks
+        ) { recLocal, recOnline, favArtists, allLocal, allOnline ->
+            RecommendationListeningSignals(
+                recentlyPlayedLocal = recLocal,
+                recentlyPlayedOnline = recOnline,
+                favouriteArtists = favArtists,
+                allSongs = allLocal,
+                onlineTracks = allOnline
+            )
+        }
+        val preferenceSignalsFlow = combine(
+            onlineSearchHistory,
+            _dailyMixes,
+            _onlineContentCountry,
+            _onlineContentLanguage,
+            _discoverMusicLanguage
+        ) { searches, mixes, country, lang, discLang ->
+            RecommendationPreferenceSignals(
+                searchHistory = searches,
+                dailyMixes = mixes,
+                countryCode = country,
+                languageCode = lang,
+                discoverLanguage = discLang
+            )
         }
 
-        when (sort) {
-            SortOption.TITLE_ASC -> filtered.sortedBy { it.title.lowercase() }
-            SortOption.TITLE_DESC -> filtered.sortedByDescending { it.title.lowercase() }
-            SortOption.ARTIST_ASC -> filtered.sortedBy { it.artist.lowercase() }
-            SortOption.ALBUM_ASC -> filtered.sortedBy { it.album.lowercase() }
-            SortOption.DURATION_DESC -> filtered.sortedByDescending { it.durationMs }
-            SortOption.DATE_ADDED_DESC -> filtered.sortedByDescending { it.dateAdded }
+        viewModelScope.launch {
+            combine(listeningSignalsFlow, preferenceSignalsFlow) { listening, prefs ->
+                OnlineRecommendationEngine.buildDailyRecommendationProfile(
+                    recentlyPlayedLocal = listening.recentlyPlayedLocal,
+                    recentlyPlayedOnline = listening.recentlyPlayedOnline,
+                    favouriteArtists = listening.favouriteArtists,
+                    allSongs = listening.allSongs,
+                    onlineTracks = listening.onlineTracks,
+                    onlineSearchHistory = prefs.searchHistory,
+                    dailyMixes = prefs.dailyMixes,
+                    countryCode = prefs.countryCode,
+                    languageCode = prefs.languageCode,
+                    discoverLanguage = prefs.discoverLanguage
+                )
+            }
+                .distinctUntilChanged()
+                .debounce(450L)
+                .catch { e -> Log.w(TAG, "Recommendation profile observation error", e) }
+                .collect { profile ->
+                    _onlineRecommendationProfile.value = profile
+                    val provider = _selectedOnlineProvider.value
+                    val previousSeed = lastRecommendationSeedQueried
+                    if (provider != null && previousSeed != null && previousSeed != profile.seedQuery) {
+                        lastRecommendationSeedQueried = profile.seedQuery
+                        discoverSectionJobs[DiscoverSectionType.MUSIC_RECOMMENDATIONS]?.cancel()
+                        discoverLoadMoreJobs[DiscoverSectionType.MUSIC_RECOMMENDATIONS]?.cancel()
+                        _discoverSectionsState.update { current ->
+                            current.toMutableMap().apply {
+                                put(DiscoverSectionType.MUSIC_RECOMMENDATIONS, DiscoverSectionState.Loading)
+                            }
+                        }
+                        launchDiscoverSection(
+                            section = DiscoverSectionType.MUSIC_RECOMMENDATIONS,
+                            provider = provider,
+                            generation = discoverGeneration,
+                            recentArtistSeed = profile.primaryArtistSeed,
+                            recommendationProfile = profile,
+                            forceRefresh = false
+                        )
+                    }
+                }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
 
-    val albums: StateFlow<List<Album>> = _allSongs.combine(_searchQuery) { songs, query ->
-        songs.groupBy { it.album }
-            .map { (albumTitle, songList) ->
-                val first = songList.first()
-                Album(
-                    id = first.albumId,
-                    title = albumTitle,
-                    artist = first.artist,
-                    songCount = songList.size,
-                    year = first.year,
-                    artworkUri = first.uri
-                )
-            }
-            .filter { query.isBlank() || it.title.contains(query, ignoreCase = true) || it.artist.contains(query, ignoreCase = true) }
-            .sortedBy { it.title.lowercase() }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private data class RecommendationListeningSignals(
+        val recentlyPlayedLocal: List<Song>,
+        val recentlyPlayedOnline: List<Song>,
+        val favouriteArtists: List<Artist>,
+        val allSongs: List<Song>,
+        val onlineTracks: List<Song>
+    )
 
-    val artists: StateFlow<List<Artist>> = _allSongs.combine(_searchQuery) { songs, query ->
-        songs.groupBy { it.artist }
-            .entries
-            .toList()
-            .mapIndexed { idx, entry ->
-                Artist(
-                    id = idx.toLong(),
-                    name = entry.key,
-                    songCount = entry.value.size,
-                    albumCount = entry.value.map { it.album }.distinct().size
-                )
-            }
-            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-            .sortedBy { it.name.lowercase() }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val genres: StateFlow<List<Genre>> = _allSongs.combine(_searchQuery) { songs, query ->
-        songs.groupBy { it.genre }
-            .map { (genreName, songList) ->
-                Genre(name = genreName, songCount = songList.size)
-            }
-            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-            .sortedBy { it.name.lowercase() }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val folders: StateFlow<List<MusicFolder>> = _allSongs.combine(_searchQuery) { songs, query ->
-        songs.groupBy { File(it.dataPath).parent ?: "/storage" }
-            .map { (dirPath, songList) ->
-                val dirName = File(dirPath).name.ifBlank { "Root Storage" }
-                MusicFolder(path = dirPath, name = dirName, songCount = songList.size)
-            }
-            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-            .sortedBy { it.name.lowercase() }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val favoriteSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, query ->
-        songs.filter { it.isFavorite }
-            .filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val mostPlayedSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, _ ->
-        songs.sortedByDescending { it.playCount }.take(15)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val recentlyPlayedSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, _ ->
-        songs.filter { it.lastPlayedTimestamp > 0 }
-            .sortedByDescending { it.lastPlayedTimestamp }
-            .take(15)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val recentlyAddedSongs: StateFlow<List<Song>> = _allSongs.combine(_searchQuery) { songs, _ ->
-        songs.sortedByDescending { it.dateAdded }.take(15)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val yourMixSongs: StateFlow<List<Song>> = _allSongs.combine(_playbackInfo) { songs, _ ->
-        domain.home.HomeDiscoveryEngine.buildYourMix(songs)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val yourMixContributorsSummary: StateFlow<String> = yourMixSongs.combine(_allSongs) { mix, all ->
-        domain.home.HomeDiscoveryEngine.buildContributorsSummary(mix.ifEmpty { all })
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
-
-    val favouriteAlbums: StateFlow<List<Album>> = combine(_allSongs, albums) { songs, albumList ->
-        domain.home.HomeDiscoveryEngine.rankFavouriteAlbums(songs, albumList)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val favouriteArtists: StateFlow<List<Artist>> = combine(_allSongs, artists) { songs, artistList ->
-        domain.home.HomeDiscoveryEngine.rankFavouriteArtists(songs, artistList)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private data class RecommendationPreferenceSignals(
+        val searchHistory: List<String>,
+        val dailyMixes: List<com.example.model.DailyMix>,
+        val countryCode: String,
+        val languageCode: String,
+        val discoverLanguage: DiscoverMusicLanguage
+    )
 
     fun playCollection(songs: List<Song>, shuffle: Boolean = false) {
         if (songs.isEmpty()) return
@@ -1503,8 +1834,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         newQueue: List<Song>? = null,
         startIndex: Int = -1,
         manualStreamId: String? = null,
-        resumePositionMs: Long = 0L
+        resumePositionMs: Long = 0L,
+        transitionDirection: Int = 0
     ) {
+        _trackTransitionDirection.value = transitionDirection
         isCrossfadingNext = false
         val persistedOnlineById = allOnlineTracks.value.associateBy { it.id }
         val hydratedSong = if (song.isOnline) {
@@ -1538,6 +1871,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _currentSong.value = hydratedSong
         _playbackInfo.value = _playbackInfo.value.copy(
             playbackError = null,
+            playbackErrorKind = null,
             isBuffering = hydratedSong.isOnline,
             currentPositionMs = resumePositionMs.coerceAtLeast(0L)
         )
@@ -1567,6 +1901,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             if (!isBound) bindMusicService()
             return
         }
+        if (hydratedSong.isOnline &&
+            controller.isCurrentlyResolving(hydratedSong, manualStreamId) &&
+            _playbackInfo.value.isBuffering
+        ) {
+            return
+        }
         pendingPlayRequest = null
         pendingTogglePlayOnConnect = false
 
@@ -1587,7 +1927,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _playbackInfo.value = _playbackInfo.value.copy(
                     isPlaying = false,
                     isBuffering = true,
-                    playbackError = null
+                    playbackError = null,
+                    playbackErrorKind = null
                 )
             },
             onPrepared = { updatedSong, _, durMs ->
@@ -1599,7 +1940,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     isBuffering = false,
                     bufferedPositionMs = engine.bufferedPositionMs,
                     durationMs = durMs.coerceAtLeast(updatedSong.durationMs),
-                    playbackError = null
+                    playbackError = null,
+                    playbackErrorKind = null
                 )
                 startProgressTracker()
                 syncNotification(updatedSong, true)
@@ -1613,17 +1955,37 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             onCompletion = {
                 handleTrackCompletion()
             },
-            onError = { errMsg ->
+            onError = { errMsg, errKind ->
                 isCrossfadingNext = false
                 _playbackInfo.value = _playbackInfo.value.copy(
                     isPlaying = false,
                     isBuffering = false,
-                    playbackError = errMsg
+                    playbackError = errMsg,
+                    playbackErrorKind = errKind
                 )
                 _dspDiagnosticMessage.value = errMsg
                 syncNotification(_currentSong.value, false)
             }
         )
+    }
+
+    fun clearPlaybackError() {
+        _playbackInfo.value = _playbackInfo.value.copy(
+            playbackError = null,
+            playbackErrorKind = null
+        )
+    }
+
+    fun switchToSoundCloudFallback() {
+        clearPlaybackError()
+        val target = _onlineProviders.value.firstOrNull { it.key == OnlineMusicProvider.KEY_SOUNDCLOUD } ?: return
+        selectOnlineProvider(target.key)
+        val cur = _currentSong.value
+        val candidateQuery = cur?.takeIf { it.isOnline && it.title.isNotBlank() }?.title.orEmpty()
+        if (candidateQuery.isNotBlank() && _onlineSearchQuery.value.isBlank()) {
+            _onlineSearchQuery.value = candidateQuery
+            executeOnlineSearch(candidateQuery)
+        }
     }
 
     fun retryCurrentPlayback() {
@@ -1645,6 +2007,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         if (engine.isPlaying) return
         val cur = _currentSong.value
         if (cur != null) {
+            if (cur.isOnline &&
+                (_playbackInfo.value.isBuffering || unifiedPlaybackController?.isCurrentlyResolving(cur) == true)
+            ) {
+                return
+            }
             if (engine.isPrepared) {
                 ensureServiceStarted()
                 if (musicService?.requestAudioFocusIfNeeded() == false) return
@@ -1747,10 +2114,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             isCrossfadingNext = true
             musicService?.audioEngine?.crossfadeOut(fadeSec * 1000L) {
                 isCrossfadingNext = false
-                playSong(targetSong, q, targetIdx)
+                playSong(targetSong, q, targetIdx, transitionDirection = 1)
             }
         } else {
-            playSong(targetSong, q, targetIdx)
+            playSong(targetSong, q, targetIdx, transitionDirection = 1)
         }
     }
 
@@ -1767,7 +2134,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         if (prevIdx < 0) {
             prevIdx = if (_playbackInfo.value.repeatMode == RepeatMode.ALL) q.size - 1 else 0
         }
-        playSong(q[prevIdx], q, prevIdx)
+        playSong(q[prevIdx], q, prevIdx, transitionDirection = -1)
     }
 
     fun seekTo(positionMs: Long) {
@@ -2400,6 +2767,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun selectOnlineProvider(providerKey: String) {
         val target = _onlineProviders.value.firstOrNull { it.key == providerKey } ?: return
         if (_selectedOnlineProvider.value?.key == target.key) return
+        clearPlaybackError()
         _selectedOnlineProvider.value = target
         preferences.selectedOnlineProviderKey = target.key
         if (_selectedOnlineFilter.value !in target.supportedFilters) {
@@ -2542,15 +2910,34 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
         discoverSectionJobs.values.forEach { it.cancel() }
         discoverSectionJobs.clear()
+        discoverLoadMoreJobs.values.forEach { it.cancel() }
+        discoverLoadMoreJobs.clear()
         _discoverSectionsState.value = defaultDiscoverSectionsState()
 
-        val recentArtistSeed = recentlyPlayedOnlineTracks.value.firstOrNull()?.artist
+        val currentProfile = OnlineRecommendationEngine.buildDailyRecommendationProfile(
+            recentlyPlayedLocal = recentlyPlayedSongs.value,
+            recentlyPlayedOnline = recentlyPlayedOnlineTracks.value,
+            favouriteArtists = favouriteArtists.value,
+            allSongs = _allSongs.value,
+            onlineTracks = allOnlineTracks.value,
+            onlineSearchHistory = onlineSearchHistory.value,
+            dailyMixes = _dailyMixes.value,
+            countryCode = _onlineContentCountry.value,
+            languageCode = _onlineContentLanguage.value,
+            discoverLanguage = _discoverMusicLanguage.value
+        )
+        _onlineRecommendationProfile.value = currentProfile
+        lastRecommendationSeedQueried = currentProfile.seedQuery
+
+        val recentArtistSeed = currentProfile.primaryArtistSeed
+            ?: recentlyPlayedOnlineTracks.value.firstOrNull()?.artist
         for (section in DiscoverSectionType.entries) {
             launchDiscoverSection(
                 section = section,
                 provider = provider,
                 generation = generation,
                 recentArtistSeed = recentArtistSeed,
+                recommendationProfile = if (section == DiscoverSectionType.MUSIC_RECOMMENDATIONS) currentProfile else null,
                 forceRefresh = forceRefresh
             )
         }
@@ -2565,18 +2952,70 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         discoverSectionJobs[section]?.cancel()
+        discoverLoadMoreJobs[section]?.cancel()
         val generation = discoverGeneration
         _discoverSectionsState.update { current ->
             current.toMutableMap().apply { put(section, DiscoverSectionState.Loading) }
         }
-        val recentArtistSeed = recentlyPlayedOnlineTracks.value.firstOrNull()?.artist
+        val currentProfile = _onlineRecommendationProfile.value
+        val recentArtistSeed = currentProfile.primaryArtistSeed
+            ?: recentlyPlayedOnlineTracks.value.firstOrNull()?.artist
         launchDiscoverSection(
             section = section,
             provider = provider,
             generation = generation,
             recentArtistSeed = recentArtistSeed,
+            recommendationProfile = if (section == DiscoverSectionType.MUSIC_RECOMMENDATIONS) currentProfile else null,
             forceRefresh = true
         )
+    }
+
+    fun loadMoreDiscoverSection(section: DiscoverSectionType) {
+        val provider = _selectedOnlineProvider.value ?: return
+        val currentState = _discoverSectionsState.value[section] as? DiscoverSectionState.Success ?: return
+        val token = currentState.nextPageToken
+        if (currentState.isLoadingMore || !currentState.hasMore || token.isNullOrBlank()) return
+        if (discoverLoadMoreJobs[section]?.isActive == true) return
+
+        val generation = discoverGeneration
+        _discoverSectionsState.update { current ->
+            val latest = current[section] as? DiscoverSectionState.Success ?: return@update current
+            current.toMutableMap().apply { put(section, latest.copy(isLoadingMore = true)) }
+        }
+
+        discoverLoadMoreJobs[section] = viewModelScope.launch {
+            when (val res = onlineRepository.loadMoreDiscoverSection(section, provider, token)) {
+                is OnlineResult.Success -> {
+                    if (generation != discoverGeneration || _selectedOnlineProvider.value?.key != provider.key) {
+                        return@launch
+                    }
+                    val (moreItems, nextToken) = res.value
+                    _discoverSectionsState.update { current ->
+                        val latest = current[section] as? DiscoverSectionState.Success ?: return@update current
+                        val combined = (latest.items + moreItems).distinctBy { it.contentUrl }
+                        current.toMutableMap().apply {
+                            put(
+                                section,
+                                latest.copy(
+                                    items = combined,
+                                    nextPageToken = nextToken,
+                                    hasMore = !nextToken.isNullOrBlank(),
+                                    isLoadingMore = false
+                                )
+                            )
+                        }
+                    }
+                }
+                is OnlineResult.Error -> {
+                    if (generation != discoverGeneration) return@launch
+                    _discoverSectionsState.update { current ->
+                        val latest = current[section] as? DiscoverSectionState.Success ?: return@update current
+                        current.toMutableMap().apply { put(section, latest.copy(isLoadingMore = false)) }
+                    }
+                    _dspDiagnosticMessage.value = res.message
+                }
+            }
+        }
     }
 
     fun setOnlineContentCountry(countryCode: String) {
@@ -2621,6 +3060,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         provider: OnlineMusicProvider,
         generation: Long,
         recentArtistSeed: String?,
+        recommendationProfile: OnlineRecommendationProfile? = null,
         forceRefresh: Boolean
     ) {
         val countryCode = _onlineContentCountry.value
@@ -2634,6 +3074,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 languageCode = languageCode,
                 discoverLanguage = discoverLanguage,
                 recentArtistSeed = recentArtistSeed,
+                recommendationProfile = recommendationProfile,
                 forceRefresh = forceRefresh
             )
             if (generation == discoverGeneration && _selectedOnlineProvider.value?.key == provider.key) {
@@ -2748,6 +3189,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         onlineSuggestionJob?.cancel()
         discoverSectionJobs.values.forEach { it.cancel() }
         discoverSectionJobs.clear()
+        discoverLoadMoreJobs.values.forEach { it.cancel() }
+        discoverLoadMoreJobs.clear()
         onlineCollectionJob?.cancel()
         unifiedPlaybackController?.cancelPendingResolution()
         connectivityMonitor.unregister()

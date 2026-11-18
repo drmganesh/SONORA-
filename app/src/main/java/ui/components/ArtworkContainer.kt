@@ -1,5 +1,6 @@
 package ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -29,6 +30,9 @@ import com.example.model.PlayerAppearanceConfig
 import com.example.model.PlayerGestureConfig
 import com.example.model.Song
 import com.example.ui.components.ArtworkAlbumView
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
 import ui.player.PlayerGestureController
 import ui.player.playerArtworkGestures
 import ui.theme.LocalEditorialColors
@@ -61,7 +65,9 @@ fun ArtworkContainer(
     overlayContent: (@Composable BoxScope.() -> Unit)? = null
 ) {
     val colors = LocalEditorialColors.current
-    val reduceAnimations = LocalReduceAnimations.current
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
+    val reduceAnimations = LocalReduceAnimations.current || !motionState.animationsEnabled
     val duration = playbackInfo.durationMs.coerceAtLeast(song?.durationMs ?: 0L)
 
     val resolvedRadius = if (appearance == PlayerAppearanceConfig.DEFAULT) {
@@ -98,6 +104,9 @@ fun ArtworkContainer(
                 val totalScale = gestureController.artworkZoomScale * reactiveScale
                 scaleX = totalScale
                 scaleY = totalScale
+                translationX = if (motionState.animationsEnabled) {
+                    (gestureController.artworkDragOffsetX * 0.25f).coerceIn(-68f, 68f)
+                } else 0f
             }
             .shadow(
                 elevation = if (playbackInfo.isPlaying) 18.dp else 10.dp,
@@ -125,13 +134,20 @@ fun ArtworkContainer(
             .testTag("player_artwork_box"),
         contentAlignment = Alignment.Center
     ) {
-        ArtworkAlbumView(
-            song = song,
+        AnimatedContent(
+            targetState = song?.id,
+            transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
             modifier = Modifier.fillMaxSize(),
-            cornerRadius = if (isCircular) 1000.dp else resolvedRadius,
-            isPlaying = playbackInfo.isPlaying && (appearance.artworkAnimation != ArtworkAnimationOption.NONE || forceVinylSpin),
-            isVinylRotating = isCircular && spinVinyl
-        )
+            label = "playerArtworkTrackTransition"
+        ) { _ ->
+            ArtworkAlbumView(
+                song = song,
+                modifier = Modifier.fillMaxSize(),
+                cornerRadius = if (isCircular) 1000.dp else resolvedRadius,
+                isPlaying = playbackInfo.isPlaying && (appearance.artworkAnimation != ArtworkAnimationOption.NONE || forceVinylSpin),
+                isVinylRotating = isCircular && spinVinyl
+            )
+        }
         overlayContent?.invoke(this)
     }
 }

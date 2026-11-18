@@ -1,6 +1,5 @@
 package com.example.ui.equalizer
 
-import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
@@ -62,7 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,6 +72,8 @@ import com.example.equalizer.MacroProfile
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.LocalEditorialColors
 import ui.theme.LocalReduceAnimations
 import kotlin.math.roundToInt
@@ -90,9 +91,10 @@ fun AdaptiveEqualizerScreen(
 ) {
     BackHandler { onBack() }
 
-    val view = LocalView.current
+    val performHaptic = rememberMotionAwareHaptic()
+    val motionState = LocalEffectiveMotionState.current
     val colors = LocalEditorialColors.current
-    val reduceAnimations = LocalReduceAnimations.current
+    val reduceAnimations = LocalReduceAnimations.current || !motionState.animationsEnabled
     val scrollState = rememberScrollState()
 
     val settings by viewModel.equalizerSettings.collectAsState()
@@ -201,7 +203,7 @@ fun AdaptiveEqualizerScreen(
 
                 IconButton(
                     onClick = {
-                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        performHaptic(HapticFeedbackType.TextHandleMove)
                         viewModel.resetEqualizerToNeutral()
                     },
                     enabled = isEnabled,
@@ -218,7 +220,7 @@ fun AdaptiveEqualizerScreen(
                 Switch(
                     checked = settings.isEnabled,
                     onCheckedChange = { checked ->
-                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        performHaptic(HapticFeedbackType.TextHandleMove)
                         viewModel.setEqualizerMasterEnabled(checked)
                     },
                     colors = SwitchDefaults.colors(
@@ -275,7 +277,7 @@ fun AdaptiveEqualizerScreen(
                             .clip(RoundedCornerShape(18.dp))
                             .background(if (isDynamic) colors.accentPill else Color.Transparent)
                             .clickable(enabled = isEnabled) {
-                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                performHaptic(HapticFeedbackType.TextHandleMove)
                                 viewModel.setEqualizerMode(EqualizerMode.DYNAMIC)
                             }
                             .testTag("eq_mode_dynamic"),
@@ -299,7 +301,7 @@ fun AdaptiveEqualizerScreen(
                             .clip(RoundedCornerShape(18.dp))
                             .background(if (isManual) colors.accentPill else Color.Transparent)
                             .clickable(enabled = isEnabled) {
-                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                performHaptic(HapticFeedbackType.TextHandleMove)
                                 viewModel.setEqualizerMode(EqualizerMode.MANUAL)
                             }
                             .testTag("eq_mode_manual"),
@@ -699,7 +701,7 @@ private fun MacroProfileControl(
     isEnabled: Boolean,
     onMacroSelected: (MacroProfile) -> Unit
 ) {
-    val view = LocalView.current
+    val performHaptic = rememberMotionAwareHaptic()
     val colors = LocalEditorialColors.current
 
     Column(
@@ -733,7 +735,7 @@ private fun MacroProfileControl(
             color = colors.surfaceTinted,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(48.dp)
                 .border(0.75.dp, colors.cardBorder, RoundedCornerShape(16.dp))
         ) {
             Row(
@@ -748,7 +750,7 @@ private fun MacroProfileControl(
                         .clip(RoundedCornerShape(13.dp))
                         .background(if (isBroad && isEnabled) colors.accentPill else Color.Transparent)
                         .clickable(enabled = isEnabled) {
-                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            performHaptic(HapticFeedbackType.TextHandleMove)
                             onMacroSelected(MacroProfile.BROAD)
                         },
                     contentAlignment = Alignment.Center
@@ -771,7 +773,7 @@ private fun MacroProfileControl(
                         .clip(RoundedCornerShape(13.dp))
                         .background(if (isFocused && isEnabled) colors.accentPill else Color.Transparent)
                         .clickable(enabled = isEnabled) {
-                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            performHaptic(HapticFeedbackType.TextHandleMove)
                             onMacroSelected(MacroProfile.FOCUSED)
                         },
                     contentAlignment = Alignment.Center

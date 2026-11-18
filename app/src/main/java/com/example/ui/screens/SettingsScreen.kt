@@ -90,6 +90,8 @@ import ui.player.PlayerStyleSelector
 import ui.settings.DynamicThemeSettingsScreen
 import ui.settings.LibraryFolderManagementScreen
 import ui.settings.SeekbarStyleScreen
+import ui.settings.SettingsAboutContent
+import ui.settings.rememberInstalledAppVersion
 import ui.theme.EditorialAccentSwatches
 import ui.theme.EditorialColors
 import ui.theme.HomeThemeMode
@@ -148,6 +150,9 @@ fun SettingsScreen(
     val onlineContentCountry by viewModel.onlineContentCountry.collectAsState()
     val onlineContentLanguage by viewModel.onlineContentLanguage.collectAsState()
 
+    val motionConfig by viewModel.motionConfig.collectAsState()
+
+    var showMotionGesturesSettings by remember { mutableStateOf(false) }
     var showHomeAnimationSettings by remember { mutableStateOf(false) }
     var showPlayerStyleSelector by remember { mutableStateOf(false) }
     var showPlayerCustomization by remember { mutableStateOf(false) }
@@ -165,7 +170,15 @@ fun SettingsScreen(
     var onlineExpanded by remember { mutableStateOf(true) }
     var notificationsExpanded by remember { mutableStateOf(true) }
     var aboutExpanded by remember { mutableStateOf(true) }
+    val installedAppVersion = rememberInstalledAppVersion()
 
+    if (showMotionGesturesSettings) {
+        ui.settings.MotionGesturesSettingsScreen(
+            viewModel = viewModel,
+            onBack = { showMotionGesturesSettings = false }
+        )
+        return
+    }
     if (showHomeAnimationSettings) {
         HomeAnimationSettingsScreen(
             viewModel = viewModel,
@@ -446,6 +459,15 @@ fun SettingsScreen(
                         )
 
                         Spacer(modifier = Modifier.height(6.dp))
+
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.AutoAwesome,
+                            title = "Motion & Gestures",
+                            subtitle = "${motionConfig.intensity.label} • ${motionConfig.transitionStyle.label} • ${motionConfig.gestureSensitivity.label} sensitivity",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_motion_gestures_row"),
+                            onClick = { showMotionGesturesSettings = true }
+                        )
 
                         SettingsLinkRow(
                             icon = Icons.Rounded.AutoAwesome,
@@ -1113,61 +1135,31 @@ fun SettingsScreen(
                 item {
                     ExpandableSettingsSection(
                         title = "ABOUT",
-                        subtitle = "v1.0.0 Pro",
+                        subtitle = "${installedAppVersion.compactLabel} • Dr. M. GANESWAR",
                         expanded = aboutExpanded,
                         onToggle = { aboutExpanded = !aboutExpanded },
                         colors = colors
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .background(colors.accentStrong, CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "S",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 22.sp,
-                                    color = colors.onAccentStrong
+                        SettingsAboutContent(
+                            appVersion = installedAppVersion,
+                            colors = colors,
+                            reduceAnimations = reduceAnimations,
+                            linksContent = {
+                                SettingsLinkRow(
+                                    icon = Icons.Rounded.Policy,
+                                    title = "Privacy Policy",
+                                    subtitle = "Zero telemetry • Local playback stays offline",
+                                    colors = colors,
+                                    onClick = { showPrivacyDialog = true }
+                                )
+                                SettingsLinkRow(
+                                    icon = Icons.Rounded.Source,
+                                    title = "Open-Source Libraries",
+                                    subtitle = "NewPipe Extractor (GPL-3.0), Media3, Jetpack Compose & Room",
+                                    colors = colors,
+                                    onClick = { showLicensesDialog = true }
                                 )
                             }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column {
-                                Text(
-                                    text = "SONORA Music Player",
-                                    fontFamily = OutfitFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = colors.textPrimary
-                                )
-                                Text(
-                                    text = "Version 1.0.0 Pro • Local Hi-Fi & Online Streaming",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.accentStrong
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HorizontalDivider(color = colors.cardBorder)
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        SettingsLinkRow(
-                            icon = Icons.Rounded.Policy,
-                            title = "Privacy Policy",
-                            subtitle = "Zero telemetry • Local playback stays offline",
-                            colors = colors,
-                            onClick = { showPrivacyDialog = true }
-                        )
-                        SettingsLinkRow(
-                            icon = Icons.Rounded.Source,
-                            title = "Open-Source Libraries",
-                            subtitle = "NewPipe Extractor (GPL-3.0), Media3, Jetpack Compose & Room",
-                            colors = colors,
-                            onClick = { showLicensesDialog = true }
                         )
                     }
                 }
@@ -1341,10 +1333,11 @@ private fun SettingsLinkRow(
     title: String,
     subtitle: String,
     colors: EditorialColors,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .clickable { onClick() }

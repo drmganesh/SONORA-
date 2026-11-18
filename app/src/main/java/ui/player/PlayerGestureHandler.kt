@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -36,6 +37,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ui.components.GestureHudState
 import ui.components.GestureHudType
+import ui.motion.LocalEffectiveMotionState
 import kotlin.math.abs
 
 @Stable
@@ -47,6 +49,9 @@ class PlayerGestureController(
         private set
 
     var artworkZoomScale by mutableFloatStateOf(1f)
+        private set
+
+    var artworkDragOffsetX by mutableFloatStateOf(0f)
         private set
 
     var controlsVisible by mutableStateOf(true)
@@ -67,6 +72,14 @@ class PlayerGestureController(
 
     fun toggleControlsVisibility() {
         controlsVisible = !controlsVisible
+    }
+
+    fun updateArtworkDragOffset(offsetX: Float) {
+        artworkDragOffsetX = offsetX
+    }
+
+    fun resetArtworkDragOffset() {
+        artworkDragOffsetX = 0f
     }
 
     fun updateZoomScale(zoomFactor: Float) {
@@ -156,9 +169,9 @@ fun rememberPlayerGestureController(): PlayerGestureController {
 }
 
 /**
- * Unified modifier attached to player artwork containers across all 18+ styles.
+ * Unified modifier attached to player artwork containers across all 19 styles.
  * Supports: Single tap, Double tap (left/right seek or play/pause/favorite), Long press (Style Wheel),
- * Horizontal swipe (configurable action + sensitivity/threshold), Vertical swipe (minimize / queue),
+ * Horizontal swipe (velocity + threshold aware configurable action), Vertical swipe (minimize / queue),
  * and multi-touch Pinch-to-Zoom without conflicting with single-finger swipes.
  */
 fun Modifier.playerArtworkGestures(
@@ -179,11 +192,14 @@ fun Modifier.playerArtworkGestures(
 ): Modifier = composed {
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val motionState = LocalEffectiveMotionState.current
     val baseThresholdPx = with(density) { config.swipeThresholdDp.dp.toPx() }
     val effectiveHorizontalThreshold = (baseThresholdPx / config.swipeSensitivity.coerceIn(0.5f, 1.8f)).coerceAtLeast(36f)
     val effectiveVerticalThreshold = (baseThresholdPx * 1.25f / config.swipeSensitivity.coerceIn(0.5f, 1.8f)).coerceAtLeast(56f)
+    val velocityThresholdPx = with(density) { motionState.velocityThresholdDpPerSec.dp.toPx() }
 
     val latestConfig by rememberUpdatedState(config)
+    val latestMotionState by rememberUpdatedState(motionState)
     val latestPositionMs by rememberUpdatedState(currentPositionMs)
     val latestDurationMs by rememberUpdatedState(durationMs)
     val latestIsPlaying by rememberUpdatedState(isPlaying)
@@ -198,7 +214,9 @@ fun Modifier.playerArtworkGestures(
     val latestCycleStyle by rememberUpdatedState(onCyclePlayerStyle)
 
     fun triggerHaptic(type: HapticFeedbackType = HapticFeedbackType.TextHandleMove) {
-        if (latestConfig.hapticFeedbackEnabled) haptic.performHapticFeedback(type)
+        if (latestConfig.hapticFeedbackEnabled && latestMotionState.hapticEnabled) {
+            haptic.performHapticFeedback(type)
+        }
     }
 
     fun dispatchSwipe(action: SwipeAction, isLeftSwipe: Boolean) {
@@ -332,24 +350,50 @@ fun Modifier.playerArtworkGestures(
             config.swipeArtworkEnabled,
             config.swipeLeftAction,
             config.swipeRightAction,
-            effectiveHorizontalThreshold
+            effectiveHorizontalThreshold,
+            velocityThresholdPx
         ) {
-            if (!config.gesturesEnabled || !config.swipeArtworkEnabled) return@pointerInput
+            if (!config.gesturesEnabled || !config.swipeArtworkEnabled) {
+                controller.resetArtworkDragOffset()
+                return@pointerInput
+            }
             var dragX = 0f
+            var tracker: VelocityTracker? = null
             detectHorizontalDragGestures(
-                onDragStart = { dragX = 0f },
-                onDragCancel = { dragX = 0f },
+                onDragStart = {
+                    dragX = 0f
+                    tracker = VelocityTracker()
+                    controller.resetArtworkDragOffset()
+                },
+                onDragCancel = {
+                    dragX = 0f
+                    tracker = null
+                    controller.resetArtworkDragOffset()
+                },
                 onDragEnd = {
-                    if (dragX < -effectiveHorizontalThreshold) {
-                        dispatchSwipe(config.swipeLeftAction, isLeftSwipe = true)
-                    } else if (dragX > effectiveHorizontalThreshold) {
-                        dispatchSwipe(config.swipeRightAction, isLeftSwipe = false)
+                    val velocityX = tracker?.calculateVelocity()?.x ?: 0f
+                    val triggered = latestMotionState.shouldTriggerSwipe(
+                        dragPx = dragX,
+                        velocityPxPerSec = velocityX,
+                        thresholdPx = effectiveHorizontalThreshold,
+                        velocityPxThreshold = velocityThresholdPx
+                    )
+                    if (triggered) {
+                        val isLeftSwipe = if (abs(dragX) > effectiveHorizontalThreshold * 0.45f) dragX < 0f else velocityX < 0f
+                        dispatchSwipe(
+                            action = if (isLeftSwipe) latestConfig.swipeLeftAction else latestConfig.swipeRightAction,
+                            isLeftSwipe = isLeftSwipe
+                        )
                     }
                     dragX = 0f
+                    tracker = null
+                    controller.resetArtworkDragOffset()
                 },
                 onHorizontalDrag = { change, dragAmount ->
                     change.consume()
                     dragX += dragAmount
+                    tracker?.addPosition(change.uptimeMillis, change.position)
+                    controller.updateArtworkDragOffset(dragX)
                 }
             )
         }
@@ -357,27 +401,42 @@ fun Modifier.playerArtworkGestures(
             config.gesturesEnabled,
             config.swipeDownToMinimizeEnabled,
             config.swipeUpToOpenQueueEnabled,
-            effectiveVerticalThreshold
+            effectiveVerticalThreshold,
+            velocityThresholdPx
         ) {
             if (!config.gesturesEnabled) return@pointerInput
             if (!config.swipeDownToMinimizeEnabled && !config.swipeUpToOpenQueueEnabled) return@pointerInput
             var dragY = 0f
+            var tracker: VelocityTracker? = null
             detectVerticalDragGestures(
-                onDragStart = { dragY = 0f },
-                onDragCancel = { dragY = 0f },
+                onDragStart = {
+                    dragY = 0f
+                    tracker = VelocityTracker()
+                },
+                onDragCancel = {
+                    dragY = 0f
+                    tracker = null
+                },
                 onDragEnd = {
-                    if (config.swipeDownToMinimizeEnabled && dragY > effectiveVerticalThreshold) {
+                    val velocityY = tracker?.calculateVelocity()?.y ?: 0f
+                    val downTriggered = latestConfig.swipeDownToMinimizeEnabled &&
+                        (dragY > effectiveVerticalThreshold || velocityY > velocityThresholdPx)
+                    val upTriggered = latestConfig.swipeUpToOpenQueueEnabled &&
+                        (dragY < -effectiveVerticalThreshold || velocityY < -velocityThresholdPx)
+                    if (downTriggered) {
                         triggerHaptic()
-                        onClose()
-                    } else if (config.swipeUpToOpenQueueEnabled && dragY < -effectiveVerticalThreshold) {
+                        latestClose()
+                    } else if (upTriggered) {
                         triggerHaptic()
-                        onOpenQueue()
+                        latestOpenQueue()
                     }
                     dragY = 0f
+                    tracker = null
                 },
                 onVerticalDrag = { change, dragAmount ->
                     change.consume()
                     dragY += dragAmount
+                    tracker?.addPosition(change.uptimeMillis, change.position)
                 }
             )
         }
@@ -412,9 +471,15 @@ fun Modifier.playerScreenEdgeGestures(
 ): Modifier = composed {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
-    val systemBackSafePx = with(density) { 22.dp.toPx() }
+    val motionState = LocalEffectiveMotionState.current
+    val systemBackSafePx = with(density) { 24.dp.toPx() }
     val edgeZoneOuterPx = with(density) { 80.dp.toPx() }
     val verticalSwipeThreshold = with(density) { (config.swipeThresholdDp * 1.4f).dp.toPx() } / config.swipeSensitivity.coerceIn(0.5f, 1.8f)
+    val velocityThresholdPx = with(density) { motionState.velocityThresholdDpPerSec.dp.toPx() }
+
+    val latestHapticEnabled by rememberUpdatedState(config.hapticFeedbackEnabled && motionState.hapticEnabled)
+    val latestOnClose by rememberUpdatedState(onClose)
+    val latestOnOpenQueue by rememberUpdatedState(onOpenQueue)
 
     this.pointerInput(
         config.gesturesEnabled,
@@ -422,18 +487,21 @@ fun Modifier.playerScreenEdgeGestures(
         config.leftEdgeBrightnessEnabled,
         config.swipeDownToMinimizeEnabled,
         config.swipeUpToOpenQueueEnabled,
-        verticalSwipeThreshold
+        verticalSwipeThreshold,
+        velocityThresholdPx
     ) {
         if (!config.gesturesEnabled) return@pointerInput
         var startX = 0f
         var dragY = 0f
         var inLeftEdge = false
         var inRightEdge = false
+        var tracker: VelocityTracker? = null
 
         detectVerticalDragGestures(
             onDragStart = { offset ->
                 startX = offset.x
                 dragY = 0f
+                tracker = VelocityTracker()
                 controller.resetEdgeDragAccumulators()
                 val w = size.width.toFloat()
                 inLeftEdge = config.leftEdgeBrightnessEnabled &&
@@ -445,24 +513,28 @@ fun Modifier.playerScreenEdgeGestures(
                 inLeftEdge = false
                 inRightEdge = false
                 dragY = 0f
+                tracker = null
             },
             onDragEnd = {
                 if (!inLeftEdge && !inRightEdge) {
-                    if (config.swipeDownToMinimizeEnabled && dragY > verticalSwipeThreshold) {
-                        if (config.hapticFeedbackEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onClose()
-                    } else if (config.swipeUpToOpenQueueEnabled && dragY < -verticalSwipeThreshold) {
-                        if (config.hapticFeedbackEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onOpenQueue()
+                    val velocityY = tracker?.calculateVelocity()?.y ?: 0f
+                    if (config.swipeDownToMinimizeEnabled && (dragY > verticalSwipeThreshold || velocityY > velocityThresholdPx)) {
+                        if (latestHapticEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        latestOnClose()
+                    } else if (config.swipeUpToOpenQueueEnabled && (dragY < -verticalSwipeThreshold || velocityY < -velocityThresholdPx)) {
+                        if (latestHapticEnabled) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        latestOnOpenQueue()
                     }
                 }
                 inLeftEdge = false
                 inRightEdge = false
                 dragY = 0f
+                tracker = null
             },
             onVerticalDrag = { change, amount ->
                 change.consume()
                 dragY += amount
+                tracker?.addPosition(change.uptimeMillis, change.position)
                 val h = size.height.toFloat().coerceAtLeast(300f)
                 if (inRightEdge) {
                     controller.adjustMusicVolume(amount, h)

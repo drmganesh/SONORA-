@@ -57,6 +57,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +69,7 @@ import com.example.model.SpatialProfile
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.LocalEditorialColors
 import kotlin.math.cos
 import kotlin.math.sin
@@ -101,6 +103,7 @@ fun AudioEffectsStudioScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val performHaptic = rememberMotionAwareHaptic()
     val globalBypass by viewModel.globalEffectsBypass.collectAsState()
     val orbitEnabled by viewModel.orbit8dEnabled.collectAsState()
     val orbitSpeed by viewModel.orbit8dSpeed.collectAsState()
@@ -282,7 +285,10 @@ fun AudioEffectsStudioScreen(
                             }
                             Switch(
                                 checked = globalBypass,
-                                onCheckedChange = { bypass -> viewModel.setGlobalEffectsBypass(bypass) },
+                                onCheckedChange = { bypass ->
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
+                                    viewModel.setGlobalEffectsBypass(bypass)
+                                },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = colors.onAccentStrong,
                                     checkedTrackColor = colors.accentStrong
@@ -325,7 +331,10 @@ fun AudioEffectsStudioScreen(
                                 Switch(
                                     checked = orbitEnabled && !globalBypass,
                                     enabled = !globalBypass,
-                                    onCheckedChange = { viewModel.setOrbit8dConfig(it) },
+                                    onCheckedChange = {
+                                        performHaptic(HapticFeedbackType.TextHandleMove)
+                                        viewModel.setOrbit8dConfig(it)
+                                    },
                                     colors = SwitchDefaults.colors(
                                         checkedThumbColor = colors.onAccentStrong,
                                         checkedTrackColor = colors.accentStrong
@@ -344,7 +353,10 @@ fun AudioEffectsStudioScreen(
                                 SpatialProfile.entries.forEach { profile ->
                                     val selected = spatialConfig.spatialProfile == profile
                                     Surface(
-                                        onClick = { viewModel.setSpatialProfile(profile) },
+                                        onClick = {
+                                            performHaptic(HapticFeedbackType.TextHandleMove)
+                                            viewModel.setSpatialProfile(profile)
+                                        },
                                         enabled = !globalBypass,
                                         shape = RoundedCornerShape(16.dp),
                                         color = if (selected) colors.accentPill else colors.surfaceTinted,
@@ -483,7 +495,10 @@ fun AudioEffectsStudioScreen(
                                 SpatialIntensity.entries.forEach { level ->
                                     val selected = spatialConfig.spatialIntensity == level
                                     Surface(
-                                        onClick = { viewModel.setSpatialIntensity(level) },
+                                        onClick = {
+                                            performHaptic(HapticFeedbackType.TextHandleMove)
+                                            viewModel.setSpatialIntensity(level)
+                                        },
                                         enabled = !globalBypass,
                                         shape = RoundedCornerShape(14.dp),
                                         color = if (selected) colors.accentStrong else colors.surfaceTinted,
@@ -840,6 +855,7 @@ private fun StudioSliderRow(
     enabled: Boolean = true,
     onValueChange: (Float) -> Unit
 ) {
+    val performHaptic = rememberMotionAwareHaptic()
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -864,6 +880,7 @@ private fun StudioSliderRow(
         Slider(
             value = value.coerceIn(valueRange.start, valueRange.endInclusive),
             onValueChange = onValueChange,
+            onValueChangeFinished = { performHaptic(HapticFeedbackType.TextHandleMove) },
             valueRange = valueRange,
             enabled = enabled,
             colors = SliderDefaults.colors(

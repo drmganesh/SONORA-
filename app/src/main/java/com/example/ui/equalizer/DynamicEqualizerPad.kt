@@ -1,6 +1,4 @@
 package com.example.ui.equalizer
-
-import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -38,14 +36,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.PlusJakartaFontFamily
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.LocalEditorialColors
 import ui.theme.LocalReduceAnimations
 import kotlin.math.hypot
@@ -64,9 +64,10 @@ fun DynamicEqualizerPad(
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val view = LocalView.current
+    val performHaptic = rememberMotionAwareHaptic()
+    val motionState = LocalEffectiveMotionState.current
     val colors = LocalEditorialColors.current
-    val reduceAnimations = LocalReduceAnimations.current
+    val reduceAnimations = LocalReduceAnimations.current || !motionState.animationsEnabled
 
     val accentColor = if (isEnabled) colors.accentStrong else colors.textMuted
     val pillAccent = if (isEnabled) colors.accentPill else colors.textMuted
@@ -84,16 +85,19 @@ fun DynamicEqualizerPad(
         }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "pad_pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = if (reduceAnimations) 1f else 0.95f,
-        targetValue = if (reduceAnimations) 1f else 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseScale"
-    )
+    val pulseScale = if (!reduceAnimations && isEnabled) {
+        val infiniteTransition = rememberInfiniteTransition(label = "pad_pulse")
+        val animated by infiniteTransition.animateFloat(
+            initialValue = 0.95f,
+            targetValue = 1.08f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulseScale"
+        )
+        animated
+    } else 1f
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -147,7 +151,7 @@ fun DynamicEqualizerPad(
                             if (!isEnabled) return@pointerInput
                             detectTapGestures(
                                 onDoubleTap = {
-                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                    performHaptic(HapticFeedbackType.LongPress)
                                     onReset()
                                 }
                             )
@@ -156,7 +160,7 @@ fun DynamicEqualizerPad(
                             if (!isEnabled) return@pointerInput
                             detectDragGestures(
                                 onDragStart = { offset ->
-                                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
                                     val newTilt = ((offset.x / size.width.toFloat()) * 2f - 1f).coerceIn(-1f, 1f)
                                     val newContour = -((offset.y / size.height.toFloat()) * 2f - 1f).coerceIn(-1f, 1f)
                                     onPositionChanged(newTilt, newContour)

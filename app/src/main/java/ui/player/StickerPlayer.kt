@@ -1,5 +1,6 @@
 package ui.player
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,6 +47,9 @@ import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.PlaybackControls
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -79,6 +83,8 @@ fun StickerPlayer(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
     val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
 
@@ -144,6 +150,9 @@ fun StickerPlayer(
                     .graphicsLayer {
                         scaleX = gestureController.artworkZoomScale
                         scaleY = gestureController.artworkZoomScale
+                        translationX = if (motionState.animationsEnabled) {
+                            (gestureController.artworkDragOffsetX * 0.25f).coerceIn(-68f, 68f)
+                        } else 0f
                     }
                     .rotate(-2.5f)
                     .shadow(16.dp, RoundedCornerShape(32.dp), ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
@@ -175,12 +184,19 @@ fun StickerPlayer(
                         .fillMaxSize()
                         .clip(RoundedCornerShape(27.dp))
                 ) {
-                    ArtworkAlbumView(
-                        song = song,
+                    AnimatedContent(
+                        targetState = song?.id,
+                        transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
                         modifier = Modifier.fillMaxSize(),
-                        cornerRadius = 27.dp,
-                        isPlaying = playbackInfo.isPlaying
-                    )
+                        label = "stickerArtworkTrackTransition"
+                    ) { _ ->
+                        ArtworkAlbumView(
+                            song = song,
+                            modifier = Modifier.fillMaxSize(),
+                            cornerRadius = 27.dp,
+                            isPlaying = playbackInfo.isPlaying
+                        )
+                    }
 
                     Surface(
                         modifier = Modifier
@@ -221,28 +237,35 @@ fun StickerPlayer(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = song?.title ?: "No Song Selected",
-                            fontFamily = OutfitFontFamily,
-                            color = colors.textPrimary,
-                            fontSize = (18f * scale).sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
-                                "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
-                            } else {
-                                song?.artist ?: "Unknown Artist"
-                            },
-                            fontFamily = PlusJakartaFontFamily,
-                            color = colors.textSecondary,
-                            fontSize = (14f * scale).sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    AnimatedContent(
+                        targetState = song?.id,
+                        transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                        modifier = Modifier.weight(1f),
+                        label = "stickerMetadataTransition"
+                    ) { _ ->
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = song?.title ?: "No Song Selected",
+                                fontFamily = OutfitFontFamily,
+                                color = colors.textPrimary,
+                                fontSize = (18f * scale).sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
+                                    "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
+                                } else {
+                                    song?.artist ?: "Unknown Artist"
+                                },
+                                fontFamily = PlusJakartaFontFamily,
+                                color = colors.textSecondary,
+                                fontSize = (14f * scale).sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                     if (appearance.showLyricsShortcut) {
                         IconButton(onClick = onOpenLyrics, modifier = Modifier.size(48.dp)) {

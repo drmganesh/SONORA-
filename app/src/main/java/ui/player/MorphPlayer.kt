@@ -1,5 +1,6 @@
 package ui.player
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode as AnimRepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -53,6 +54,9 @@ import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import kotlin.math.sin
 import ui.components.PlaybackControls
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -87,7 +91,9 @@ fun MorphPlayer(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
-    val reduceAnimations = LocalReduceAnimations.current || appearance.animationIntensity == AnimationIntensity.OFF
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
+    val reduceAnimations = LocalReduceAnimations.current || !motionState.animationsEnabled || appearance.animationIntensity == AnimationIntensity.OFF
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
     val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
 
@@ -181,6 +187,9 @@ fun MorphPlayer(
                         val combined = breathingScale * gestureController.artworkZoomScale
                         scaleX = combined
                         scaleY = combined
+                        translationX = if (motionState.animationsEnabled) {
+                            (gestureController.artworkDragOffsetX * 0.25f).coerceIn(-68f, 68f)
+                        } else 0f
                     }
                     .shadow(
                         elevation = if (playbackInfo.isPlaying) 18.dp else 8.dp,
@@ -209,45 +218,59 @@ fun MorphPlayer(
                     .testTag("player_artwork_box"),
                 contentAlignment = Alignment.Center
             ) {
-                ArtworkAlbumView(
-                    song = song,
+                AnimatedContent(
+                    targetState = song?.id,
+                    transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
                     modifier = Modifier.fillMaxSize(),
-                    cornerRadius = 0.dp,
-                    isPlaying = playbackInfo.isPlaying
-                )
+                    label = "morphArtworkTrackTransition"
+                ) { _ ->
+                    ArtworkAlbumView(
+                        song = song,
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadius = 0.dp,
+                        isPlaying = playbackInfo.isPlaying
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Column(
+            AnimatedContent(
+                targetState = song?.id,
+                transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
                 modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = song?.title ?: "No Song Selected",
-                    fontFamily = OutfitFontFamily,
-                    color = colors.textPrimary,
-                    fontSize = (22f * scale).sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
-                        "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
-                    } else {
-                        song?.artist ?: "Unknown Artist"
-                    },
-                    fontFamily = PlusJakartaFontFamily,
-                    color = colors.accentStrong,
-                    fontSize = (15f * scale).sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
-                )
+                label = "morphMetadataTransition"
+            ) { _ ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = song?.title ?: "No Song Selected",
+                        fontFamily = OutfitFontFamily,
+                        color = colors.textPrimary,
+                        fontSize = (22f * scale).sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
+                            "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
+                        } else {
+                            song?.artist ?: "Unknown Artist"
+                        },
+                        fontFamily = PlusJakartaFontFamily,
+                        color = colors.accentStrong,
+                        fontSize = (15f * scale).sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
 
             SeekbarRenderer(

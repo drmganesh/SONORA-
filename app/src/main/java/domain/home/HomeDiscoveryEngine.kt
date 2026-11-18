@@ -231,4 +231,49 @@ object HomeDiscoveryEngine {
             .sortedWith(compareByDescending<Artist> { scoreByArtist[it.name] ?: 0 }.thenByDescending { it.songCount })
             .take(limit)
     }
+
+    fun computeLocalLibraryStats(
+        songs: List<Song>,
+        albums: List<Album>,
+        artists: List<Artist>,
+        favorites: List<Song>
+    ): LocalLibraryStats {
+        val totalDurationMs = songs.sumOf { it.durationMs.coerceAtLeast(0L) }
+        val losslessCount = songs.count {
+            it.mimeType.contains("flac", ignoreCase = true) ||
+                it.dataPath.endsWith(".flac", ignoreCase = true) ||
+                it.dataPath.endsWith(".wav", ignoreCase = true) ||
+                it.bitDepth > 16 ||
+                it.sampleRateHz > 48000
+        }
+        return LocalLibraryStats(
+            trackCount = songs.size,
+            albumCount = albums.size,
+            artistCount = artists.size,
+            favoritesCount = favorites.size,
+            losslessCount = losslessCount,
+            totalDurationMs = totalDurationMs
+        )
+    }
+}
+
+data class LocalLibraryStats(
+    val trackCount: Int = 0,
+    val albumCount: Int = 0,
+    val artistCount: Int = 0,
+    val favoritesCount: Int = 0,
+    val losslessCount: Int = 0,
+    val totalDurationMs: Long = 0L
+) {
+    val formattedTotalDuration: String
+        get() {
+            val totalMinutes = (totalDurationMs / 60_000L).coerceAtLeast(0L)
+            val hours = totalMinutes / 60L
+            val minutes = totalMinutes % 60L
+            return when {
+                hours > 0L && minutes > 0L -> "${hours}h ${minutes}m"
+                hours > 0L -> "${hours}h"
+                else -> "${minutes}m"
+            }
+        }
 }

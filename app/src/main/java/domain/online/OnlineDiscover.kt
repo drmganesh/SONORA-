@@ -23,6 +23,10 @@ enum class DiscoverSectionType(
     POPULAR_ARTISTS(
         title = "Popular Artists",
         subtitle = "Featured creators & music channels"
+    ),
+    ONLINE_PLAYLISTS(
+        title = "Online Playlists",
+        subtitle = "Curated streaming mixes & playlists"
     )
 }
 
@@ -99,7 +103,10 @@ sealed interface DiscoverSectionState {
     data object Loading : DiscoverSectionState
     data class Success(
         val items: List<OnlineTrack>,
-        val sourceLabel: String = ""
+        val sourceLabel: String = "",
+        val nextPageToken: String? = null,
+        val hasMore: Boolean = false,
+        val isLoadingMore: Boolean = false
     ) : DiscoverSectionState
 
     data class Empty(val message: String) : DiscoverSectionState

@@ -461,6 +461,12 @@ class SonoraPreferences(context: Context) {
             ?: domain.online.DiscoverMusicLanguage.DEFAULT.id
         set(value) = prefs.edit().putString("online_discover_music_language", value).apply()
 
+    var homeMusicMode: domain.home.HomeMusicMode
+        get() = domain.home.HomeMusicMode.fromId(
+            prefs.getString("home_music_mode", domain.home.HomeMusicMode.DEFAULT.id)
+        )
+        set(value) = prefs.edit().putString("home_music_mode", value.id).apply()
+
     var playerAppearanceConfig: PlayerAppearanceConfig
         get() = decodeAppearanceJson(prefs.getString("player_appearance_json", null))
         set(value) = prefs.edit().putString("player_appearance_json", encodeAppearanceJson(value)).apply()

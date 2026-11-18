@@ -170,12 +170,33 @@ fun MiniPlayerView(
                         Spacer(modifier = Modifier.width(6.dp))
                         Box(
                             modifier = Modifier
+                                .background(palette.accent.copy(alpha = 0.14f), RoundedCornerShape(4.dp))
+                                .border(0.5.dp, palette.accent.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                .testTag("mini_player_source_badge")
+                        ) {
+                            Text(
+                                text = if (song.isOnline) "ONLINE" else "LOCAL",
+                                color = palette.accent,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Box(
+                            modifier = Modifier
                                 .background(SonoraCyan.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
                                 .border(0.5.dp, SonoraCyan.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
                             Text(
-                                text = if (song.mimeType.contains("flac")) "FLAC" else "HI-RES",
+                                text = if (song.isOnline) {
+                                    song.streamCodec.ifBlank { "STREAM" }.uppercase()
+                                } else if (song.mimeType.contains("flac")) {
+                                    "FLAC"
+                                } else {
+                                    "HI-RES"
+                                },
                                 color = SonoraCyan,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold

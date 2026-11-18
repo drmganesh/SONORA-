@@ -1,6 +1,9 @@
 package data.online
 
 import android.util.Log
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
@@ -10,6 +13,7 @@ import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -24,9 +28,59 @@ class HttpTransportException(
 ) : IOException(message)
 
 /**
+ * Ephemeral, thread-safe in-memory [CookieJar] preserving session, consent (SOCS/CONSENT),
+ * and visitor cookies across NewPipe Innertube and media CDN requests without disk persistence.
+ */
+internal class SessionCookieJar : CookieJar {
+    private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        if (cookies.isEmpty()) return
+        val host = url.host
+        val now = System.currentTimeMillis()
+        synchronized(store) {
+            val current = store.getOrPut(host) { mutableListOf() }
+            current.removeAll { it.expiresAt < now }
+            for (incoming in cookies) {
+                current.removeAll { it.name == incoming.name && it.domain == incoming.domain && it.path == incoming.path }
+                if (incoming.expiresAt >= now && incoming.value.isNotEmpty()) {
+                    current.add(incoming)
+                }
+            }
+            if (current.size > 64) {
+                val excess = current.size - 64
+                repeat(excess) { current.removeAt(0) }
+            }
+        }
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val now = System.currentTimeMillis()
+        synchronized(store) {
+            val matched = mutableListOf<Cookie>()
+            val it = store.entries.iterator()
+            while (it.hasNext()) {
+                val entry = it.next()
+                entry.value.removeAll { c -> c.expiresAt < now }
+                if (entry.value.isEmpty()) {
+                    it.remove()
+                    continue
+                }
+                for (cookie in entry.value) {
+                    if (cookie.matches(url)) {
+                        matched.add(cookie)
+                    }
+                }
+            }
+            return matched
+        }
+    }
+}
+
+/**
  * OkHttp-backed [Downloader] for NewPipeExtractor.
  * Handles headers, Content-Type preservation, transparent gzip compression, localization,
- * redirects, charset decoding, timeouts, HTTP status validation, and rate-limit detection.
+ * session cookies, redirects, charset decoding, timeouts, HTTP status validation, and rate-limit detection.
  */
 class NewPipeDownloader(
     val okHttpClient: OkHttpClient = createDefaultClient()
@@ -40,6 +94,7 @@ class NewPipeDownloader(
 
         fun createDefaultClient(): OkHttpClient {
             return OkHttpClient.Builder()
+                .cookieJar(SessionCookieJar())
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(25, TimeUnit.SECONDS)
                 .writeTimeout(15, TimeUnit.SECONDS)

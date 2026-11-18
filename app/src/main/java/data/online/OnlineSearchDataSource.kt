@@ -22,7 +22,9 @@ import org.schabi.newpipe.extractor.exceptions.PaidContentException
 import org.schabi.newpipe.extractor.exceptions.ParsingException
 import org.schabi.newpipe.extractor.exceptions.PrivateContentException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
+import org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException
 import org.schabi.newpipe.extractor.exceptions.UnsupportedContentInCountryException
+import org.schabi.newpipe.extractor.exceptions.YoutubeMusicPremiumContentException
 import org.schabi.newpipe.extractor.linkhandler.SearchQueryHandler
 import org.schabi.newpipe.extractor.search.SearchInfo
 import java.io.IOException
@@ -267,12 +269,14 @@ class OnlineSearchDataSource(
                 is SocketTimeoutException -> true
                 is HttpTransportException -> t.statusCode in 500..599
                 is UnknownHostException -> false
-                is ReCaptchaException -> false
+                is ReCaptchaException,
+                is SignInConfirmNotBotException -> false
                 is ContentNotAvailableException,
                 is AgeRestrictedContentException,
                 is GeographicRestrictionException,
                 is PaidContentException,
                 is PrivateContentException,
+                is YoutubeMusicPremiumContentException,
                 is UnsupportedContentInCountryException -> false
                 is IOException -> true
                 else -> false
@@ -316,15 +320,31 @@ class OnlineSearchDataSource(
             requestType: String = ""
         ): OnlineResult.Error {
             val topFrame = t.stackTrace.firstOrNull()?.let { "${it.className.substringAfterLast('.')}:${it.lineNumber}" } ?: "unknown"
-            Log.e(
-                TAG,
-                "Extraction failure service=$providerName op=$operation req=$requestType exc=${t::class.java.simpleName} at=$topFrame msg=${t.message}"
-            )
+            val logMsg = "Extraction failure service=$providerName op=$operation req=$requestType exc=${t::class.java.simpleName} at=$topFrame msg=${t.message}"
+            val isExpectedUpstreamRestriction = t is SignInConfirmNotBotException ||
+                t is ReCaptchaException ||
+                t is YoutubeMusicPremiumContentException ||
+                t is GeographicRestrictionException ||
+                t is AgeRestrictedContentException ||
+                t is PaidContentException ||
+                t is PrivateContentException ||
+                t is UnsupportedContentInCountryException
+            if (isExpectedUpstreamRestriction) {
+                Log.w(TAG, logMsg)
+            } else {
+                Log.e(TAG, logMsg)
+            }
 
             return when (t) {
                 is ReCaptchaException -> OnlineResult.Error(
                     kind = OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA,
                     message = "$providerName temporarily rate-limited requests (HTTP 429). Try again shortly or switch provider.",
+                    cause = t,
+                    isRetryable = true
+                )
+                is SignInConfirmNotBotException -> OnlineResult.Error(
+                    kind = OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA,
+                    message = "$providerName blocked anonymous playback on this IP (anti-bot check). Try SoundCloud or switch network/VPN and retry.",
                     cause = t,
                     isRetryable = true
                 )
@@ -349,6 +369,12 @@ class OnlineSearchDataSource(
                 is GeographicRestrictionException -> OnlineResult.Error(
                     kind = OnlineErrorKind.AGE_OR_GEO_RESTRICTED,
                     message = "This content is not available in your region on $providerName.",
+                    cause = t,
+                    isRetryable = false
+                )
+                is YoutubeMusicPremiumContentException -> OnlineResult.Error(
+                    kind = OnlineErrorKind.UNSUPPORTED,
+                    message = "This track requires a YouTube Music Premium membership and cannot be streamed anonymously.",
                     cause = t,
                     isRetryable = false
                 )

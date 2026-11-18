@@ -122,7 +122,7 @@ fun ArtworkTransition(
                         scaleOut(targetScale = 1.03f, animationSpec = tween(300)))
             }
         },
-        contentKey = { target -> "${target?.id ?: -1L}_${target?.albumId ?: -1L}" },
+        contentKey = { target -> "${target?.id ?: -1L}_${target?.albumId ?: -1L}_${target?.artworkUrl.orEmpty()}" },
         label = "album_art_crossfade",
         modifier = modifier
     ) { targetSong ->
@@ -130,7 +130,8 @@ fun ArtworkTransition(
         val bitmap by produceState<Bitmap?>(
             initialValue = cached,
             key1 = targetSong?.id,
-            key2 = targetSong?.albumId
+            key2 = targetSong?.albumId,
+            key3 = targetSong?.artworkUrl
         ) {
             if (value == null) {
                 value = AlbumArtHelper.loadAlbumArt(context, targetSong)

@@ -89,6 +89,7 @@ class OnlineMusicRepository(
         languageCode: String = NewPipeInitializer.currentLanguageCode(),
         discoverLanguage: domain.online.DiscoverMusicLanguage = domain.online.DiscoverMusicLanguage.ALL,
         recentArtistSeed: String? = null,
+        recommendationProfile: domain.online.OnlineRecommendationProfile? = null,
         forceRefresh: Boolean = false
     ): DiscoverSectionState {
         return streamResolver.fetchDiscoverSection(
@@ -99,7 +100,21 @@ class OnlineMusicRepository(
             languageCode = languageCode,
             discoverLanguage = discoverLanguage,
             recentArtistSeed = recentArtistSeed,
+            recommendationProfile = recommendationProfile,
             forceRefresh = forceRefresh
+        )
+    }
+
+    suspend fun loadMoreDiscoverSection(
+        sectionType: DiscoverSectionType,
+        provider: OnlineMusicProvider,
+        previousToken: String
+    ): OnlineResult<Pair<List<OnlineTrack>, String?>> {
+        return streamResolver.loadMoreDiscoverSection(
+            sectionType = sectionType,
+            provider = provider,
+            previousToken = previousToken,
+            searchDataSource = searchDataSource
         )
     }
 
@@ -124,7 +139,10 @@ class OnlineMusicRepository(
             contentUrl = song.contentUrl.ifBlank { song.uri.toString() },
             qualityPreference = qualityPreference,
             manualStreamId = manualStreamId,
-            forceRefresh = forceRefresh
+            forceRefresh = forceRefresh,
+            trackTitleHint = song.title,
+            trackArtistHint = song.artist,
+            expectedDurationMs = song.durationMs
         )
     }
 

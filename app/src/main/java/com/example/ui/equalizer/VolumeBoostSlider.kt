@@ -1,6 +1,4 @@
 package com.example.ui.equalizer
-
-import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -19,12 +17,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.PlusJakartaFontFamily
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.LocalEditorialColors
 
 /**
@@ -37,7 +36,7 @@ fun VolumeBoostSlider(
     onBoostChanged: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val view = LocalView.current
+    val performHaptic = rememberMotionAwareHaptic()
     val colors = LocalEditorialColors.current
     val accentColor = if (isEnabled) colors.accentStrong else colors.textMuted
 
@@ -94,7 +93,7 @@ fun VolumeBoostSlider(
             onValueChange = { newValue ->
                 val rounded = (Math.round(newValue * 2f) / 2f)
                 if (rounded != boostDb) {
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    performHaptic(HapticFeedbackType.TextHandleMove)
                     onBoostChanged(rounded)
                 }
             },

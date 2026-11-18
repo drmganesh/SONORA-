@@ -1,6 +1,9 @@
 package com.example.ui.equalizer
 
-import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,6 +26,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,14 +37,18 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.equalizer.DynamicSoundMapper
 import com.example.ui.theme.PlusJakartaFontFamily
+import kotlin.math.roundToInt
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.LocalEditorialColors
 
 /**
@@ -51,7 +62,7 @@ fun ManualEqualizerScreen(
     onResetAllBands: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val view = LocalView.current
+    val performHaptic = rememberMotionAwareHaptic()
     val colors = LocalEditorialColors.current
     val scrollState = rememberScrollState()
 
@@ -70,7 +81,7 @@ fun ManualEqualizerScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "15-BAND PARAMETRIC EQUALIZER",
                     fontFamily = PlusJakartaFontFamily,
@@ -89,7 +100,7 @@ fun ManualEqualizerScreen(
 
             OutlinedButton(
                 onClick = {
-                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    performHaptic(HapticFeedbackType.TextHandleMove)
                     onResetAllBands()
                 },
                 enabled = isEnabled,
@@ -99,7 +110,9 @@ fun ManualEqualizerScreen(
                     contentColor = colors.textPrimary
                 ),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                modifier = Modifier.height(34.dp)
+                modifier = Modifier
+                    .height(48.dp)
+                    .testTag("eq_zero_all_button")
             ) {
                 Text("Zero All", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
@@ -112,7 +125,7 @@ fun ManualEqualizerScreen(
                 .fillMaxWidth()
                 .horizontalScroll(scrollState)
                 .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             for (i in 0 until 15) {
@@ -120,6 +133,7 @@ fun ManualEqualizerScreen(
                 val label = DynamicSoundMapper.ISO_15_LABELS[i]
 
                 SingleBandVerticalSlider(
+                    bandIndex = i,
                     frequencyLabel = label,
                     gainDb = gain,
                     isEnabled = isEnabled,
@@ -133,21 +147,34 @@ fun ManualEqualizerScreen(
 
 @Composable
 private fun SingleBandVerticalSlider(
+    bandIndex: Int,
     frequencyLabel: String,
     gainDb: Float,
     isEnabled: Boolean,
     onGainChanged: (Float) -> Unit,
     onReset: () -> Unit
 ) {
-    val view = LocalView.current
+    val performHaptic = rememberMotionAwareHaptic()
+    val motionState = LocalEffectiveMotionState.current
     val colors = LocalEditorialColors.current
     val accentColor = if (isEnabled) colors.accentStrong else colors.textMuted
     val trackBg = colors.surfaceTinted
     val zeroLineColor = colors.textMuted.copy(alpha = 0.45f)
 
+    val animatedGain by animateFloatAsState(
+        targetValue = gainDb.coerceIn(-12f, 12f),
+        animationSpec = if (motionState.animationsEnabled) {
+            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh)
+        } else {
+            snap()
+        },
+        label = "eqBandGainAnim"
+    )
+    var lastHapticIntStep by remember { mutableIntStateOf(gainDb.roundToInt()) }
+
     Column(
         modifier = Modifier
-            .width(52.dp)
+            .width(54.dp)
             .height(230.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
@@ -169,11 +196,12 @@ private fun SingleBandVerticalSlider(
 
         Box(
             modifier = Modifier
-                .width(44.dp)
+                .width(48.dp)
                 .weight(1f)
                 .clip(RoundedCornerShape(14.dp))
                 .background(trackBg)
                 .border(0.75.dp, colors.cardBorder, RoundedCornerShape(14.dp))
+                .testTag("eq_band_slider_$bandIndex")
                 .pointerInput(isEnabled) {
                     if (!isEnabled) return@pointerInput
                     detectTapGestures(
@@ -181,10 +209,13 @@ private fun SingleBandVerticalSlider(
                             val fraction = 1f - (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
                             val newGain = (fraction * 24f - 12f)
                             val rounded = (Math.round(newGain * 2f) / 2f).coerceIn(-12f, 12f)
+                            performHaptic(HapticFeedbackType.TextHandleMove)
+                            lastHapticIntStep = rounded.roundToInt()
                             onGainChanged(rounded)
                         },
                         onDoubleTap = {
-                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            performHaptic(HapticFeedbackType.LongPress)
+                            lastHapticIntStep = 0
                             onReset()
                         }
                     )
@@ -193,10 +224,11 @@ private fun SingleBandVerticalSlider(
                     if (!isEnabled) return@pointerInput
                     detectVerticalDragGestures(
                         onDragStart = { offset ->
-                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                            performHaptic(HapticFeedbackType.TextHandleMove)
                             val fraction = 1f - (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
                             val newGain = (fraction * 24f - 12f)
                             val rounded = (Math.round(newGain * 2f) / 2f).coerceIn(-12f, 12f)
+                            lastHapticIntStep = rounded.roundToInt()
                             onGainChanged(rounded)
                         },
                         onVerticalDrag = { change, _ ->
@@ -204,8 +236,13 @@ private fun SingleBandVerticalSlider(
                             val offset = change.position
                             val fraction = 1f - (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
                             val newGain = (fraction * 24f - 12f)
-                            val rounded = (Math.round(newGain * 2f) / 2f).coerceIn(-12f, 12f)
-                            onGainChanged(rounded)
+                            val snapped = if (kotlin.math.abs(newGain) < 0.35f) 0f else (Math.round(newGain * 2f) / 2f).coerceIn(-12f, 12f)
+                            val intStep = snapped.roundToInt()
+                            if (intStep != lastHapticIntStep) {
+                                lastHapticIntStep = intStep
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                            }
+                            onGainChanged(snapped)
                         }
                     )
                 }
@@ -214,7 +251,7 @@ private fun SingleBandVerticalSlider(
                 val widthPx = size.width
                 val heightPx = size.height
                 val centerY = heightPx / 2f
-                val clampedGain = gainDb.coerceIn(-12f, 12f)
+                val clampedGain = animatedGain.coerceIn(-12f, 12f)
 
                 drawLine(
                     color = zeroLineColor,

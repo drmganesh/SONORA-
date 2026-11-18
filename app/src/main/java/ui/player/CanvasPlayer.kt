@@ -1,5 +1,6 @@
 package ui.player
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -45,6 +46,9 @@ import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.PlaybackControls
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -79,6 +83,8 @@ fun CanvasPlayer(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
     val duration = (playbackInfo.durationMs).coerceAtLeast(song?.durationMs ?: 0L)
     val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
 
@@ -102,17 +108,27 @@ fun CanvasPlayer(
                 onCyclePlayerStyle = onCyclePlayerStyle
             )
     ) {
-        ArtworkAlbumView(
-            song = song,
+        AnimatedContent(
+            targetState = song?.id,
+            transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
                     scaleX = gestureController.artworkZoomScale
                     scaleY = gestureController.artworkZoomScale
+                    translationX = if (motionState.animationsEnabled) {
+                        (gestureController.artworkDragOffsetX * 0.25f).coerceIn(-68f, 68f)
+                    } else 0f
                 },
-            cornerRadius = 0.dp,
-            isPlaying = playbackInfo.isPlaying
-        )
+            label = "canvasArtworkTrackTransition"
+        ) { _ ->
+            ArtworkAlbumView(
+                song = song,
+                modifier = Modifier.fillMaxSize(),
+                cornerRadius = 0.dp,
+                isPlaying = playbackInfo.isPlaying
+            )
+        }
 
         Box(
             modifier = Modifier
@@ -199,28 +215,35 @@ fun CanvasPlayer(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = song?.title ?: "No Song Selected",
-                                    fontFamily = OutfitFontFamily,
-                                    color = colors.textPrimary,
-                                    fontSize = (20f * scale).sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
-                                        "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
-                                    } else {
-                                        song?.artist ?: "Unknown Artist"
-                                    },
-                                    fontFamily = PlusJakartaFontFamily,
-                                    color = colors.accentStrong,
-                                    fontSize = (14f * scale).sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                            AnimatedContent(
+                                targetState = song?.id,
+                                transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                                modifier = Modifier.weight(1f),
+                                label = "canvasMetadataTransition"
+                            ) { _ ->
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = song?.title ?: "No Song Selected",
+                                        fontFamily = OutfitFontFamily,
+                                        color = colors.textPrimary,
+                                        fontSize = (20f * scale).sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = if (appearance.showAlbumMetadata && !song?.album.isNullOrBlank()) {
+                                            "${song?.artist ?: "Unknown Artist"} • ${song?.album}"
+                                        } else {
+                                            song?.artist ?: "Unknown Artist"
+                                        },
+                                        fontFamily = PlusJakartaFontFamily,
+                                        color = colors.accentStrong,
+                                        fontSize = (14f * scale).sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                             if (appearance.showLyricsShortcut) {
                                 IconButton(onClick = onOpenLyrics, modifier = Modifier.size(48.dp)) {

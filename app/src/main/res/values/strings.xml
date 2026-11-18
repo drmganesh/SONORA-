@@ -1,3 +1,12 @@
 <resources>
     <string name="app_name">SONORA</string>
+    <string name="about_app_description">Premium Music Player</string>
+    <string name="about_developer_eyebrow">DEVELOPER</string>
+    <string name="about_developer_name">🩺 Dr. M. GANESWAR</string>
+    <string name="about_developer_handle">@drmganeswar</string>
+    <string name="about_developer_qualification">(BAMS Final Year)</string>
+    <string name="about_developer_portrait_desc">Developer portrait of Dr. M. GANESWAR</string>
+    <string name="about_logo_desc">SONORA application logo</string>
+    <string name="splash_brand_tagline">Premium Music Experience</string>
+    <string name="splash_logo_content_desc">SONORA official emblem</string>
 </resources>

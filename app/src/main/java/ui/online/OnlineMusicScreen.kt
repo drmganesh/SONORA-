@@ -310,12 +310,20 @@ fun OnlineMusicScreen(
             val activeErr = playbackInfo.playbackError
             if (!activeErr.isNullOrBlank()) {
                 item(key = "playback_error_banner") {
+                    val errKind = playbackInfo.playbackErrorKind ?: domain.online.OnlineErrorKind.EXTRACTION_FAILED
+                    val canSwitchSc = errKind == domain.online.OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA &&
+                        selectedProvider?.key != domain.online.OnlineMusicProvider.KEY_SOUNDCLOUD
                     OnlineErrorCard(
-                        kind = domain.online.OnlineErrorKind.EXTRACTION_FAILED,
+                        kind = errKind,
                         message = activeErr,
                         showRetry = currentSong != null,
                         colors = colors,
-                        onRetry = { viewModel.retryCurrentPlayback() }
+                        onRetry = { viewModel.retryCurrentPlayback() },
+                        secondaryActionLabel = if (canSwitchSc) "Try SoundCloud" else null,
+                        onSecondaryAction = if (canSwitchSc) {
+                            { viewModel.switchToSoundCloudFallback() }
+                        } else null,
+                        onDismiss = { viewModel.clearPlaybackError() }
                     )
                 }
             }
@@ -412,7 +420,8 @@ fun OnlineMusicScreen(
                         }
                     },
                     onItemLongClick = { optionsTarget = it },
-                    onRetry = { viewModel.retryDiscoverSection(sectionType) }
+                    onRetry = { viewModel.retryDiscoverSection(sectionType) },
+                    onLoadMore = { viewModel.loadMoreDiscoverSection(sectionType) }
                 )
             }
 
@@ -587,7 +596,8 @@ private fun DiscoverSectionBlock(
     colors: EditorialColors,
     onItemClick: (OnlineTrack, List<OnlineTrack>) -> Unit,
     onItemLongClick: (OnlineTrack) -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onLoadMore: () -> Unit = {}
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -751,6 +761,16 @@ private fun DiscoverSectionBlock(
                             onClick = { onItemClick(item, state.items) },
                             onLongClick = { onItemLongClick(item) }
                         )
+                    }
+                    if (state.hasMore) {
+                        item(key = "disc_load_more_${sectionType.name}") {
+                            ui.home.HomeOnlineLoadMoreCard(
+                                sectionType = sectionType,
+                                isLoadingMore = state.isLoadingMore,
+                                colors = colors,
+                                onLoadMore = onLoadMore
+                            )
+                        }
                     }
                 }
             }

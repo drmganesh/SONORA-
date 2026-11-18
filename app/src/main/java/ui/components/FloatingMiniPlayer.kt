@@ -1,5 +1,16 @@
 package ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,12 +40,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,6 +62,10 @@ import com.example.model.Song
 import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
+import kotlin.math.abs
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraTransitions
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.EditorialColors
 
 /**
@@ -64,9 +84,18 @@ fun FloatingMiniPlayer(
     onClick: () -> Unit,
     gesturesEnabled: Boolean = true,
     miniPlayerStyle: MiniPlayerStyle = MiniPlayerStyle.DEFAULT,
+    trackDirection: Int = 0,
+    swipeThresholdDp: Int = 64,
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
+
+    val motionState = LocalEffectiveMotionState.current
+    val performHaptic = rememberMotionAwareHaptic()
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { swipeThresholdDp.coerceAtLeast(36).dp.toPx() }
+    val velocityThresholdPx = with(density) { motionState.velocityThresholdDpPerSec.dp.toPx() }
+    val verticalExpandPx = with(density) { 48.dp.toPx() }
 
     val progress = if (playbackInfo.durationMs > 0L) {
         (playbackInfo.currentPositionMs.toFloat() / playbackInfo.durationMs.toFloat()).coerceIn(0f, 1f)
@@ -74,6 +103,19 @@ fun FloatingMiniPlayer(
 
     var totalDragX by remember { mutableFloatStateOf(0f) }
     var totalDragY by remember { mutableFloatStateOf(0f) }
+    val animatedDragOffsetX by animateFloatAsState(
+        targetValue = if (motionState.animationsEnabled) (totalDragX * 0.28f).coerceIn(-42f, 42f) else 0f,
+        animationSpec = if (motionState.animationsEnabled) {
+            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
+        } else {
+            snap()
+        },
+        label = "miniPlayerDragOffset"
+    )
+    val latestOnPlayNext by rememberUpdatedState(onPlayNext)
+    val latestOnPlayPrevious by rememberUpdatedState(onPlayPrevious)
+    val latestOnClick by rememberUpdatedState(onClick)
+    val latestMotionState by rememberUpdatedState(motionState)
 
     val horizontalPad = when (miniPlayerStyle) {
         MiniPlayerStyle.COMPACT_BAR -> 14.dp
@@ -90,6 +132,7 @@ fun FloatingMiniPlayer(
         MiniPlayerStyle.WAVE_MINI -> colors.surfaceElevated.copy(alpha = 0.94f)
         else -> colors.miniPlayerBackground
     }
+    val sourceLabel = if (song.isOnline) "ONLINE" else "LOCAL"
     val badge = remember(song.isOnline, song.streamCodec, song.providerName, song.mimeType, song.dataPath) {
         when {
             song.isOnline -> song.streamCodec.ifBlank { song.providerName.ifBlank { "STREAM" } }.uppercase()
@@ -103,6 +146,9 @@ fun FloatingMiniPlayer(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = horizontalPad)
+            .graphicsLayer {
+                translationX = animatedDragOffsetX
+            }
             .shadow(
                 elevation = if (miniPlayerStyle == MiniPlayerStyle.COMPACT_BAR) 10.dp else 14.dp,
                 shape = shape,
@@ -111,34 +157,66 @@ fun FloatingMiniPlayer(
             )
             .border(0.75.dp, colors.cardBorder, shape)
             .clip(shape)
-            .pointerInput(gesturesEnabled) {
+            .pointerInput(gesturesEnabled, swipeThresholdPx, velocityThresholdPx) {
                 if (!gesturesEnabled) return@pointerInput
+                var tracker: VelocityTracker? = null
                 detectHorizontalDragGestures(
-                    onDragStart = { totalDragX = 0f },
-                    onDragEnd = {
-                        if (totalDragX < -60f) onPlayNext()
-                        else if (totalDragX > 60f) onPlayPrevious()
+                    onDragStart = {
                         totalDragX = 0f
+                        tracker = VelocityTracker()
                     },
-                    onDragCancel = { totalDragX = 0f },
+                    onDragEnd = {
+                        val velocityX = tracker?.calculateVelocity()?.x ?: 0f
+                        val triggered = latestMotionState.shouldTriggerSwipe(
+                            dragPx = totalDragX,
+                            velocityPxPerSec = velocityX,
+                            thresholdPx = swipeThresholdPx,
+                            velocityPxThreshold = velocityThresholdPx
+                        )
+                        if (triggered) {
+                            val isLeftSwipe = if (abs(totalDragX) > swipeThresholdPx * 0.45f) totalDragX < 0f else velocityX < 0f
+                            performHaptic(HapticFeedbackType.TextHandleMove)
+                            if (isLeftSwipe) latestOnPlayNext() else latestOnPlayPrevious()
+                        }
+                        totalDragX = 0f
+                        tracker = null
+                    },
+                    onDragCancel = {
+                        totalDragX = 0f
+                        tracker = null
+                    },
                     onHorizontalDrag = { change, dragAmount ->
                         change.consume()
                         totalDragX += dragAmount
+                        tracker?.addPosition(change.uptimeMillis, change.position)
                     }
                 )
             }
-            .pointerInput(gesturesEnabled) {
+            .pointerInput(gesturesEnabled, verticalExpandPx) {
                 if (!gesturesEnabled) return@pointerInput
+                var tracker: VelocityTracker? = null
                 detectVerticalDragGestures(
-                    onDragStart = { totalDragY = 0f },
-                    onDragEnd = {
-                        if (totalDragY < -60f) onClick()
+                    onDragStart = {
                         totalDragY = 0f
+                        tracker = VelocityTracker()
                     },
-                    onDragCancel = { totalDragY = 0f },
+                    onDragEnd = {
+                        val velocityY = tracker?.calculateVelocity()?.y ?: 0f
+                        if (totalDragY < -verticalExpandPx || velocityY < -velocityThresholdPx) {
+                            performHaptic(HapticFeedbackType.TextHandleMove)
+                            latestOnClick()
+                        }
+                        totalDragY = 0f
+                        tracker = null
+                    },
+                    onDragCancel = {
+                        totalDragY = 0f
+                        tracker = null
+                    },
                     onVerticalDrag = { change, dragAmount ->
                         change.consume()
                         totalDragY += dragAmount
+                        tracker?.addPosition(change.uptimeMillis, change.position)
                     }
                 )
             }
@@ -156,38 +234,71 @@ fun FloatingMiniPlayer(
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ArtworkAlbumView(
-                            song = song,
-                            modifier = Modifier.size(38.dp),
-                            cornerRadius = 10.dp,
-                            isPlaying = playbackInfo.isPlaying
-                        )
+                        AnimatedContent(
+                            targetState = song.id,
+                            transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
+                            label = "compactMiniArtwork"
+                        ) { _ ->
+                            ArtworkAlbumView(
+                                song = song,
+                                modifier = Modifier.size(38.dp),
+                                cornerRadius = 10.dp,
+                                isPlaying = playbackInfo.isPlaying
+                            )
+                        }
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "${song.title} • ${song.artist}",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            color = colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
+                        AnimatedContent(
+                            targetState = song.id,
+                            transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                            modifier = Modifier.weight(1f),
+                            label = "compactMiniMeta"
+                        ) { _ ->
+                            Text(
+                                text = "${song.title} • ${song.artist}",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        MiniPlayerSourceBadge(sourceLabel = sourceLabel, isOnline = song.isOnline, colors = colors)
                         IconButton(
-                            onClick = onTogglePlayPause,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onTogglePlayPause()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("mini_play_pause_button")
                         ) {
-                            Icon(
-                                imageVector = if (playbackInfo.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
-                                tint = colors.accentStrong,
-                                modifier = Modifier.size(22.dp)
-                            )
+                            AnimatedContent(
+                                targetState = playbackInfo.isPlaying,
+                                transitionSpec = {
+                                    if (!motionState.animationsEnabled) {
+                                        fadeIn(snap()) togetherWith fadeOut(snap())
+                                    } else {
+                                        (scaleIn(tween(180), initialScale = 0.72f) + fadeIn(tween(160))) togetherWith
+                                            (scaleOut(tween(140), targetScale = 0.72f) + fadeOut(tween(140)))
+                                    }
+                                },
+                                label = "compactMiniPlayIcon"
+                            ) { playing ->
+                                Icon(
+                                    imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    contentDescription = if (playing) "Pause" else "Play",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
                         IconButton(
-                            onClick = onPlayNext,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onPlayNext()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("mini_skip_next_button")
@@ -234,36 +345,57 @@ fun FloatingMiniPlayer(
                             .padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ArtworkAlbumView(
-                            song = song,
-                            modifier = Modifier
-                                .size(52.dp)
-                                .border(1.dp, colors.cardBorder, RoundedCornerShape(14.dp)),
-                            cornerRadius = 14.dp,
-                            isPlaying = playbackInfo.isPlaying
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = song.title,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = if (playbackInfo.isBuffering) "Buffering • ${song.artist}" else "${song.artist} • $badge",
-                                fontFamily = PlusJakartaFontFamily,
-                                fontSize = 12.sp,
-                                color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                        AnimatedContent(
+                            targetState = song.id,
+                            transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
+                            label = "focusMiniArtwork"
+                        ) { _ ->
+                            ArtworkAlbumView(
+                                song = song,
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .border(1.dp, colors.cardBorder, RoundedCornerShape(14.dp)),
+                                cornerRadius = 14.dp,
+                                isPlaying = playbackInfo.isPlaying
                             )
                         }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        AnimatedContent(
+                            targetState = song.id,
+                            transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                            modifier = Modifier.weight(1f),
+                            label = "focusMiniMeta"
+                        ) { _ ->
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = song.title,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 15.sp,
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (playbackInfo.isBuffering) "Buffering • ${song.artist}" else "${song.artist} • $badge",
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontSize = 12.sp,
+                                        color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    MiniPlayerSourceBadge(sourceLabel = sourceLabel, isOnline = song.isOnline, colors = colors)
+                                }
+                            }
+                        }
                         IconButton(
-                            onClick = onTogglePlayPause,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onTogglePlayPause()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("mini_play_pause_button")
@@ -274,16 +406,32 @@ fun FloatingMiniPlayer(
                                     .background(colors.accentStrong, RoundedCornerShape(14.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = if (playbackInfo.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
-                                    tint = colors.onAccentStrong,
-                                    modifier = Modifier.size(22.dp)
-                                )
+                                AnimatedContent(
+                                    targetState = playbackInfo.isPlaying,
+                                    transitionSpec = {
+                                        if (!motionState.animationsEnabled) {
+                                            fadeIn(snap()) togetherWith fadeOut(snap())
+                                        } else {
+                                            (scaleIn(tween(180), initialScale = 0.72f) + fadeIn(tween(160))) togetherWith
+                                                (scaleOut(tween(140), targetScale = 0.72f) + fadeOut(tween(140)))
+                                        }
+                                    },
+                                    label = "focusMiniPlayIcon"
+                                ) { playing ->
+                                    Icon(
+                                        imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = if (playing) "Pause" else "Play",
+                                        tint = colors.onAccentStrong,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                             }
                         }
                         IconButton(
-                            onClick = onPlayNext,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onPlayNext()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("mini_skip_next_button")
@@ -324,24 +472,41 @@ fun FloatingMiniPlayer(
                             .padding(horizontal = 12.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CircularArtwork(
-                            song = song,
-                            isPlaying = playbackInfo.isPlaying,
-                            accentColor = colors.accentStrong,
-                            shadowElevation = 4.dp,
-                            modifier = Modifier.size(42.dp)
-                        )
+                        AnimatedContent(
+                            targetState = song.id,
+                            transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
+                            label = "waveMiniArtwork"
+                        ) { _ ->
+                            CircularArtwork(
+                                song = song,
+                                isPlaying = playbackInfo.isPlaying,
+                                accentColor = colors.accentStrong,
+                                shadowElevation = 4.dp,
+                                modifier = Modifier.size(42.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = song.title,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            AnimatedContent(
+                                targetState = song.id,
+                                transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                                label = "waveMiniMeta"
+                            ) { _ ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = song.title,
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = colors.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    MiniPlayerSourceBadge(sourceLabel = sourceLabel, isOnline = song.isOnline, colors = colors)
+                                }
+                            }
                             Spacer(modifier = Modifier.height(4.dp))
                             // Micro waveform progress strip
                             Row(
@@ -374,7 +539,10 @@ fun FloatingMiniPlayer(
                         }
                         Spacer(modifier = Modifier.width(6.dp))
                         IconButton(
-                            onClick = onTogglePlayPause,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onTogglePlayPause()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("mini_play_pause_button")
@@ -385,16 +553,32 @@ fun FloatingMiniPlayer(
                                     .background(colors.accentPill, CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = if (playbackInfo.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
-                                    tint = colors.onAccentPill,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                AnimatedContent(
+                                    targetState = playbackInfo.isPlaying,
+                                    transitionSpec = {
+                                        if (!motionState.animationsEnabled) {
+                                            fadeIn(snap()) togetherWith fadeOut(snap())
+                                        } else {
+                                            (scaleIn(tween(180), initialScale = 0.72f) + fadeIn(tween(160))) togetherWith
+                                                (scaleOut(tween(140), targetScale = 0.72f) + fadeOut(tween(140)))
+                                        }
+                                    },
+                                    label = "waveMiniPlayIcon"
+                                ) { playing ->
+                                    Icon(
+                                        imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = if (playing) "Pause" else "Play",
+                                        tint = colors.onAccentPill,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                         IconButton(
-                            onClick = onPlayNext,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onPlayNext()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("mini_skip_next_button")
@@ -418,50 +602,65 @@ fun FloatingMiniPlayer(
                             .padding(horizontal = 12.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CircularArtwork(
-                            song = song,
-                            isPlaying = playbackInfo.isPlaying,
-                            accentColor = colors.accentPill,
-                            shadowElevation = 4.dp,
-                            modifier = Modifier.size(44.dp)
-                        )
+                        AnimatedContent(
+                            targetState = song.id,
+                            transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
+                            label = "pillMiniArtwork"
+                        ) { _ ->
+                            CircularArtwork(
+                                song = song,
+                                isPlaying = playbackInfo.isPlaying,
+                                accentColor = colors.accentPill,
+                                shadowElevation = 4.dp,
+                                modifier = Modifier.size(44.dp)
+                            )
+                        }
 
                         Spacer(modifier = Modifier.width(12.dp))
 
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = song.title,
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.height(1.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        AnimatedContent(
+                            targetState = song.id,
+                            transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                            modifier = Modifier.weight(1f),
+                            label = "pillMiniMeta"
+                        ) { _ ->
+                            Column(modifier = Modifier.fillMaxWidth()) {
                                 Text(
-                                    text = if (playbackInfo.isBuffering) "Buffering stream..." else song.artist,
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontSize = 12.sp,
-                                    color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
+                                    text = song.title,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = colors.textPrimary,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .background(colors.accentPill, RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 6.dp, vertical = 1.dp)
-                                ) {
+                                Spacer(modifier = Modifier.height(1.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        text = badge,
+                                        text = if (playbackInfo.isBuffering) "Buffering stream..." else song.artist,
                                         fontFamily = PlusJakartaFontFamily,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colors.onAccentPill
+                                        fontSize = 12.sp,
+                                        color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    MiniPlayerSourceBadge(sourceLabel = sourceLabel, isOnline = song.isOnline, colors = colors)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .background(colors.accentPill, RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 6.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = badge,
+                                            fontFamily = PlusJakartaFontFamily,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.onAccentPill
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -469,7 +668,10 @@ fun FloatingMiniPlayer(
                         Spacer(modifier = Modifier.width(8.dp))
 
                         IconButton(
-                            onClick = onTogglePlayPause,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onTogglePlayPause()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
@@ -481,17 +683,33 @@ fun FloatingMiniPlayer(
                                     .background(colors.accentPill, CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = if (playbackInfo.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
-                                    tint = colors.onAccentPill,
-                                    modifier = Modifier.size(22.dp)
-                                )
+                                AnimatedContent(
+                                    targetState = playbackInfo.isPlaying,
+                                    transitionSpec = {
+                                        if (!motionState.animationsEnabled) {
+                                            fadeIn(snap()) togetherWith fadeOut(snap())
+                                        } else {
+                                            (scaleIn(tween(180), initialScale = 0.72f) + fadeIn(tween(160))) togetherWith
+                                                (scaleOut(tween(140), targetScale = 0.72f) + fadeOut(tween(140)))
+                                        }
+                                    },
+                                    label = "pillMiniPlayIcon"
+                                ) { playing ->
+                                    Icon(
+                                        imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = if (playing) "Pause" else "Play",
+                                        tint = colors.onAccentPill,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                             }
                         }
 
                         IconButton(
-                            onClick = onPlayNext,
+                            onClick = {
+                                performHaptic(HapticFeedbackType.TextHandleMove)
+                                onPlayNext()
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .testTag("mini_skip_next_button")
@@ -532,5 +750,35 @@ fun FloatingMiniPlayer(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MiniPlayerSourceBadge(
+    sourceLabel: String,
+    isOnline: Boolean,
+    colors: EditorialColors
+) {
+    Box(
+        modifier = Modifier
+            .testTag("mini_player_source_badge")
+            .background(
+                color = if (isOnline) colors.accentStrong.copy(alpha = 0.16f) else colors.surfaceTinted,
+                shape = RoundedCornerShape(6.dp)
+            )
+            .border(
+                width = 0.5.dp,
+                color = if (isOnline) colors.accentStrong.copy(alpha = 0.45f) else colors.cardBorder,
+                shape = RoundedCornerShape(6.dp)
+            )
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+    ) {
+        Text(
+            text = sourceLabel,
+            fontFamily = PlusJakartaFontFamily,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (isOnline) colors.accentStrong else colors.textSecondary
+        )
     }
 }

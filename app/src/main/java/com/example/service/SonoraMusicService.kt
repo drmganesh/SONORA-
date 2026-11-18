@@ -421,7 +421,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                     }
                 }
             },
-            onError = {
+            onError = { _, _ ->
                 updateForegroundNotification(
                     song = song,
                     isPlaying = false,

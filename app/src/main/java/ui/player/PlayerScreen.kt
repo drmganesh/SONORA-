@@ -6,7 +6,9 @@ import android.media.AudioManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,6 +77,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -90,8 +93,12 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -117,6 +124,10 @@ import ui.player.styles.PosterPlayer
 import ui.player.styles.SpectrumPlayer
 import ui.player.styles.VinylPlayer
 import ui.player.styles.WaveformPlayer
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.HomeThemeMode
 import ui.theme.LocalDynamicColorPalette
 import ui.theme.LocalEditorialColors
@@ -142,7 +153,9 @@ fun PlayerScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
-    val reduceAnimations = LocalReduceAnimations.current
+    val motionState = LocalEffectiveMotionState.current
+    val reduceAnimations = LocalReduceAnimations.current || !motionState.animationsEnabled
+    val trackDirection by viewModel.trackTransitionDirection.collectAsState()
     val palette = LocalDynamicColorPalette.current
     val homeThemeMode by viewModel.homeThemeMode.collectAsState()
     val dynamicColorsEnabled by viewModel.dynamicColorsEnabled.collectAsState()
@@ -272,6 +285,7 @@ fun PlayerScreen(
     val useThemeBrush = playerAppearance.backgroundStyle == PlayerBackgroundStyle.THEME_DEFAULT ||
         playerAppearance.backgroundStyle == PlayerBackgroundStyle.GRADIENT_GLOW
 
+    CompositionLocalProvider(LocalTrackTransitionDirection provides trackDirection) {
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -672,29 +686,45 @@ fun PlayerScreen(
                             fontFamily = PlusJakartaFontFamily,
                             fontSize = 12.sp,
                             color = colors.textPrimary,
-                            maxLines = 2,
+                            maxLines = 3,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        TextButton(
-                            onClick = { viewModel.retryCurrentPlayback() },
-                            modifier = Modifier.testTag("player_retry_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Retry",
-                                tint = colors.accentStrong,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Retry",
-                                fontFamily = PlusJakartaFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = colors.accentStrong
-                            )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (playbackInfo.playbackErrorKind == domain.online.OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA) {
+                                TextButton(
+                                    onClick = { viewModel.switchToSoundCloudFallback() },
+                                    modifier = Modifier.testTag("player_soundcloud_fallback_button")
+                                ) {
+                                    Text(
+                                        text = "SoundCloud",
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = colors.accentStrong
+                                    )
+                                }
+                            }
+                            TextButton(
+                                onClick = { viewModel.retryCurrentPlayback() },
+                                modifier = Modifier.testTag("player_retry_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Retry",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Retry",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = colors.accentStrong
+                                )
+                            }
                         }
                     }
                 }
@@ -728,8 +758,8 @@ fun PlayerScreen(
         // Full Artwork Focus Mode Overlay
         AnimatedVisibility(
             visible = isArtworkFocusMode,
-            enter = if (reduceAnimations) fadeIn(snap()) else fadeIn(tween(240)),
-            exit = if (reduceAnimations) fadeOut(snap()) else fadeOut(tween(180))
+            enter = if (reduceAnimations) fadeIn(snap()) else fadeIn(tween(motionState.durationMillis(240))) + scaleIn(tween(motionState.durationMillis(240)), initialScale = 0.96f),
+            exit = if (reduceAnimations) fadeOut(snap()) else fadeOut(tween(motionState.durationMillis(180)))
         ) {
             ArtworkFocusOverlay(
                 song = currentSong,
@@ -754,8 +784,8 @@ fun PlayerScreen(
         // Now Playing Customization Overlay
         AnimatedVisibility(
             visible = showCustomizationScreen,
-            enter = if (reduceAnimations) fadeIn(snap()) else fadeIn(tween(220)),
-            exit = if (reduceAnimations) fadeOut(snap()) else fadeOut(tween(180))
+            enter = SonoraTransitions.pushEnter(motionState),
+            exit = SonoraTransitions.pushExit(motionState)
         ) {
             PlayerCustomizationScreen(
                 viewModel = viewModel,
@@ -1407,7 +1437,18 @@ private fun ArtworkFocusOverlay(
     onExitFocus: () -> Unit
 ) {
     val colors = LocalEditorialColors.current
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
+    val performHaptic = rememberMotionAwareHaptic()
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { motionState.swipeThresholdDp.dp.toPx() }
+    val velocityThresholdPx = with(density) { motionState.velocityThresholdDpPerSec.dp.toPx() }
     var dragX by remember { mutableFloatStateOf(0f) }
+    val animatedDragOffset by animateFloatAsState(
+        targetValue = if (motionState.animationsEnabled) (dragX * 0.25f).coerceIn(-68f, 68f) else 0f,
+        animationSpec = if (motionState.animationsEnabled) spring() else snap(),
+        label = "focusOverlayDrag"
+    )
 
     Box(
         modifier = Modifier
@@ -1415,16 +1456,37 @@ private fun ArtworkFocusOverlay(
             .background(colors.backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
-            .pointerInput(Unit) {
+            .pointerInput(swipeThresholdPx, velocityThresholdPx) {
+                var tracker: VelocityTracker? = null
                 detectHorizontalDragGestures(
-                    onDragStart = { dragX = 0f },
-                    onDragEnd = {
-                        if (dragX < -80f) onPlayNext() else if (dragX > 80f) onPlayPrevious()
+                    onDragStart = {
                         dragX = 0f
+                        tracker = VelocityTracker()
+                    },
+                    onDragCancel = {
+                        dragX = 0f
+                        tracker = null
+                    },
+                    onDragEnd = {
+                        val velocityX = tracker?.calculateVelocity()?.x ?: 0f
+                        val triggered = motionState.shouldTriggerSwipe(
+                            dragPx = dragX,
+                            velocityPxPerSec = velocityX,
+                            thresholdPx = swipeThresholdPx,
+                            velocityPxThreshold = velocityThresholdPx
+                        )
+                        if (triggered) {
+                            performHaptic(HapticFeedbackType.TextHandleMove)
+                            val isLeftSwipe = if (kotlin.math.abs(dragX) > swipeThresholdPx * 0.45f) dragX < 0f else velocityX < 0f
+                            if (isLeftSwipe) onPlayNext() else onPlayPrevious()
+                        }
+                        dragX = 0f
+                        tracker = null
                     },
                     onHorizontalDrag = { change, amount ->
                         change.consume()
                         dragX += amount
+                        tracker?.addPosition(change.uptimeMillis, change.position)
                     }
                 )
             },
@@ -1472,42 +1534,66 @@ private fun ArtworkFocusOverlay(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
+                    .graphicsLayer {
+                        translationX = animatedDragOffset
+                    }
                     .shadow(22.dp, RoundedCornerShape(36.dp), ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
                     .clip(RoundedCornerShape(36.dp))
-                    .clickable(onClick = onTogglePlayPause),
+                    .clickable(onClick = {
+                        performHaptic(HapticFeedbackType.TextHandleMove)
+                        onTogglePlayPause()
+                    }),
                 contentAlignment = Alignment.Center
             ) {
-                ArtworkAlbumView(
-                    song = song,
+                AnimatedContent(
+                    targetState = song?.id,
+                    transitionSpec = { SonoraTransitions.trackTransition(trackDirection, motionState) },
                     modifier = Modifier.fillMaxSize(),
-                    cornerRadius = 36.dp,
-                    isPlaying = isPlaying
-                )
+                    label = "focusOverlayArtworkTransition"
+                ) { _ ->
+                    ArtworkAlbumView(
+                        song = song,
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadius = 36.dp,
+                        isPlaying = isPlaying
+                    )
+                }
             }
 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = song?.title ?: "No Track Selected",
-                    fontFamily = OutfitFontFamily,
-                    color = colors.textPrimary,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = song?.artist ?: "Unknown Artist",
-                    fontFamily = PlusJakartaFontFamily,
-                    color = colors.textSecondary,
-                    fontSize = 15.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                AnimatedContent(
+                    targetState = song?.id,
+                    transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                    label = "focusOverlayMetaTransition"
+                ) { _ ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = song?.title ?: "No Track Selected",
+                            fontFamily = OutfitFontFamily,
+                            color = colors.textPrimary,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = song?.artist ?: "Unknown Artist",
+                            fontFamily = PlusJakartaFontFamily,
+                            color = colors.textSecondary,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 Surface(
-                    onClick = onTogglePlayPause,
+                    onClick = {
+                        performHaptic(HapticFeedbackType.TextHandleMove)
+                        onTogglePlayPause()
+                    },
                     modifier = Modifier.size(64.dp),
                     shape = CircleShape,
                     color = colors.accentStrong,

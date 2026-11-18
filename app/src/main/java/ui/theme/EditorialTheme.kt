@@ -509,16 +509,18 @@ fun rememberEditorialColors(
     mode: HomeThemeMode,
     customAccentArgb: Long?,
     dynamicPalette: DynamicColorPalette,
-    reduceAnimations: Boolean = false
+    reduceAnimations: Boolean = false,
+    animatedColorsEnabled: Boolean = true,
+    colorDurationMs: Int = 600
 ): EditorialColors {
     val target = editorialColorsFor(mode, customAccentArgb, dynamicPalette)
 
-    if (reduceAnimations) {
+    if (reduceAnimations || !animatedColorsEnabled || colorDurationMs <= 0) {
         return target
     }
 
-    // Smooth 600ms transition so song changes breathe naturally without jarring jumps
-    val spec = tween<Color>(durationMillis = 600, easing = FastOutSlowInEasing)
+    // Smooth transition so song changes breathe naturally without jarring jumps
+    val spec = tween<Color>(durationMillis = colorDurationMs, easing = FastOutSlowInEasing)
     val bg by animateColorAsState(target.background, spec, label = "edBg")
     val surface by animateColorAsState(target.surface, spec, label = "edSurface")
     val surfaceElevated by animateColorAsState(target.surfaceElevated, spec, label = "edSurfaceElev")

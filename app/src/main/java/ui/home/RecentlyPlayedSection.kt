@@ -2,6 +2,7 @@ package ui.home
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +35,8 @@ import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.CircularArtwork
 import ui.home.animations.HomeAnimationLevel
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.carouselItemDepthEffect
 import ui.theme.EditorialColors
 
 /**
@@ -56,6 +60,9 @@ fun RecentlyPlayedSection(
     if (songs.isEmpty()) return
 
     val haptic = LocalHapticFeedback.current
+    val motionState = LocalEffectiveMotionState.current
+    val listState = rememberLazyListState()
+    val snapFling = rememberSnapFlingBehavior(lazyListState = listState)
 
     Column(
         modifier = modifier
@@ -71,6 +78,8 @@ fun RecentlyPlayedSection(
         Spacer(modifier = Modifier.height(14.dp))
 
         LazyRow(
+            state = listState,
+            flingBehavior = snapFling,
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -79,11 +88,14 @@ fun RecentlyPlayedSection(
                 Column(
                     modifier = Modifier
                         .width(106.dp)
+                        .carouselItemDepthEffect(listState, index, motionState)
                         .clip(RoundedCornerShape(18.dp))
                         .combinedClickable(
                             onClick = { onSongClick(song) },
                             onLongClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (motionState.hapticEnabled) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                }
                                 onSongLongClick(song)
                             }
                         )

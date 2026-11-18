@@ -3,6 +3,8 @@ package ui.home
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -41,12 +43,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.PlusJakartaFontFamily
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.rememberMotionAwareHaptic
 import ui.theme.EditorialColors
 
 enum class EditorialNavTab(
@@ -73,6 +79,8 @@ fun FloatingBottomNavigation(
     modifier: Modifier = Modifier
 ) {
     val pillShape = RoundedCornerShape(36.dp)
+    val motionState = LocalEffectiveMotionState.current
+    val triggerHaptic = rememberMotionAwareHaptic()
 
     Box(
         modifier = modifier
@@ -102,12 +110,25 @@ fun FloatingBottomNavigation(
                     val isSelected = selectedIndex == tab.index
                     val pillColor by animateColorAsState(
                         targetValue = if (isSelected) colors.floatingNavIndicator else Color.Transparent,
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                        animationSpec = if (!motionState.animationsEnabled) snap() else spring(stiffness = Spring.StiffnessMediumLow),
                         label = "nav_pill_${tab.label}"
                     )
                     val contentTint by animateColorAsState(
                         targetValue = if (isSelected) colors.floatingNavActiveTint else colors.floatingNavInactiveTint,
+                        animationSpec = if (!motionState.animationsEnabled) snap() else spring(stiffness = Spring.StiffnessMediumLow),
                         label = "nav_tint_${tab.label}"
+                    )
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (isSelected && motionState.animationsEnabled) 1.12f else 1f,
+                        animationSpec = if (!motionState.animationsEnabled) {
+                            snap()
+                        } else {
+                            spring(
+                                dampingRatio = motionState.config.intensity.springDampingRatio,
+                                stiffness = motionState.config.intensity.springStiffness
+                            )
+                        },
+                        label = "nav_icon_scale_${tab.label}"
                     )
 
                     Box(
@@ -115,7 +136,10 @@ fun FloatingBottomNavigation(
                             .height(50.dp)
                             .clip(RoundedCornerShape(28.dp))
                             .background(pillColor, RoundedCornerShape(28.dp))
-                            .clickable { onSelectTab(tab.index) }
+                            .clickable {
+                                if (!isSelected) triggerHaptic(HapticFeedbackType.TextHandleMove)
+                                onSelectTab(tab.index)
+                            }
                             .padding(horizontal = if (isSelected) 14.dp else 12.dp)
                             .testTag("nav_tab_${tab.label.lowercase()}"),
                         contentAlignment = Alignment.Center
@@ -128,7 +152,12 @@ fun FloatingBottomNavigation(
                                 imageVector = if (isSelected) tab.selectedIcon else tab.unselectedIcon,
                                 contentDescription = tab.label,
                                 tint = contentTint,
-                                modifier = Modifier.size(21.dp)
+                                modifier = Modifier
+                                    .size(21.dp)
+                                    .graphicsLayer {
+                                        scaleX = iconScale
+                                        scaleY = iconScale
+                                    }
                             )
                             AnimatedVisibility(
                                 visible = isSelected,

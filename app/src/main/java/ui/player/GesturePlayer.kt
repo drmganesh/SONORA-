@@ -1,6 +1,14 @@
 package ui.player
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -47,7 +55,12 @@ import com.example.model.PlayerGestureConfig
 import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import ui.components.ArtworkContainer
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.LocalTrackTransitionDirection
+import ui.motion.SonoraTransitions
+import ui.motion.rememberMotionAwareHaptic
 import ui.player.seekbar.SeekbarRenderer
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.LocalEditorialColors
@@ -86,6 +99,9 @@ fun GesturePlayer(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val motionState = LocalEffectiveMotionState.current
+    val trackDirection = LocalTrackTransitionDirection.current
+    val performHaptic = rememberMotionAwareHaptic()
     val effectiveGestureConfig = gestureConfig.copy(
         gesturesEnabled = gesturesEnabled && gestureConfig.gesturesEnabled,
         swipeArtworkEnabled = swipeArtworkToSkip && gestureConfig.swipeArtworkEnabled,
@@ -233,23 +249,30 @@ fun GesturePlayer(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = song?.title ?: "No Song Selected",
-                                fontFamily = OutfitFontFamily,
-                                color = colors.textPrimary,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "${song?.artist ?: "Unknown"} • ${formatDurationMs(currentPos)} / ${formatDurationMs(duration)}",
-                                fontFamily = PlusJakartaFontFamily,
-                                color = colors.textSecondary,
-                                fontSize = 12.sp,
-                                maxLines = 1
-                            )
+                        AnimatedContent(
+                            targetState = song?.id,
+                            transitionSpec = { SonoraTransitions.metadataTransition(trackDirection, motionState) },
+                            modifier = Modifier.weight(1f),
+                            label = "gestureMetadataTransition"
+                        ) { _ ->
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    text = song?.title ?: "No Song Selected",
+                                    fontFamily = OutfitFontFamily,
+                                    color = colors.textPrimary,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${song?.artist ?: "Unknown"} • ${formatDurationMs(currentPos)} / ${formatDurationMs(duration)}",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    color = colors.textSecondary,
+                                    fontSize = 12.sp,
+                                    maxLines = 1
+                                )
+                            }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -258,7 +281,10 @@ fun GesturePlayer(
                             }
                             Spacer(modifier = Modifier.width(4.dp))
                             Surface(
-                                onClick = onTogglePlayPause,
+                                onClick = {
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
+                                    onTogglePlayPause()
+                                },
                                 modifier = Modifier
                                     .size(48.dp)
                                     .testTag("play_pause_button"),
@@ -266,12 +292,25 @@ fun GesturePlayer(
                                 color = colors.accentStrong
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (playbackInfo.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                        contentDescription = if (playbackInfo.isPlaying) "Pause" else "Play",
-                                        tint = colors.onAccentStrong,
-                                        modifier = Modifier.size(26.dp)
-                                    )
+                                    AnimatedContent(
+                                        targetState = playbackInfo.isPlaying,
+                                        transitionSpec = {
+                                            if (!motionState.animationsEnabled) {
+                                                fadeIn(snap()) togetherWith fadeOut(snap())
+                                            } else {
+                                                (scaleIn(tween(180), initialScale = 0.7f) + fadeIn(tween(160))) togetherWith
+                                                    (scaleOut(tween(140), targetScale = 0.7f) + fadeOut(tween(140)))
+                                            }
+                                        },
+                                        label = "gesturePlayIcon"
+                                    ) { playing ->
+                                        Icon(
+                                            imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                            contentDescription = if (playing) "Pause" else "Play",
+                                            tint = colors.onAccentStrong,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

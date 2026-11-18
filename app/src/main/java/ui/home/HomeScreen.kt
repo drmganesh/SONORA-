@@ -1,5 +1,14 @@
 package ui.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,15 +36,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SpatialAudio
 import androidx.compose.material.icons.rounded.Tune
@@ -77,14 +90,29 @@ import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import data.online.OnlineTrackMapper
 import domain.home.HomeDiscoveryEngine
+import domain.home.HomeMusicMode
+import domain.home.LocalLibraryStats
+import domain.online.DiscoverSectionState
+import domain.online.OnlineErrorKind
+import domain.online.OnlineItemKind
+import domain.online.OnlineMusicProvider
+import domain.online.OnlineTrack
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ui.components.CircularArtwork
 import ui.components.CollectionDetailSheet
 import ui.components.EditorialArtworkCard
 import ui.components.EditorialPlaylistPickerDialog
+import ui.components.HomeModeSwitcherSheet
 import ui.components.MusicContextMenuSheet
+import ui.online.OnlineCollectionDetailsSheet
+import ui.online.OnlineErrorCard
+import ui.online.OnlineQualitySelectorSheet
+import ui.online.OnlineRegionSheet
+import ui.online.OnlineTrackOptionsSheet
+import ui.online.buildArtistExploreTrack
 import ui.profile.UserProfileSheet
 import ui.theme.EditorialAccentSwatches
 import ui.theme.EditorialColors
@@ -107,6 +135,7 @@ fun HomeScreen(
     viewModel: SonoraViewModel,
     colors: EditorialColors,
     onOpenSettings: () -> Unit,
+    onNavigateToSearch: () -> Unit = {},
     onNavigateToLibrary: () -> Unit,
     onOpenOnlineMusic: () -> Unit = {},
     onOpenNowPlaying: () -> Unit,
@@ -119,6 +148,7 @@ fun HomeScreen(
     screenVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    val motionState = ui.motion.LocalEffectiveMotionState.current
     val allSongs by viewModel.allSongs.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
@@ -133,6 +163,8 @@ fun HomeScreen(
     val yourMixSongs by viewModel.yourMixSongs.collectAsState()
     val yourMixContributors by viewModel.yourMixContributorsSummary.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
+    val homeMusicMode by viewModel.homeMusicMode.collectAsState()
+    val localLibraryStats by viewModel.localLibraryStats.collectAsState()
     val homeThemeMode by viewModel.homeThemeMode.collectAsState()
     val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
@@ -143,16 +175,41 @@ fun HomeScreen(
     val colorIntensity by viewModel.dynamicColorIntensity.collectAsState()
     val playerStyle by viewModel.playerStyle.collectAsState()
 
+    val discoverSections by viewModel.discoverSectionsState.collectAsState()
+    val recentlyPlayedOnline by viewModel.recentlyPlayedOnlineTracks.collectAsState()
+    val onlineProviders by viewModel.onlineProviders.collectAsState()
+    val selectedOnlineProvider by viewModel.selectedOnlineProvider.collectAsState()
+    val discoverMusicLanguage by viewModel.discoverMusicLanguage.collectAsState()
+    val onlineCountryCode by viewModel.onlineContentCountry.collectAsState()
+    val onlineLanguageCode by viewModel.onlineContentLanguage.collectAsState()
+    val recommendationProfile by viewModel.onlineRecommendationProfile.collectAsState()
+    val isNetworkOnline by viewModel.isNetworkOnline.collectAsState()
+    val isMeteredNetwork by viewModel.isMeteredNetwork.collectAsState()
+    val onlineSavedTracks by viewModel.onlineSavedTracks.collectAsState()
+    val allOnlineTracks by viewModel.allOnlineTracks.collectAsState()
+    val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
+    val onlineCollectionState by viewModel.onlineCollectionState.collectAsState()
+    val onlineQualityPreference by viewModel.onlineQualityPreference.collectAsState()
+
+    val savedOnlineIds = remember(onlineSavedTracks) { onlineSavedTracks.map { it.id }.toSet() }
+    val favoriteOnlineIds = remember(allOnlineTracks) {
+        allOnlineTracks.filter { it.isFavorite }.map { it.id }.toSet()
+    }
+
     val greeting = remember { HomeDiscoveryEngine.currentGreeting() }
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
     var isRefreshing by remember { mutableStateOf(false) }
     var contextMenuSong by remember { mutableStateOf<Song?>(null) }
+    var onlineOptionsTarget by remember { mutableStateOf<OnlineTrack?>(null) }
     var playlistPickerSong by remember { mutableStateOf<Song?>(null) }
     var activeCollection by remember { mutableStateOf<ActiveCollectionModal?>(null) }
+    var showModeSwitcherSheet by remember { mutableStateOf(false) }
     var showDiscoverySheet by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
+    var showOnlineRegionSheet by remember { mutableStateOf(false) }
+    var showOnlineQualitySheet by remember { mutableStateOf(false) }
 
     // Derived collage songs (distinct albums for artistic collage variety)
     val collageSongs = remember(allSongs, yourMixSongs) {
@@ -194,294 +251,457 @@ fun HomeScreen(
             .testTag("home_screen"),
         contentAlignment = Alignment.TopCenter
     ) {
-        PullToRefreshBox(
-            isRefreshing = isRefreshing,
-            onRefresh = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                isRefreshing = true
-                viewModel.loadLocalSongs()
-                scope.launch {
-                    delay(700)
-                    isRefreshing = false
-                }
-            },
+        Column(
             modifier = Modifier
                 .widthIn(max = 760.dp)
                 .fillMaxSize()
         ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 184.dp),
-                verticalArrangement = Arrangement.spacedBy(26.dp)
-            ) {
-                // 1. Top Greeting Header with Permanent User Profile Avatar
-                item(key = "greeting_header") {
-                    GreetingHeader(
-                        greeting = greeting,
-                        userProfile = userProfile,
-                        colors = colors,
-                        reduceAnimations = reduceAnimations,
-                        onAvatarClick = { showProfileSheet = true },
-                        onDiscoveryClick = { showDiscoverySheet = true },
-                        onSettingsClick = onOpenSettings
+            // Persistent Top Greeting Header with Offline / Online Mode Switcher
+            GreetingHeader(
+                greeting = greeting,
+                userProfile = userProfile,
+                colors = colors,
+                activeMode = homeMusicMode,
+                reduceAnimations = reduceAnimations,
+                onAvatarClick = { showProfileSheet = true },
+                onDiscoveryClick = { showModeSwitcherSheet = true },
+                onSettingsClick = onOpenSettings
+            )
+
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    isRefreshing = true
+                    if (homeMusicMode == HomeMusicMode.OFFLINE) {
+                        viewModel.loadLocalSongs()
+                    } else if (isNetworkOnline) {
+                        viewModel.refreshOnlineDiscovery(forceRefresh = true)
+                    }
+                    scope.launch {
+                        delay(700)
+                        isRefreshing = false
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .then(
+                        ui.motion.horizontalSwipeNavigation(
+                            enabled = screenVisible,
+                            motion = motionState,
+                            onSwipeLeft = {
+                                if (homeMusicMode == HomeMusicMode.OFFLINE) {
+                                    viewModel.setHomeMusicMode(HomeMusicMode.ONLINE)
+                                } else {
+                                    onNavigateToSearch()
+                                }
+                            },
+                            onSwipeRight = {
+                                if (homeMusicMode == HomeMusicMode.ONLINE) {
+                                    viewModel.setHomeMusicMode(HomeMusicMode.OFFLINE)
+                                }
+                            }
+                        )
                     )
-                }
-
-                // Empty library graceful fallback
-                if (allSongs.isEmpty()) {
-                    item(key = "empty_library_state") {
-                        EmptyLibraryEditorialCard(
-                            colors = colors,
-                            onScanLibrary = { viewModel.loadLocalSongs() },
-                            onOpenLibrary = onNavigateToLibrary,
-                            onOpenOnlineMusic = onOpenOnlineMusic
+            ) {
+                AnimatedContent(
+                    targetState = homeMusicMode,
+                    transitionSpec = {
+                        ui.motion.SonoraTransitions.homeModeTransition(
+                            toOnline = targetState == HomeMusicMode.ONLINE,
+                            motion = motionState
                         )
-                    }
-                } else {
-                    // 2 & 3. Hero Section: Your Mix + Artist / Music Labels
-                    item(key = "your_mix_hero") {
-                        YourMixSection(
-                            contributorsSummary = yourMixContributors,
-                            artistChips = artistChips,
-                            isMixPlaying = isMixActivelyPlaying,
-                            hasTracks = yourMixSongs.isNotEmpty(),
-                            colors = colors,
-                            animationLevel = homeAnimationLevel,
-                            screenVisible = screenVisible,
-                            onPlayMix = {
-                                if (isMixActivelyPlaying) {
-                                    viewModel.togglePlayPause()
-                                } else {
-                                    viewModel.playCollection(yourMixSongs, shuffle = false)
-                                }
-                            },
-                            onShuffleMix = {
-                                viewModel.playCollection(yourMixSongs, shuffle = true)
-                            },
-                            onArtistChipClick = { chip ->
-                                val artistSongs = allSongs.filter { it.artist.equals(chip.artistName, ignoreCase = true) }
-                                activeCollection = ActiveCollectionModal(
-                                    title = chip.artistName,
-                                    subtitle = "Artist Collection",
-                                    songs = artistSongs
-                                )
-                            }
-                        )
-                    }
+                    },
+                    label = "home_music_mode_transition",
+                    modifier = Modifier.fillMaxSize()
+                ) { mode ->
+                    when (mode) {
+                        HomeMusicMode.OFFLINE -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("home_offline_content")
+                            ) {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .testTag("home_lazy_column"),
+                                    contentPadding = PaddingValues(top = 4.dp, bottom = 184.dp),
+                                    verticalArrangement = Arrangement.spacedBy(26.dp)
+                                ) {
+                                    // Empty local library fallback
+                                    if (allSongs.isEmpty()) {
+                                        item(key = "empty_library_state") {
+                                            EmptyLibraryEditorialCard(
+                                                colors = colors,
+                                                onScanLibrary = { viewModel.loadLocalSongs() },
+                                                onOpenLibrary = onNavigateToLibrary,
+                                                onOpenOnlineMusic = { viewModel.setHomeMusicMode(HomeMusicMode.ONLINE) }
+                                            )
+                                        }
 
-                    // 4. Featured Album Artwork Collage
-                    item(key = "featured_collage") {
-                        FeaturedArtworkCollage(
-                            collageSongs = collageSongs,
-                            colors = colors,
-                            animationLevel = homeAnimationLevel,
-                            screenVisible = screenVisible,
-                            isPlaying = playbackInfo.isPlaying,
-                            onArtworkClick = { song ->
-                                val albumSongs = allSongs.filter { it.album == song.album }
-                                if (albumSongs.isNotEmpty()) {
-                                    activeCollection = ActiveCollectionModal(
-                                        title = song.album.ifBlank { song.title },
-                                        subtitle = song.artist,
-                                        songs = albumSongs
-                                    )
-                                } else {
-                                    viewModel.playSong(song, allSongs)
-                                }
-                            },
-                            onArtworkLongClick = { song ->
-                                contextMenuSong = song
-                            }
-                        )
-                    }
-
-                    // Quick Studio & Queue Pills (EQ, Audio Studio, Playlists, Queue shortcuts)
-                    item(key = "quick_tools_strip") {
-                        QuickToolsEditorialStrip(
-                            playlistCount = playlists.size,
-                            colors = colors,
-                            onOpenOnlineMusic = onOpenOnlineMusic,
-                            onOpenEqualizer = onOpenEqualizer,
-                            onOpenAudioStudio = onOpenAudioStudio,
-                            onOpenPlaylists = onOpenPlaylists,
-                            onOpenQueue = onOpenQueue
-                        )
-                    }
-
-                    // 5. Recently Played (Circular artwork medallions)
-                    if (recentlyPlayed.isNotEmpty()) {
-                        item(key = "recently_played") {
-                            RecentlyPlayedSection(
-                                songs = recentlyPlayed,
-                                currentPlayingSongId = currentSong?.id,
-                                isPlaying = playbackInfo.isPlaying,
-                                colors = colors,
-                                animationLevel = homeAnimationLevel,
-                                screenVisible = screenVisible,
-                                onSongClick = { song -> viewModel.playSong(song, recentlyPlayed) },
-                                onSongLongClick = { song -> contextMenuSong = song }
-                            )
-                        }
-                    }
-
-                    // 6. Made for You (Asymmetric compact Quick Picks + Favourites Showcase)
-                    item(key = "made_for_you") {
-                        MadeForYouEditorialSection(
-                            quickPicks = quickPicks,
-                            favorites = favorites,
-                            currentSongId = currentSong?.id,
-                            colors = colors,
-                            animationLevel = homeAnimationLevel,
-                            screenVisible = screenVisible,
-                            onSongClick = { song -> viewModel.playSong(song, quickPicks) },
-                            onSongLongClick = { song -> contextMenuSong = song },
-                            onOpenFavorites = {
-                                if (favorites.isNotEmpty()) {
-                                    activeCollection = ActiveCollectionModal(
-                                        title = "Favourite Tracks",
-                                        subtitle = "Your liked collection",
-                                        songs = favorites
-                                    )
-                                }
-                            }
-                        )
-                    }
-
-                    // 7. Daily Mixes (5 Animation Styles + Horizontal Swipe + Shuffle & Play)
-                    if (dailyMixes.isNotEmpty()) {
-                        item(key = "daily_mixes") {
-                            DailyMixSection(
-                                mixes = dailyMixes,
-                                colors = colors,
-                                animationStyle = dailyMixAnimationStyle,
-                                animationLevel = homeAnimationLevel,
-                                screenVisible = screenVisible,
-                                currentPlayingSongId = currentSong?.id,
-                                isPlaying = playbackInfo.isPlaying,
-                                onMixClick = { mix ->
-                                    activeCollection = ActiveCollectionModal(
-                                        title = mix.title,
-                                        subtitle = mix.subtitle,
-                                        songs = mix.songs
-                                    )
-                                },
-                                onPlayMix = { mix ->
-                                    val isThisMixPlaying = playbackInfo.isPlaying && currentSong != null &&
-                                        mix.songs.any { it.id == currentSong?.id }
-                                    if (isThisMixPlaying) {
-                                        viewModel.togglePlayPause()
+                                        val activeHomeOnlineErr = playbackInfo.playbackError
+                                        if (!activeHomeOnlineErr.isNullOrBlank() && currentSong?.isOnline == true) {
+                                            item(key = "home_online_playback_error_empty") {
+                                                val errKind = playbackInfo.playbackErrorKind ?: OnlineErrorKind.EXTRACTION_FAILED
+                                                val canSwitchSc = errKind == OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA &&
+                                                    selectedOnlineProvider?.key != OnlineMusicProvider.KEY_SOUNDCLOUD
+                                                OnlineErrorCard(
+                                                    kind = errKind,
+                                                    message = activeHomeOnlineErr,
+                                                    showRetry = true,
+                                                    colors = colors,
+                                                    onRetry = { viewModel.retryCurrentPlayback() },
+                                                    secondaryActionLabel = if (canSwitchSc) "Try SoundCloud" else null,
+                                                    onSecondaryAction = if (canSwitchSc) {
+                                                        { viewModel.switchToSoundCloudFallback() }
+                                                    } else null,
+                                                    onDismiss = { viewModel.clearPlaybackError() }
+                                                )
+                                            }
+                                        }
                                     } else {
-                                        viewModel.playCollection(mix.songs, shuffle = false)
+                                        // 1 & 2. Your Mix + Local Artist Shortcuts
+                                        item(key = "your_mix_hero") {
+                                            YourMixSection(
+                                                contributorsSummary = yourMixContributors,
+                                                artistChips = artistChips,
+                                                isMixPlaying = isMixActivelyPlaying,
+                                                hasTracks = yourMixSongs.isNotEmpty(),
+                                                colors = colors,
+                                                animationLevel = homeAnimationLevel,
+                                                screenVisible = screenVisible,
+                                                onPlayMix = {
+                                                    if (isMixActivelyPlaying) {
+                                                        viewModel.togglePlayPause()
+                                                    } else {
+                                                        viewModel.playCollection(yourMixSongs, shuffle = false)
+                                                    }
+                                                },
+                                                onShuffleMix = {
+                                                    viewModel.playCollection(yourMixSongs, shuffle = true)
+                                                },
+                                                onArtistChipClick = { chip ->
+                                                    val artistSongs = allSongs.filter { it.artist.equals(chip.artistName, ignoreCase = true) }
+                                                    activeCollection = ActiveCollectionModal(
+                                                        title = chip.artistName,
+                                                        subtitle = "Artist Collection",
+                                                        songs = artistSongs
+                                                    )
+                                                }
+                                            )
+                                        }
+
+                                        // 3. Local Music Statistics Summary Card
+                                        item(key = "local_library_stats") {
+                                            LocalLibraryStatsCard(
+                                                stats = localLibraryStats,
+                                                colors = colors,
+                                                onOpenLibrary = onNavigateToLibrary
+                                            )
+                                        }
+
+                                        // 4. Featured Local Album Artwork Collage
+                                        item(key = "featured_collage") {
+                                            FeaturedArtworkCollage(
+                                                collageSongs = collageSongs,
+                                                colors = colors,
+                                                animationLevel = homeAnimationLevel,
+                                                screenVisible = screenVisible,
+                                                isPlaying = playbackInfo.isPlaying,
+                                                onArtworkClick = { song ->
+                                                    val albumSongs = allSongs.filter { it.album == song.album }
+                                                    if (albumSongs.isNotEmpty()) {
+                                                        activeCollection = ActiveCollectionModal(
+                                                            title = song.album.ifBlank { song.title },
+                                                            subtitle = song.artist,
+                                                            songs = albumSongs
+                                                        )
+                                                    } else {
+                                                        viewModel.playSong(song, allSongs)
+                                                    }
+                                                },
+                                                onArtworkLongClick = { song ->
+                                                    contextMenuSong = song
+                                                }
+                                            )
+                                        }
+
+                                        // Quick Studio & Queue Pills (EQ, Audio Studio, Playlists, Queue)
+                                        item(key = "quick_tools_strip") {
+                                            QuickToolsEditorialStrip(
+                                                playlistCount = playlists.size,
+                                                colors = colors,
+                                                onOpenEqualizer = onOpenEqualizer,
+                                                onOpenAudioStudio = onOpenAudioStudio,
+                                                onOpenPlaylists = onOpenPlaylists,
+                                                onOpenQueue = onOpenQueue
+                                            )
+                                        }
+
+                                        val activeHomeOnlineErr = playbackInfo.playbackError
+                                        if (!activeHomeOnlineErr.isNullOrBlank() && currentSong?.isOnline == true) {
+                                            item(key = "home_online_playback_error") {
+                                                val errKind = playbackInfo.playbackErrorKind ?: OnlineErrorKind.EXTRACTION_FAILED
+                                                val canSwitchSc = errKind == OnlineErrorKind.RATE_LIMITED_OR_CAPTCHA &&
+                                                    selectedOnlineProvider?.key != OnlineMusicProvider.KEY_SOUNDCLOUD
+                                                OnlineErrorCard(
+                                                    kind = errKind,
+                                                    message = activeHomeOnlineErr,
+                                                    showRetry = true,
+                                                    colors = colors,
+                                                    onRetry = { viewModel.retryCurrentPlayback() },
+                                                    secondaryActionLabel = if (canSwitchSc) "Try SoundCloud" else null,
+                                                    onSecondaryAction = if (canSwitchSc) {
+                                                        { viewModel.switchToSoundCloudFallback() }
+                                                    } else null,
+                                                    onDismiss = { viewModel.clearPlaybackError() }
+                                                )
+                                            }
+                                        }
+
+                                        // 5. Recently Played
+                                        if (recentlyPlayed.isNotEmpty()) {
+                                            item(key = "recently_played") {
+                                                RecentlyPlayedSection(
+                                                    songs = recentlyPlayed,
+                                                    currentPlayingSongId = currentSong?.id,
+                                                    isPlaying = playbackInfo.isPlaying,
+                                                    colors = colors,
+                                                    animationLevel = homeAnimationLevel,
+                                                    screenVisible = screenVisible,
+                                                    onSongClick = { song -> viewModel.playSong(song, recentlyPlayed) },
+                                                    onSongLongClick = { song -> contextMenuSong = song }
+                                                )
+                                            }
+                                        }
+
+                                        // 6. Made for You
+                                        item(key = "made_for_you") {
+                                            MadeForYouEditorialSection(
+                                                quickPicks = quickPicks,
+                                                favorites = favorites,
+                                                currentSongId = currentSong?.id,
+                                                colors = colors,
+                                                animationLevel = homeAnimationLevel,
+                                                screenVisible = screenVisible,
+                                                onSongClick = { song -> viewModel.playSong(song, quickPicks) },
+                                                onSongLongClick = { song -> contextMenuSong = song },
+                                                onOpenFavorites = {
+                                                    if (favorites.isNotEmpty()) {
+                                                        activeCollection = ActiveCollectionModal(
+                                                            title = "Favourite Tracks",
+                                                            subtitle = "Your liked collection",
+                                                            songs = favorites
+                                                        )
+                                                    }
+                                                }
+                                            )
+                                        }
+
+                                        // 7. Local Daily Mixes
+                                        if (dailyMixes.isNotEmpty()) {
+                                            item(key = "daily_mixes") {
+                                                DailyMixSection(
+                                                    mixes = dailyMixes,
+                                                    colors = colors,
+                                                    animationStyle = dailyMixAnimationStyle,
+                                                    animationLevel = homeAnimationLevel,
+                                                    screenVisible = screenVisible,
+                                                    currentPlayingSongId = currentSong?.id,
+                                                    isPlaying = playbackInfo.isPlaying,
+                                                    onMixClick = { mix ->
+                                                        activeCollection = ActiveCollectionModal(
+                                                            title = mix.title,
+                                                            subtitle = mix.subtitle,
+                                                            songs = mix.songs
+                                                        )
+                                                    },
+                                                    onPlayMix = { mix ->
+                                                        val isThisMixPlaying = playbackInfo.isPlaying && currentSong != null &&
+                                                            mix.songs.any { it.id == currentSong?.id }
+                                                        if (isThisMixPlaying) {
+                                                            viewModel.togglePlayPause()
+                                                        } else {
+                                                            viewModel.playCollection(mix.songs, shuffle = false)
+                                                        }
+                                                    },
+                                                    onShuffleMix = { mix ->
+                                                        viewModel.playCollection(mix.songs, shuffle = true)
+                                                    }
+                                                )
+                                            }
+                                        }
+
+                                        // 8. Favourite Albums
+                                        if (favouriteAlbums.isNotEmpty()) {
+                                            item(key = "favourite_albums") {
+                                                FavouriteAlbumsSection(
+                                                    albums = favouriteAlbums,
+                                                    allSongs = allSongs,
+                                                    colors = colors,
+                                                    animationLevel = homeAnimationLevel,
+                                                    screenVisible = screenVisible,
+                                                    onAlbumClick = { album ->
+                                                        val albumSongs = allSongs.filter { it.album == album.title }
+                                                        activeCollection = ActiveCollectionModal(
+                                                            title = album.title,
+                                                            subtitle = album.artist,
+                                                            songs = albumSongs
+                                                        )
+                                                    },
+                                                    onAlbumLongClick = { song -> contextMenuSong = song }
+                                                )
+                                            }
+                                        }
+
+                                        // 9. Favourite Artists
+                                        if (favouriteArtists.isNotEmpty()) {
+                                            item(key = "favourite_artists") {
+                                                FavouriteArtistsSection(
+                                                    artists = favouriteArtists,
+                                                    allSongs = allSongs,
+                                                    colors = colors,
+                                                    animationLevel = homeAnimationLevel,
+                                                    screenVisible = screenVisible,
+                                                    onArtistClick = { artist ->
+                                                        val artistSongs = allSongs.filter { it.artist == artist.name }
+                                                        activeCollection = ActiveCollectionModal(
+                                                            title = artist.name,
+                                                            subtitle = "${artist.albumCount} albums",
+                                                            songs = artistSongs
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                        }
+
+                                        // 10. Recently Added
+                                        if (recentlyAdded.isNotEmpty()) {
+                                            item(key = "recently_added") {
+                                                RecentlyAddedSection(
+                                                    songs = recentlyAdded.take(5),
+                                                    currentPlayingSongId = currentSong?.id,
+                                                    colors = colors,
+                                                    animationLevel = homeAnimationLevel,
+                                                    screenVisible = screenVisible,
+                                                    onSongClick = { song -> viewModel.playSong(song, recentlyAdded) },
+                                                    onSongLongClick = { song -> contextMenuSong = song },
+                                                    onSeeAllClick = onNavigateToLibrary
+                                                )
+                                            }
+                                        }
+
+                                        // 11. Most Played
+                                        val actualMostPlayed = mostPlayed.filter { it.playCount > 0 }.ifEmpty { mostPlayed.take(6) }
+                                        if (actualMostPlayed.isNotEmpty()) {
+                                            item(key = "most_played") {
+                                                MostPlayedArchSection(
+                                                    songs = actualMostPlayed,
+                                                    colors = colors,
+                                                    animationLevel = homeAnimationLevel,
+                                                    screenVisible = screenVisible,
+                                                    onSongClick = { song -> viewModel.playSong(song, actualMostPlayed) },
+                                                    onSongLongClick = { song -> contextMenuSong = song }
+                                                )
+                                            }
+                                        }
+
+                                        // 12. Featured Music Spotlight Card
+                                        item(key = "featured_music") {
+                                            FeaturedMusicSection(
+                                                featuredAlbum = featuredAlbum,
+                                                representativeSong = featuredAlbumSong,
+                                                colors = colors,
+                                                animationLevel = homeAnimationLevel,
+                                                screenVisible = screenVisible,
+                                                isPlaying = playbackInfo.isPlaying && currentSong?.album == featuredAlbum?.title,
+                                                onOpenAlbum = { album ->
+                                                    val albumSongs = allSongs.filter { it.album == album.title }
+                                                    activeCollection = ActiveCollectionModal(
+                                                        title = album.title,
+                                                        subtitle = album.artist,
+                                                        songs = albumSongs
+                                                    )
+                                                },
+                                                onPlayAlbum = { album ->
+                                                    val albumSongs = allSongs.filter { it.album == album.title }
+                                                    viewModel.playCollection(albumSongs, shuffle = false)
+                                                },
+                                                onShuffleAlbum = { album ->
+                                                    val albumSongs = allSongs.filter { it.album == album.title }
+                                                    viewModel.playCollection(albumSongs, shuffle = true)
+                                                },
+                                                onLongClick = { song -> contextMenuSong = song }
+                                            )
+                                        }
                                     }
-                                },
-                                onShuffleMix = { mix ->
-                                    viewModel.playCollection(mix.songs, shuffle = true)
                                 }
-                            )
+                            }
                         }
-                    }
 
-                    // 8. Favourite Albums (Animated organic squircle cards)
-                    if (favouriteAlbums.isNotEmpty()) {
-                        item(key = "favourite_albums") {
-                            FavouriteAlbumsSection(
-                                albums = favouriteAlbums,
-                                allSongs = allSongs,
-                                colors = colors,
-                                animationLevel = homeAnimationLevel,
-                                screenVisible = screenVisible,
-                                onAlbumClick = { album ->
-                                    val albumSongs = allSongs.filter { it.album == album.title }
-                                    activeCollection = ActiveCollectionModal(
-                                        title = album.title,
-                                        subtitle = album.artist,
-                                        songs = albumSongs
-                                    )
-                                },
-                                onAlbumLongClick = { song -> contextMenuSong = song }
-                            )
-                        }
-                    }
-
-                    // 9. Favourite Artists (Animated circular medallions)
-                    if (favouriteArtists.isNotEmpty()) {
-                        item(key = "favourite_artists") {
-                            FavouriteArtistsSection(
-                                artists = favouriteArtists,
-                                allSongs = allSongs,
-                                colors = colors,
-                                animationLevel = homeAnimationLevel,
-                                screenVisible = screenVisible,
-                                onArtistClick = { artist ->
-                                    val artistSongs = allSongs.filter { it.artist == artist.name }
-                                    activeCollection = ActiveCollectionModal(
-                                        title = artist.name,
-                                        subtitle = "${artist.albumCount} albums",
-                                        songs = artistSongs
-                                    )
-                                }
-                            )
-                        }
-                    }
-
-                    // 10. Recently Added (Compact editorial list rows)
-                    if (recentlyAdded.isNotEmpty()) {
-                        item(key = "recently_added") {
-                            RecentlyAddedSection(
-                                songs = recentlyAdded.take(5),
-                                currentPlayingSongId = currentSong?.id,
-                                colors = colors,
-                                animationLevel = homeAnimationLevel,
-                                screenVisible = screenVisible,
-                                onSongClick = { song -> viewModel.playSong(song, recentlyAdded) },
-                                onSongLongClick = { song -> contextMenuSong = song },
-                                onSeeAllClick = onNavigateToLibrary
-                            )
-                        }
-                    }
-
-                    // 11. Most Played (Arch cards with play counts)
-                    val actualMostPlayed = mostPlayed.filter { it.playCount > 0 }.ifEmpty { mostPlayed.take(6) }
-                    if (actualMostPlayed.isNotEmpty()) {
-                        item(key = "most_played") {
-                            MostPlayedArchSection(
-                                songs = actualMostPlayed,
-                                colors = colors,
-                                animationLevel = homeAnimationLevel,
-                                screenVisible = screenVisible,
-                                onSongClick = { song -> viewModel.playSong(song, actualMostPlayed) },
-                                onSongLongClick = { song -> contextMenuSong = song }
-                            )
-                        }
-                    }
-
-                    // 12. Featured Music Spotlight Card
-                    item(key = "featured_music") {
-                        FeaturedMusicSection(
-                            featuredAlbum = featuredAlbum,
-                            representativeSong = featuredAlbumSong,
-                            colors = colors,
-                            animationLevel = homeAnimationLevel,
-                            screenVisible = screenVisible,
-                            isPlaying = playbackInfo.isPlaying && currentSong?.album == featuredAlbum?.title,
-                            onOpenAlbum = { album ->
-                                val albumSongs = allSongs.filter { it.album == album.title }
-                                activeCollection = ActiveCollectionModal(
-                                    title = album.title,
-                                    subtitle = album.artist,
-                                    songs = albumSongs
+                        HomeMusicMode.ONLINE -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .testTag("home_online_content")
+                            ) {
+                                OnlineHomeContent(
+                                    discoverSections = discoverSections,
+                                    recentlyPlayedOnline = recentlyPlayedOnline,
+                                    savedOnlineTracks = onlineSavedTracks,
+                                    playlists = playlists,
+                                    providers = onlineProviders,
+                                    selectedProvider = selectedOnlineProvider,
+                                    discoverLanguage = discoverMusicLanguage,
+                                    countryCode = onlineCountryCode,
+                                    languageCode = onlineLanguageCode,
+                                    recommendationProfile = recommendationProfile,
+                                    isNetworkOnline = isNetworkOnline,
+                                    currentSong = currentSong,
+                                    isPlaying = playbackInfo.isPlaying,
+                                    playbackError = playbackInfo.playbackError,
+                                    playbackErrorKind = playbackInfo.playbackErrorKind,
+                                    colors = colors,
+                                    animationLevel = homeAnimationLevel,
+                                    dailyMixAnimationStyle = dailyMixAnimationStyle,
+                                    screenVisible = screenVisible,
+                                    reduceAnimations = reduceAnimations,
+                                    onSelectProvider = { viewModel.selectOnlineProvider(it.key) },
+                                    onSelectDiscoverLanguage = { viewModel.setDiscoverMusicLanguage(it) },
+                                    onOpenRegionSheet = { showOnlineRegionSheet = true },
+                                    onRefreshAll = { viewModel.refreshOnlineDiscovery(forceRefresh = true) },
+                                    onRetrySection = { viewModel.retryDiscoverSection(it) },
+                                    onLoadMoreSection = { viewModel.loadMoreDiscoverSection(it) },
+                                    onPlayCollection = { songs, shuffle ->
+                                        viewModel.playCollection(songs, shuffle = shuffle)
+                                        onOpenNowPlaying()
+                                    },
+                                    onOpenLocalCollectionModal = { title, subtitle, songs ->
+                                        activeCollection = ActiveCollectionModal(title, subtitle, songs)
+                                    },
+                                    onTrackClick = { track, pool ->
+                                        viewModel.playOnlineTrack(track, pool)
+                                        onOpenNowPlaying()
+                                    },
+                                    onCollectionClick = { viewModel.openOnlineCollection(it) },
+                                    onTrackLongClick = { onlineOptionsTarget = it },
+                                    onRecentOnlineSongClick = { song ->
+                                        viewModel.playSong(song, recentlyPlayedOnline)
+                                        onOpenNowPlaying()
+                                    },
+                                    onRecentOnlineSongLongClick = { song ->
+                                        onlineOptionsTarget = OnlineTrackMapper.toOnlineTrack(song)
+                                    },
+                                    onRetryPlayback = { viewModel.retryCurrentPlayback() },
+                                    onSwitchSoundCloudFallback = { viewModel.switchToSoundCloudFallback() },
+                                    onDismissPlaybackError = { viewModel.clearPlaybackError() },
+                                    onOpenPlaylistsScreen = onOpenPlaylists,
+                                    onOpenViewAllOnline = onOpenOnlineMusic
                                 )
-                            },
-                            onPlayAlbum = { album ->
-                                val albumSongs = allSongs.filter { it.album == album.title }
-                                viewModel.playCollection(albumSongs, shuffle = false)
-                            },
-                            onShuffleAlbum = { album ->
-                                val albumSongs = allSongs.filter { it.album == album.title }
-                                viewModel.playCollection(albumSongs, shuffle = true)
-                            },
-                            onLongClick = { song -> contextMenuSong = song }
-                        )
+                            }
+                        }
                     }
                 }
             }
@@ -518,7 +738,7 @@ fun HomeScreen(
         )
     }
 
-    // Add to Playlist Picker
+    // Add to Playlist Picker (supports both local and online songs)
     playlistPickerSong?.let { target ->
         EditorialPlaylistPickerDialog(
             song = target,
@@ -526,12 +746,96 @@ fun HomeScreen(
             colors = colors,
             onDismiss = { playlistPickerSong = null },
             onSelectPlaylist = { pid ->
-                viewModel.addSongToPlaylist(pid, target.id)
+                if (target.isOnline) {
+                    viewModel.addOnlineTrackToPlaylist(pid, target)
+                } else {
+                    viewModel.addSongToPlaylist(pid, target.id)
+                }
                 playlistPickerSong = null
             },
             onCreatePlaylist = { name ->
                 viewModel.createPlaylist(name)
             }
+        )
+    }
+
+    // Online Track Context Menu Bottom Sheet
+    onlineOptionsTarget?.let { target ->
+        OnlineTrackOptionsSheet(
+            track = target,
+            isSaved = target.stableId in savedOnlineIds,
+            isFavorite = target.stableId in favoriteOnlineIds,
+            resolvedStream = currentResolvedStream,
+            colors = colors,
+            onPlayNow = {
+                if (target.kind == OnlineItemKind.TRACK) {
+                    val discoveryPool = discoverSections.values
+                        .filterIsInstance<DiscoverSectionState.Success>()
+                        .flatMap { it.items }
+                        .filter { it.kind == OnlineItemKind.TRACK }
+                        .distinctBy { it.contentUrl }
+                    viewModel.playOnlineTrack(target, discoveryPool)
+                    onOpenNowPlaying()
+                } else {
+                    viewModel.openOnlineCollection(target)
+                }
+            },
+            onPlayNext = { viewModel.enqueueOnlineTrackNext(target) },
+            onAddToQueue = { viewModel.addOnlineTrackToQueue(target) },
+            onToggleSave = { viewModel.toggleSaveOnlineTrack(target) },
+            onToggleFavorite = { viewModel.toggleFavorite(OnlineTrackMapper.toUnifiedSong(target)) },
+            onAddToPlaylist = { playlistPickerSong = OnlineTrackMapper.toUnifiedSong(target) },
+            onOpenQualitySettings = { showOnlineQualitySheet = true },
+            onViewArtistChannel = buildArtistExploreTrack(target)?.let { channelItem ->
+                { viewModel.openOnlineCollection(channelItem) }
+            },
+            onDismiss = { onlineOptionsTarget = null }
+        )
+    }
+
+    // Online Artist / Album / Playlist Collection Details Sheet
+    OnlineCollectionDetailsSheet(
+        state = onlineCollectionState,
+        currentSongId = currentSong?.id,
+        isPlaying = playbackInfo.isPlaying,
+        isBuffering = playbackInfo.isBuffering,
+        savedIds = savedOnlineIds,
+        colors = colors,
+        onPlayTrack = { track, tracks ->
+            viewModel.playOnlineTrack(track, tracks)
+            onOpenNowPlaying()
+        },
+        onPlayAll = { tracks, shuffle ->
+            val songs = tracks.map { OnlineTrackMapper.toUnifiedSong(it) }
+            viewModel.playCollection(songs, shuffle = shuffle)
+            onOpenNowPlaying()
+        },
+        onRetry = { item -> viewModel.openOnlineCollection(item) },
+        onTrackMoreClick = { track -> onlineOptionsTarget = track },
+        onDismiss = { viewModel.dismissOnlineCollection() }
+    )
+
+    if (showOnlineQualitySheet) {
+        OnlineQualitySelectorSheet(
+            currentPreference = onlineQualityPreference,
+            resolvedStream = currentResolvedStream,
+            isMeteredNetwork = isMeteredNetwork,
+            isNetworkOnline = isNetworkOnline,
+            colors = colors,
+            onSelectPreference = { viewModel.selectOnlineQualityPreference(it) },
+            onSelectManualStream = { viewModel.selectManualOnlineStreamOption(it) },
+            onDismiss = { showOnlineQualitySheet = false }
+        )
+    }
+
+    if (showOnlineRegionSheet) {
+        OnlineRegionSheet(
+            currentCountryCode = onlineCountryCode,
+            currentLanguageCode = onlineLanguageCode,
+            colors = colors,
+            onSelectCountry = { viewModel.setOnlineContentCountry(it) },
+            onSelectLanguage = { viewModel.setOnlineContentLanguage(it) },
+            onDismiss = { showOnlineRegionSheet = false }
         )
     }
 
@@ -557,6 +861,20 @@ fun HomeScreen(
             onSongMoreClick = { track ->
                 contextMenuSong = track
             }
+        )
+    }
+
+    // Home Music Mode Switcher Sheet (Offline Music <-> Online Music)
+    if (showModeSwitcherSheet) {
+        HomeModeSwitcherSheet(
+            currentMode = homeMusicMode,
+            isNetworkOnline = isNetworkOnline,
+            localTrackCount = localLibraryStats.trackCount,
+            colors = colors,
+            reduceAnimations = reduceAnimations,
+            onSelectMode = { mode -> viewModel.setHomeMusicMode(mode) },
+            onOpenThemesAndShuffle = { showDiscoverySheet = true },
+            onDismiss = { showModeSwitcherSheet = false }
         )
     }
 
@@ -688,15 +1006,22 @@ private fun MadeForYouEditorialSection(
         }
 
         // Compact horizontal 2-per-column quick pick tiles (varied compact row layout)
+        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
         val chunked = quickPicks.chunked(2)
         LazyRow(
+            state = listState,
+            flingBehavior = snapFling,
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(chunked) { pair ->
+            itemsIndexed(chunked, key = { idx, pair -> "quick_pair_${idx}_${pair.firstOrNull()?.id ?: idx}" }) { index, pair ->
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.width(248.dp)
+                    modifier = Modifier
+                        .width(248.dp)
+                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
                 ) {
                     pair.forEach { song ->
                         val isCurrent = currentSongId == song.id
@@ -779,7 +1104,13 @@ private fun FavouriteAlbumsSection(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
+
         LazyRow(
+            state = listState,
+            flingBehavior = snapFling,
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -805,7 +1136,9 @@ private fun FavouriteAlbumsSection(
                     enableParallax = true,
                     onClick = { onAlbumClick(album) },
                     onLongClick = repSong?.let { s -> { onAlbumLongClick(s) } },
-                    modifier = Modifier.width(156.dp)
+                    modifier = Modifier
+                        .width(156.dp)
+                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
                 )
             }
         }
@@ -834,7 +1167,13 @@ private fun FavouriteArtistsSection(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
+
         LazyRow(
+            state = listState,
+            flingBehavior = snapFling,
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -845,6 +1184,7 @@ private fun FavouriteArtistsSection(
                 Column(
                     modifier = Modifier
                         .width(96.dp)
+                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
                         .clip(RoundedCornerShape(16.dp))
                         .clickable { onArtistClick(artist) }
                         .padding(4.dp),
@@ -1024,7 +1364,13 @@ private fun MostPlayedArchSection(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
+
         LazyRow(
+            state = listState,
+            flingBehavior = snapFling,
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -1046,7 +1392,9 @@ private fun MostPlayedArchSection(
                     enableParallax = true,
                     onClick = { onSongClick(song) },
                     onLongClick = { onSongLongClick(song) },
-                    modifier = Modifier.width(144.dp)
+                    modifier = Modifier
+                        .width(144.dp)
+                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
                 )
             }
         }
@@ -1400,17 +1748,176 @@ private fun DiscoveryAndThemeSheet(
 }
 
 @Composable
+private fun LocalLibraryStatsCard(
+    stats: LocalLibraryStats,
+    colors: EditorialColors,
+    onOpenLibrary: () -> Unit
+) {
+    Surface(
+        onClick = onOpenLibrary,
+        shape = RoundedCornerShape(24.dp),
+        color = colors.surface,
+        border = BorderStroke(0.75.dp, colors.cardBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .testTag("local_library_stats_card")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(colors.accentPill),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.LibraryMusic,
+                            contentDescription = null,
+                            tint = colors.onAccentPill,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Local Music Library",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = if (stats.losslessCount > 0) {
+                                "${stats.formattedTotalDuration} • ${stats.losslessCount} lossless & hi-res"
+                            } else {
+                                "${stats.formattedTotalDuration} • Offline ready"
+                            },
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 11.5.sp,
+                            color = colors.textSecondary
+                        )
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = colors.surfaceTinted,
+                    border = BorderStroke(0.5.dp, colors.cardBorder)
+                ) {
+                    Text(
+                        text = "OFFLINE",
+                        fontFamily = PlusJakartaFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        letterSpacing = 0.6.sp,
+                        color = colors.accentStrong,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                LocalStatPill(
+                    value = stats.trackCount.toString(),
+                    label = "Tracks",
+                    icon = Icons.Rounded.GraphicEq,
+                    colors = colors,
+                    modifier = Modifier.weight(1f)
+                )
+                LocalStatPill(
+                    value = stats.albumCount.toString(),
+                    label = "Albums",
+                    icon = Icons.Rounded.Album,
+                    colors = colors,
+                    modifier = Modifier.weight(1f)
+                )
+                LocalStatPill(
+                    value = stats.artistCount.toString(),
+                    label = "Artists",
+                    icon = Icons.Rounded.Person,
+                    colors = colors,
+                    modifier = Modifier.weight(1f)
+                )
+                LocalStatPill(
+                    value = stats.favoritesCount.toString(),
+                    label = "Liked",
+                    icon = Icons.Rounded.Favorite,
+                    colors = colors,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalStatPill(
+    value: String,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    colors: EditorialColors,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = colors.surfaceTinted,
+        border = BorderStroke(0.5.dp, colors.cardBorder),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = colors.accentStrong,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+            Text(
+                text = value,
+                fontFamily = OutfitFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                color = colors.textPrimary,
+                maxLines = 1
+            )
+            Text(
+                text = label,
+                fontFamily = PlusJakartaFontFamily,
+                fontSize = 10.sp,
+                color = colors.textSecondary,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
 private fun QuickToolsEditorialStrip(
     playlistCount: Int,
     colors: EditorialColors,
-    onOpenOnlineMusic: () -> Unit,
     onOpenEqualizer: () -> Unit,
     onOpenAudioStudio: () -> Unit,
     onOpenPlaylists: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
     val entries = listOf(
-        Triple("Online Music", Icons.Rounded.Explore, onOpenOnlineMusic),
         Triple("15-Band EQ", Icons.Rounded.Tune, onOpenEqualizer),
         Triple("Audio Studio", Icons.Rounded.SpatialAudio, onOpenAudioStudio),
         Triple("Playlists ($playlistCount)", Icons.Rounded.LibraryMusic, onOpenPlaylists),
@@ -1427,7 +1934,7 @@ private fun QuickToolsEditorialStrip(
                 onClick = onClick,
                 shape = RoundedCornerShape(22.dp),
                 color = colors.surface,
-                border = androidx.compose.foundation.BorderStroke(0.75.dp, colors.cardBorder),
+                border = BorderStroke(0.75.dp, colors.cardBorder),
                 modifier = Modifier
                     .height(48.dp)
                     .testTag("quick_tool_${label.lowercase().replace(Regex("[^a-z0-9]+"), "_")}")

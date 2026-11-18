@@ -1,10 +1,23 @@
 package ui.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,29 +25,45 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.UserProfile
 import com.example.ui.theme.OutfitFontFamily
+import com.example.ui.theme.PlusJakartaFontFamily
+import domain.home.HomeMusicMode
+import kotlinx.coroutines.delay
 import ui.components.DiscoveryScallopShape
 import ui.components.UserProfileAvatar
 import ui.theme.EditorialColors
 
 /**
  * Compact Editorial Top Greeting Header:
- * Left: Dedicated circular User Profile Avatar (48-52dp) + full responsive greeting text
- * Right: Scalloped Music Discovery button + Circular Settings button
+ * Left: Dedicated circular User Profile Avatar (48-52dp) + responsive greeting + active mode subtitle
+ * Right: Scalloped Music Mode Switcher button (Offline / Online with active indicator) + Settings button
  */
 @Composable
 fun GreetingHeader(
@@ -44,9 +73,49 @@ fun GreetingHeader(
     onAvatarClick: () -> Unit,
     onDiscoveryClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    activeMode: HomeMusicMode = HomeMusicMode.OFFLINE,
     reduceAnimations: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val haptic = LocalHapticFeedback.current
+    var previousMode by remember { mutableStateOf(activeMode) }
+    var iconBurstScale by remember { mutableFloatStateOf(1f) }
+    var iconTiltDegrees by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(activeMode, reduceAnimations) {
+        if (activeMode != previousMode) {
+            previousMode = activeMode
+            if (!reduceAnimations) {
+                iconBurstScale = 1.16f
+                iconTiltDegrees = if (activeMode == HomeMusicMode.ONLINE) 14f else -14f
+                delay(180)
+                iconBurstScale = 1f
+                iconTiltDegrees = 0f
+            }
+        }
+    }
+
+    val animatedScale by animateFloatAsState(
+        targetValue = iconBurstScale,
+        animationSpec = if (reduceAnimations) snap() else spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow),
+        label = "mode_icon_scale"
+    )
+    val animatedTilt by animateFloatAsState(
+        targetValue = iconTiltDegrees,
+        animationSpec = if (reduceAnimations) snap() else spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMedium),
+        label = "mode_icon_tilt"
+    )
+    val modeButtonContainer by animateColorAsState(
+        targetValue = if (activeMode == HomeMusicMode.ONLINE) colors.accentStrong else colors.accentPill,
+        animationSpec = if (reduceAnimations) snap() else tween(360),
+        label = "mode_button_bg"
+    )
+    val modeButtonIconTint by animateColorAsState(
+        targetValue = if (activeMode == HomeMusicMode.ONLINE) colors.onAccentStrong else colors.onAccentPill,
+        animationSpec = if (reduceAnimations) snap() else tween(360),
+        label = "mode_button_tint"
+    )
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
@@ -81,45 +150,124 @@ fun GreetingHeader(
 
                 Spacer(modifier = Modifier.width(if (compact) 10.dp else 12.dp))
 
-                Text(
-                    text = greeting,
-                    fontFamily = OutfitFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = greetingSize,
-                    lineHeight = 20.sp,
-                    letterSpacing = (-0.2).sp,
-                    color = colors.textPrimary,
-                    maxLines = 2
-                )
+                Column {
+                    Text(
+                        text = greeting,
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = greetingSize,
+                        lineHeight = 20.sp,
+                        letterSpacing = (-0.2).sp,
+                        color = colors.textPrimary,
+                        maxLines = 2
+                    )
+                    AnimatedContent(
+                        targetState = activeMode,
+                        transitionSpec = {
+                            if (reduceAnimations) {
+                                fadeIn(snap()) togetherWith fadeOut(snap())
+                            } else {
+                                fadeIn(tween(220)) togetherWith fadeOut(tween(160))
+                            }
+                        },
+                        label = "header_mode_indicator_anim"
+                    ) { mode ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (mode == HomeMusicMode.ONLINE) {
+                                colors.accentStrong.copy(alpha = 0.14f)
+                            } else {
+                                colors.surfaceTinted
+                            },
+                            border = BorderStroke(
+                                0.5.dp,
+                                if (mode == HomeMusicMode.ONLINE) colors.accentStrong.copy(alpha = 0.45f) else colors.cardBorder
+                            ),
+                            modifier = Modifier
+                                .padding(top = 3.dp)
+                                .testTag("header_mode_indicator")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (mode == HomeMusicMode.ONLINE) colors.accentStrong else colors.textSecondary
+                                        )
+                                )
+                                Text(
+                                    text = mode.title,
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 10.5.sp,
+                                    color = if (mode == HomeMusicMode.ONLINE) colors.accentStrong else colors.textSecondary,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // Music Discovery Scallop Starburst Button (48.dp touch target)
+                // Music Mode Switcher Scallop Starburst Button (48.dp touch target)
                 Box(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .clickable { onDiscoveryClick() }
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onDiscoveryClick()
+                        }
+                        .semantics {
+                            contentDescription = "Switch music mode, currently ${activeMode.title}"
+                        }
                         .testTag("discovery_icon_button"),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
                             .size(40.dp)
+                            .graphicsLayer {
+                                scaleX = animatedScale
+                                scaleY = animatedScale
+                                rotationZ = animatedTilt
+                            }
                             .clip(DiscoveryScallopShape)
-                            .background(colors.accentPill),
+                            .background(modeButtonContainer),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = "Music discovery & theme styles",
-                            tint = colors.onAccentPill,
+                            contentDescription = "Switch Offline or Online Music mode",
+                            tint = modeButtonIconTint,
                             modifier = Modifier.size(19.dp)
                         )
                     }
+
+                    // Active-mode indicator dot anchored cleanly at the badge corner
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 5.dp, end = 4.dp)
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(colors.background)
+                            .padding(1.5.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (activeMode == HomeMusicMode.ONLINE) colors.accentStrong else colors.textSecondary
+                            )
+                            .border(0.5.dp, colors.cardBorder, CircleShape)
+                    )
                 }
 
                 // Settings Gear Button (48.dp touch target)
