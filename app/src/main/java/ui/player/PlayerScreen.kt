@@ -198,6 +198,8 @@ fun PlayerScreen(
     val playerGestureConfig by viewModel.playerGestureConfig.collectAsState()
     val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsState()
     val weatherFetchState by viewModel.weatherFetchState.collectAsState()
+    val festivalAtmosphereSettings by viewModel.festivalAtmosphereSettings.collectAsState()
+    val activeFestivalResolution by viewModel.activeFestivalResolution.collectAsState()
     val gestureController = rememberPlayerGestureController()
     var resolvedActivePlayerStyle by remember(currentPortraitStyle) { mutableStateOf(currentPortraitStyle) }
 
@@ -417,30 +419,50 @@ fun PlayerScreen(
             }
         }
 
-        // Weather-Synced Ambient Atmosphere Layer (behind all player styles, artwork, visualizers, lyrics, and controls)
+        // Coordinated Weather + Festival Atmosphere Layers (behind all player styles, artwork, visualizers, lyrics, and controls)
         val playerWeatherRole = remember(resolvedActivePlayerStyle) {
             domain.weather.WeatherSurfaceRole.FullscreenPlayer(resolvedActivePlayerStyle)
         }
-        val playerWeatherPlan = remember(
+        val playerContext = LocalContext.current
+        val playerIsLowRam = remember(playerContext) {
+            val am = playerContext.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            am?.isLowRamDevice == true
+        }
+        val coordinatedPlayerAmbient = remember(
+            resolvedActivePlayerStyle,
             weatherAmbientSettings,
             weatherFetchState.latestSnapshot,
-            playerWeatherRole
+            festivalAtmosphereSettings,
+            activeFestivalResolution,
+            playerIsLowRam,
+            reduceAnimations
         ) {
-            domain.weather.WeatherAtmosphereEngine.resolvePlan(
-                settings = weatherAmbientSettings,
-                snapshot = weatherFetchState.latestSnapshot,
-                surfaceRole = playerWeatherRole
+            domain.ambient.AmbientEffectCoordinator.coordinatePlayer(
+                playerStyle = resolvedActivePlayerStyle,
+                weatherSettings = weatherAmbientSettings,
+                weatherSnapshot = weatherFetchState.latestSnapshot,
+                festivalSettings = festivalAtmosphereSettings,
+                festivalResolution = activeFestivalResolution,
+                isLowRamDevice = playerIsLowRam,
+                globalReduceAnimations = reduceAnimations
             )
         }
         ui.components.WeatherAtmosphereOverlay(
-            plan = playerWeatherPlan,
+            plan = coordinatedPlayerAmbient.weatherPlan,
             settings = weatherAmbientSettings,
             colors = colors,
             surfaceRole = playerWeatherRole,
-            isActive = playerWeatherPlan.isActive,
+            isActive = coordinatedPlayerAmbient.isWeatherActive,
             screenVisible = true,
             modifier = Modifier.fillMaxSize(),
             testTagName = "player_weather_atmosphere_overlay"
+        )
+        ui.components.FestivalAnimationRenderer(
+            plan = coordinatedPlayerAmbient.festivalPlan,
+            colors = colors,
+            screenVisible = coordinatedPlayerAmbient.isFestivalActive,
+            modifier = Modifier.fillMaxSize(),
+            testTagName = "player_festival_atmosphere_overlay"
         )
 
         Column(modifier = Modifier.fillMaxSize()) {

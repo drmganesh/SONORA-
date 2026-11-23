@@ -190,6 +190,8 @@ fun HomeScreen(
     val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
     val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsState()
     val weatherFetchState by viewModel.weatherFetchState.collectAsState()
+    val festivalAtmosphereSettings by viewModel.festivalAtmosphereSettings.collectAsState()
+    val activeFestivalResolution by viewModel.activeFestivalResolution.collectAsState()
     val appearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
     val colorIntensity by viewModel.dynamicColorIntensity.collectAsState()
     val playerStyle by viewModel.playerStyle.collectAsState()
@@ -254,6 +256,7 @@ fun HomeScreen(
     var showOnlineRegionSheet by remember { mutableStateOf(false) }
     var showOnlineQualitySheet by remember { mutableStateOf(false) }
     var showVideoNotificationsSheet by remember { mutableStateOf(false) }
+    var showFestivalDetailsSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(homeMusicMode, isNetworkOnline) {
         if (homeMusicMode == HomeMusicMode.ONLINE_VIDEO && isNetworkOnline) {
@@ -294,35 +297,32 @@ fun HomeScreen(
         yourMixSongs.any { it.id == currentSong?.id }
 
     val latestWeatherSnapshot = weatherFetchState.latestSnapshot
-    val isWeatherAtmosphereActive = remember(
+    val isLowRamDevice = remember(context) {
+        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        am?.isLowRamDevice == true
+    }
+    val coordinatedAmbient = remember(
         homeMusicMode,
         playbackInfo.isPlaying,
         currentSong?.id,
         weatherAmbientSettings,
-        latestWeatherSnapshot != null
+        latestWeatherSnapshot,
+        festivalAtmosphereSettings,
+        activeFestivalResolution,
+        isLowRamDevice,
+        reduceAnimations
     ) {
-        domain.weather.WeatherAtmosphereEngine.shouldRenderOnHome(
+        domain.ambient.AmbientEffectCoordinator.coordinateHome(
             homeMusicMode = homeMusicMode,
             isMusicPlaying = playbackInfo.isPlaying,
             hasCurrentSong = currentSong != null,
-            settings = weatherAmbientSettings,
-            hasWeatherSnapshot = latestWeatherSnapshot != null
+            weatherSettings = weatherAmbientSettings,
+            weatherSnapshot = latestWeatherSnapshot,
+            festivalSettings = festivalAtmosphereSettings,
+            festivalResolution = activeFestivalResolution,
+            isLowRamDevice = isLowRamDevice,
+            globalReduceAnimations = reduceAnimations
         )
-    }
-    val homeWeatherPlan = remember(
-        weatherAmbientSettings,
-        latestWeatherSnapshot,
-        isWeatherAtmosphereActive
-    ) {
-        if (!isWeatherAtmosphereActive) {
-            domain.weather.WeatherAtmospherePlan.INACTIVE
-        } else {
-            domain.weather.WeatherAtmosphereEngine.resolvePlan(
-                settings = weatherAmbientSettings,
-                snapshot = latestWeatherSnapshot,
-                surfaceRole = domain.weather.WeatherSurfaceRole.HomeBackground
-            )
-        }
     }
 
     Box(
@@ -335,14 +335,23 @@ fun HomeScreen(
     ) {
         // Weather-synced ambient atmosphere layer (behind all Home content; non-interactive; off in Online Video)
         ui.components.WeatherAtmosphereOverlay(
-            plan = homeWeatherPlan,
+            plan = coordinatedAmbient.weatherPlan,
             settings = weatherAmbientSettings,
             colors = colors,
             surfaceRole = domain.weather.WeatherSurfaceRole.HomeBackground,
-            isActive = isWeatherAtmosphereActive,
+            isActive = coordinatedAmbient.isWeatherActive,
             screenVisible = screenVisible,
             modifier = Modifier.fillMaxSize(),
             testTagName = "home_weather_atmosphere_overlay"
+        )
+
+        // Pan-India Festival Atmosphere layer (coordinated with Weather; battery-efficient; off in Online Video)
+        ui.components.FestivalAnimationRenderer(
+            plan = coordinatedAmbient.festivalPlan,
+            colors = colors,
+            screenVisible = screenVisible && coordinatedAmbient.isFestivalActive,
+            modifier = Modifier.fillMaxSize(),
+            testTagName = "home_festival_atmosphere_overlay"
         )
 
         Column(
@@ -376,6 +385,15 @@ fun HomeScreen(
                 onDiscoveryClick = { showModeSwitcherSheet = true },
                 onSettingsClick = onOpenSettings
             )
+
+            // Compact Festival Indicator shown ONLY on recognized festival dates (zero space when hidden)
+            if (coordinatedAmbient.showHomeFestivalIndicator && activeFestivalResolution.primary != null) {
+                ui.components.FestivalIndicator(
+                    resolution = activeFestivalResolution,
+                    colors = colors,
+                    onClick = { showFestivalDetailsSheet = true }
+                )
+            }
 
             PullToRefreshBox(
                 isRefreshing = isRefreshing,
@@ -1180,6 +1198,15 @@ fun HomeScreen(
             onOpenPlayerStyles = onOpenPlayerStyles,
             onOpenSettings = onOpenSettings,
             onOpenMusicAnalytics = onOpenMusicAnalytics
+        )
+    }
+
+    if (showFestivalDetailsSheet && activeFestivalResolution.hasActiveFestival) {
+        ui.components.FestivalDetailsBottomSheet(
+            resolution = activeFestivalResolution,
+            colors = colors,
+            onDismiss = { showFestivalDetailsSheet = false },
+            onOpenFestivalSettings = onOpenSettings
         )
     }
 }

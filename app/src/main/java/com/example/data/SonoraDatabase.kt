@@ -32,13 +32,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         data.video.VideoRecommendationFeedbackEntity::class,
         data.video.VideoNotificationEntity::class,
         data.analytics.ListeningEventEntity::class,
-        data.analytics.PlaybackSessionSnapshotEntity::class
+        data.analytics.PlaybackSessionSnapshotEntity::class,
+        data.festival.FestivalCalendarEntity::class,
+        data.festival.FestivalSyncMetaEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class SonoraDatabase : RoomDatabase() {
     abstract fun dao(): SonoraDao
+    abstract fun festivalCalendarDao(): data.festival.FestivalCalendarDao
 
     companion object {
         @Volatile
@@ -524,6 +527,56 @@ abstract class SonoraDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `festival_calendar_entries` (
+                        `recordKey` TEXT NOT NULL,
+                        `festivalSlug` TEXT NOT NULL,
+                        `canonicalName` TEXT NOT NULL,
+                        `alternateRegionalNamesCsv` TEXT NOT NULL,
+                        `startDateIso` TEXT NOT NULL,
+                        `endDateIso` TEXT NOT NULL,
+                        `tithi` TEXT,
+                        `regionsCsv` TEXT NOT NULL,
+                        `isPanIndia` INTEGER NOT NULL,
+                        `categoryId` TEXT NOT NULL,
+                        `shortDescription` TEXT NOT NULL,
+                        `effectId` TEXT NOT NULL,
+                        `iconGlyph` TEXT NOT NULL,
+                        `sourceName` TEXT NOT NULL,
+                        `sourceLicense` TEXT NOT NULL,
+                        `sourcePriorityRank` INTEGER NOT NULL,
+                        `verificationStatusId` TEXT NOT NULL,
+                        `disagreementNote` TEXT,
+                        `lastUpdatedEpochMs` INTEGER NOT NULL,
+                        `expiresAtEpochMs` INTEGER NOT NULL,
+                        PRIMARY KEY(`recordKey`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_festival_calendar_entries_startDateIso_endDateIso` ON `festival_calendar_entries` (`startDateIso`, `endDateIso`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_festival_calendar_entries_festivalSlug` ON `festival_calendar_entries` (`festivalSlug`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_festival_calendar_entries_isPanIndia` ON `festival_calendar_entries` (`isPanIndia`)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `festival_sync_meta` (
+                        `id` INTEGER NOT NULL,
+                        `lastSyncedEpochMs` INTEGER NOT NULL,
+                        `lastRemoteAttemptEpochMs` INTEGER NOT NULL,
+                        `lastSourceSummary` TEXT NOT NULL,
+                        `isOfflineFallback` INTEGER NOT NULL,
+                        `consecutiveFailures` INTEGER NOT NULL,
+                        `recordCount` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun getDatabase(context: Context): SonoraDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -541,7 +594,8 @@ abstract class SonoraDatabase : RoomDatabase() {
                         MIGRATION_7_8,
                         MIGRATION_8_9,
                         MIGRATION_9_10,
-                        MIGRATION_10_11
+                        MIGRATION_10_11,
+                        MIGRATION_11_12
                     )
                     .fallbackToDestructiveMigration(dropAllTables = false)
                     .build()

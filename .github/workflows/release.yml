@@ -7,14 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. v1.3.6)"
+        description: "Release tag (e.g. v1.3.7)"
         required: true
-        default: "v1.3.6"
+        default: "v1.3.7"
         type: string
       release_name:
         description: "Release title (optional)"
         required: false
-        default: "SONORA v1.3.6 — Weather-Synced Ambient Effects"
+        default: "SONORA v1.3.7 — Festival Atmosphere Engine"
         type: string
       draft:
         description: "Create as a Draft release"

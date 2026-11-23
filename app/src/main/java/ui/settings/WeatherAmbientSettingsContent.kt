@@ -105,6 +105,8 @@ fun WeatherAmbientSettingsContent(
     onRefreshWeather: () -> Unit,
     onResetSettings: () -> Unit,
     onBack: () -> Unit,
+    onOpenFestivalAtmosphere: (() -> Unit)? = null,
+    festivalAtmosphereSubtitle: String = "Auto • Pan-India Hindu festival effects",
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
@@ -212,6 +214,62 @@ fun WeatherAmbientSettingsContent(
                         colors = colors,
                         onRefreshWeather = onRefreshWeather
                     )
+                }
+
+                // 1b. Festival Atmosphere Entry Card (coexists alongside Weather Atmosphere Engine)
+                if (onOpenFestivalAtmosphere != null) {
+                    item(key = "festival_atmosphere_entry") {
+                        Surface(
+                            onClick = onOpenFestivalAtmosphere,
+                            shape = RoundedCornerShape(22.dp),
+                            color = colors.surface,
+                            border = BorderStroke(0.9.dp, colors.accentStrong.copy(alpha = 0.40f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_festival_atmosphere_settings")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = colors.accentPill,
+                                    modifier = Modifier.size(44.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(text = "🪔", fontSize = 20.sp)
+                                    }
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Festival Atmosphere",
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        color = colors.textPrimary
+                                    )
+                                    Text(
+                                        text = festivalAtmosphereSubtitle,
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontSize = 12.sp,
+                                        color = colors.textSecondary,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.AutoAwesome,
+                                    contentDescription = "Open Festival Atmosphere Settings",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // 2. Weather Mode Selector (Automatic / Manual / Off)

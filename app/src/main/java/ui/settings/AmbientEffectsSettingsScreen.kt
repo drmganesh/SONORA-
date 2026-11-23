@@ -39,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,29 +68,62 @@ import kotlin.math.roundToInt
 fun AmbientEffectsSettingsScreen(
     viewModel: SonoraViewModel,
     onBack: () -> Unit,
+    initialOpenFestivalSettings: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
     val weatherSettings by viewModel.weatherAmbientSettings.collectAsState()
     val weatherFetchState by viewModel.weatherFetchState.collectAsState()
     val locationSummaries by viewModel.locationWeatherSummaries.collectAsState()
+    val festivalSettings by viewModel.festivalAtmosphereSettings.collectAsState()
+    val activeFestivalResolution by viewModel.activeFestivalResolution.collectAsState()
+    var showFestivalSettings by androidx.compose.runtime.remember(initialOpenFestivalSettings) {
+        androidx.compose.runtime.mutableStateOf(initialOpenFestivalSettings)
+    }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.prefetchAllOdishaLocationWeather()
     }
 
-    WeatherAmbientSettingsContent(
-        settings = weatherSettings,
-        fetchState = weatherFetchState,
-        locationSummaries = locationSummaries,
-        colors = colors,
-        onSelectLocation = { location -> viewModel.selectWeatherLocation(location) },
-        onUpdateSettings = { transform -> viewModel.updateWeatherAmbientSettings(transform) },
-        onRefreshWeather = { viewModel.refreshSelectedWeather(force = true) },
-        onResetSettings = { viewModel.resetWeatherAmbientSettings() },
-        onBack = onBack,
-        modifier = modifier
-    )
+    if (showFestivalSettings) {
+        FestivalSettingsScreen(
+            viewModel = viewModel,
+            onBack = {
+                if (initialOpenFestivalSettings) {
+                    onBack()
+                } else {
+                    showFestivalSettings = false
+                }
+            },
+            modifier = modifier
+        )
+    } else {
+        val festivalSummary = androidx.compose.runtime.remember(festivalSettings, activeFestivalResolution) {
+            when {
+                !festivalSettings.enabled -> "Off • Pan-India Hindu festivals"
+                activeFestivalResolution.primary != null ->
+                    "${activeFestivalResolution.primary!!.record.iconGlyph} ${activeFestivalResolution.primary!!.displayNameForRegion} Active Today"
+                festivalSettings.regionMode == domain.festival.FestivalRegionMode.ALL_INDIA ->
+                    "Auto • All India • Battery Saver ${if (festivalSettings.batterySaver) "On" else "Off"}"
+                else ->
+                    "Auto • ${festivalSettings.selectedState.displayName} • Battery Saver ${if (festivalSettings.batterySaver) "On" else "Off"}"
+            }
+        }
+        WeatherAmbientSettingsContent(
+            settings = weatherSettings,
+            fetchState = weatherFetchState,
+            locationSummaries = locationSummaries,
+            colors = colors,
+            onSelectLocation = { location -> viewModel.selectWeatherLocation(location) },
+            onUpdateSettings = { transform -> viewModel.updateWeatherAmbientSettings(transform) },
+            onRefreshWeather = { viewModel.refreshSelectedWeather(force = true) },
+            onResetSettings = { viewModel.resetWeatherAmbientSettings() },
+            onOpenFestivalAtmosphere = { showFestivalSettings = true },
+            festivalAtmosphereSubtitle = festivalSummary,
+            onBack = onBack,
+            modifier = modifier
+        )
+    }
 }
 
 @Composable

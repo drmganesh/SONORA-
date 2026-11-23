@@ -446,6 +446,75 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // --- Pan-India Hindu Festival Atmosphere Engine (Coexists with Weather, Zero Personal Permissions) ---
+    val festivalAtmospherePrefs = data.preferences.FestivalAtmospherePreferences(application)
+    val festivalRepository = data.festival.FestivalCalendarRepository(
+        dao = db.festivalCalendarDao()
+    )
+
+    val festivalAtmosphereSettings: StateFlow<data.preferences.FestivalAtmosphereSettings> =
+        festivalAtmospherePrefs.settingsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = data.preferences.FestivalAtmosphereSettings.DEFAULT
+        )
+
+    val festivalSyncStatus: StateFlow<data.festival.FestivalSyncStatus> =
+        festivalRepository.syncStatusFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = data.festival.FestivalSyncStatus()
+        )
+
+    private val _festivalReferenceDate = MutableStateFlow(
+        java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
+    )
+
+    val activeFestivalResolution: StateFlow<domain.festival.ActiveFestivalResolution> =
+        combine(
+            festivalRepository.cachedRecordsFlow,
+            festivalRepository.syncStatusFlow,
+            festivalAtmosphereSettings,
+            _festivalReferenceDate
+        ) { records, syncStatus, settings, date ->
+            domain.festival.FestivalDateResolver.resolveForDate(
+                records = records,
+                date = date,
+                regionMode = settings.regionMode,
+                selectedState = settings.selectedState,
+                includeRegionalInAllIndia = settings.includeRegionalInAllIndia,
+                observanceRule = settings.observanceRule,
+                nowEpochMs = System.currentTimeMillis(),
+                lastUpdatedEpochMs = syncStatus.lastSyncedEpochMs,
+                isFromOfflineCache = syncStatus.isOfflineFallback
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = domain.festival.ActiveFestivalResolution.EMPTY
+        )
+
+    fun updateFestivalAtmosphereSettings(
+        transform: (data.preferences.FestivalAtmosphereSettings) -> data.preferences.FestivalAtmosphereSettings
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            festivalAtmospherePrefs.updateSettings(transform)
+        }
+    }
+
+    fun resetFestivalAtmosphereSettings() {
+        viewModelScope.launch(Dispatchers.IO) {
+            festivalAtmospherePrefs.resetToDefaults()
+        }
+    }
+
+    fun refreshFestivalCalendarNow(force: Boolean = true) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _festivalReferenceDate.value = java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
+            festivalRepository.refreshIfStale(force = force)
+        }
+    }
+
     // --- Advanced Cache Management (Media3 SimpleCache + DataStore) ---
     val cacheManager: data.cache.SonoraMediaCacheManager =
         data.cache.SonoraMediaCacheManager.getInstance(application)
@@ -2233,6 +2302,19 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 if (currentSettings.mode == domain.weather.WeatherEffectMode.AUTOMATIC && isNetworkOnline.value) {
                     weatherRepository.refreshWeather(currentSettings.selectedLocation, force = true)
                 }
+                _festivalReferenceDate.value = java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
+            }
+        }
+        // Seed Pan-India Hindu Festival Room cache, schedule infrequent battery-safe WorkManager sync, and refresh if stale
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                festivalRepository.ensureInitialCacheSeeded()
+                festivalRepository.schedulePeriodicRefresh(getApplication())
+                if (isNetworkOnline.value) {
+                    festivalRepository.refreshIfStale(force = false)
+                }
+            }.onFailure { e ->
+                Log.w(TAG, "Festival calendar initialization deferred: ${e.message}")
             }
         }
     }
