@@ -32,59 +32,93 @@ object AlbumArtHelper {
     // Negative cache to prevent repeated disk I/O and JNI calls for tracks without artwork
     private val noArtCache = object : LruCache<String, Boolean>(1000) {}
 
-    private fun buildCacheKey(song: Song): String {
-        return if (song.isOnline) {
-            "online_${song.artworkUrl ?: song.id}"
-        } else {
-            "art_${song.albumId}_${song.id}"
+    private fun buildCacheKey(
+        song: Song,
+        role: data.artwork.ArtworkDisplayRole = data.artwork.ArtworkDisplayRole.CARD
+    ): String {
+        return when {
+            song.isOnline -> {
+                val resolved = data.artwork.AlbumArtworkQualityManager.resolveArtworkRequest(
+                    rawUrl = song.artworkUrl,
+                    role = role
+                )
+                "online_${resolved.tier.cachePrefix}_${resolved.cacheKey}_${song.id}"
+            }
+            song.sourceType == "DOWNLOADED" -> "dl_${song.id}_${song.uri}"
+            else -> "art_${song.albumId}_${song.id}"
         }
     }
 
-    fun getCachedBitmap(song: Song?): Bitmap? {
-        if (song == null || song.isDemoTrack || (!song.isOnline && song.id < 0)) return null
-        return memoryCache.get(buildCacheKey(song))
+    fun clearOnlineArtworkCache() {
+        memoryCache.evictAll()
+        noArtCache.evictAll()
     }
 
-    suspend fun loadAlbumArt(context: Context, song: Song?): Bitmap? = withContext(Dispatchers.IO) {
+    fun getCachedBitmap(
+        song: Song?,
+        role: data.artwork.ArtworkDisplayRole = data.artwork.ArtworkDisplayRole.CARD
+    ): Bitmap? {
+        if (song == null || song.isDemoTrack) return null
+        return memoryCache.get(buildCacheKey(song, role))
+    }
+
+    suspend fun loadAlbumArt(
+        context: Context,
+        song: Song?,
+        role: data.artwork.ArtworkDisplayRole = data.artwork.ArtworkDisplayRole.CARD
+    ): Bitmap? = withContext(Dispatchers.IO) {
         if (song == null) return@withContext null
 
         // Demo tracks synthesized on device do not contain embedded image tags
-        if (song.isDemoTrack || (!song.isOnline && song.id < 0)) return@withContext null
+        if (song.isDemoTrack) return@withContext null
 
-        val cacheKey = buildCacheKey(song)
+        val cacheKey = buildCacheKey(song, role)
         memoryCache.get(cacheKey)?.let { return@withContext it }
         if (noArtCache.get(cacheKey) == true) return@withContext null
 
         if (song.isOnline) {
-            val remoteUrl = song.artworkUrl?.takeIf { it.isNotBlank() }
-            if (remoteUrl == null) {
+            val resolvedReq = data.artwork.AlbumArtworkQualityManager.resolveArtworkRequest(
+                rawUrl = song.artworkUrl,
+                role = role
+            )
+            val candidateUrls = listOfNotNull(resolvedReq.primaryUrl, resolvedReq.fallbackUrl).distinct()
+            if (candidateUrls.isEmpty()) {
                 noArtCache.put(cacheKey, true)
                 return@withContext null
             }
-            val loadedRemote = try {
-                val client = data.online.NewPipeInitializer.getDownloader().okHttpClient
-                val request = okhttp3.Request.Builder().url(remoteUrl).get().build()
-                client.newCall(request).execute().use { response ->
-                    val bytes = if (response.isSuccessful) response.body?.bytes() else null
-                    if (bytes != null && bytes.isNotEmpty()) {
-                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                        var inSampleSize = 1
-                        while (bounds.outWidth / inSampleSize > 768 || bounds.outHeight / inSampleSize > 768) {
-                            inSampleSize *= 2
-                        }
-                        val decodeOpts = BitmapFactory.Options().apply {
-                            this.inSampleSize = inSampleSize
-                            inPreferredConfig = Bitmap.Config.RGB_565
-                        }
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
-                    } else null
+            val maxDim = resolvedReq.maxDecodePx
+            var loadedRemote: Bitmap? = null
+            for (url in candidateUrls) {
+                loadedRemote = try {
+                    val client = data.online.NewPipeInitializer.getDownloader().okHttpClient
+                    val request = okhttp3.Request.Builder().url(url).get().build()
+                    client.newCall(request).execute().use { response ->
+                        val bytes = if (response.isSuccessful) response.body?.bytes() else null
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                            var inSampleSize = 1
+                            while (bounds.outWidth / inSampleSize > maxDim || bounds.outHeight / inSampleSize > maxDim) {
+                                inSampleSize *= 2
+                            }
+                            val decodeOpts = BitmapFactory.Options().apply {
+                                this.inSampleSize = inSampleSize
+                                inPreferredConfig = if (resolvedReq.tier == data.artwork.ArtworkResolutionTier.HD) {
+                                    Bitmap.Config.ARGB_8888
+                                } else {
+                                    Bitmap.Config.RGB_565
+                                }
+                            }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
+                        } else null
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Failed loading online artwork ($url) for ${song.title}: ${t.message}")
+                    null
                 }
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                Log.w(TAG, "Failed loading online artwork for ${song.title}: ${t.message}")
-                null
+                if (loadedRemote != null) break
             }
             if (loadedRemote != null) {
                 memoryCache.put(cacheKey, loadedRemote)
@@ -186,6 +220,33 @@ object AlbumArtHelper {
             bitmap = null
         }
 
+        // 4. Fallback for downloaded tracks: decode local cached thumbnail image (strictly offline, no network)
+        if (bitmap == null && !song.artworkUrl.isNullOrBlank()) {
+            val localPath = when {
+                song.artworkUrl.startsWith("file://") -> song.artworkUrl.removePrefix("file://")
+                song.artworkUrl.startsWith("/") -> song.artworkUrl
+                else -> null
+            }
+            if (localPath != null) {
+                val f = File(localPath)
+                if (f.exists() && f.canRead() && f.length() > 0L) {
+                    runCatching {
+                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(f.absolutePath, opts)
+                        var inSampleSize = 1
+                        while (opts.outWidth / inSampleSize > 768 || opts.outHeight / inSampleSize > 768) {
+                            inSampleSize *= 2
+                        }
+                        val decodeOpts = BitmapFactory.Options().apply {
+                            this.inSampleSize = inSampleSize
+                            inPreferredConfig = Bitmap.Config.RGB_565
+                        }
+                        bitmap = BitmapFactory.decodeFile(f.absolutePath, decodeOpts)
+                    }
+                }
+            }
+        }
+
         // Cache the decoded bitmap or record negative cache
         if (bitmap != null) {
             memoryCache.put(cacheKey, bitmap)
@@ -201,7 +262,7 @@ object AlbumArtHelper {
      * without invoking native MediaMetadataRetriever on formats without image tags.
      */
     private fun mayHaveEmbeddedArt(song: Song): Boolean {
-        if (song.isDemoTrack || song.id < 0) return false
+        if (song.isDemoTrack) return false
         val nameLower = (song.dataPath.ifBlank { song.uri.path ?: "" }).lowercase()
         val mimeLower = song.mimeType.lowercase()
         if (nameLower.endsWith(".wav") || nameLower.endsWith(".mid") || nameLower.endsWith(".midi") ||

@@ -145,7 +145,8 @@ fun ArtworkContainer(
                 modifier = Modifier.fillMaxSize(),
                 cornerRadius = if (isCircular) 1000.dp else resolvedRadius,
                 isPlaying = playbackInfo.isPlaying && (appearance.artworkAnimation != ArtworkAnimationOption.NONE || forceVinylSpin),
-                isVinylRotating = isCircular && spinVinyl
+                isVinylRotating = isCircular && spinVinyl,
+                artworkRole = data.artwork.ArtworkDisplayRole.NOW_PLAYING
             )
         }
         overlayContent?.invoke(this)

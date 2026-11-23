@@ -60,9 +60,48 @@ enum class ButtonShapeOption(val id: String, val label: String) {
     }
 }
 
+enum class ControlButtonSizeOption(val id: String, val label: String, val primaryDp: Int, val iconScale: Float) {
+    COMPACT("compact", "Compact", 58, 0.88f),
+    MEDIUM("medium", "Balanced", 70, 1.0f),
+    LARGE("large", "Large", 80, 1.12f);
+
+    companion object {
+        fun fromId(id: String?): ControlButtonSizeOption =
+            entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: MEDIUM
+    }
+}
+
+enum class PlayerTypographyOption(val id: String, val label: String) {
+    MODERN_SANS("modern_sans", "Modern Sans"),
+    EDITORIAL_SERIF("editorial_serif", "Editorial Serif"),
+    MONO_STUDIO("mono_studio", "Studio Mono"),
+    BOLD_DISPLAY("bold_display", "Bold Display");
+
+    companion object {
+        fun fromId(id: String?): PlayerTypographyOption =
+            entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: MODERN_SANS
+    }
+}
+
+enum class PlayerLayoutOption(val id: String, val label: String, val subtitle: String) {
+    STYLE_DEFAULT("style_default", "Style Default", "Use each player style's native composition"),
+    ARTWORK_ABOVE("artwork_above", "Artwork Above", "Album art positioned cleanly above controls"),
+    ARTWORK_CENTERED("artwork_centered", "Artwork Centered", "Balanced centered cover with generous space"),
+    ARTWORK_FULLSCREEN("artwork_fullscreen", "Artwork Full-Screen", "Edge-to-edge background artwork with scrim"),
+    ARTWORK_LEFT_CONTROLS_RIGHT("artwork_left_controls_right", "Split Side-by-Side", "Artwork on left, info and controls on right"),
+    LYRICS_FIRST("lyrics_first", "Lyrics-First", "Prioritize synced lyrics above compact controls"),
+    COMPACT("compact", "Compact Layout", "High-density layout for one-handed reach");
+
+    companion object {
+        fun fromId(id: String?): PlayerLayoutOption =
+            entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: STYLE_DEFAULT
+    }
+}
+
 enum class AnimationIntensity(val id: String, val label: String, val multiplier: Float) {
-    OFF("off", "Static", 0f),
-    SUBTLE("subtle", "Subtle", 0.5f),
+    OFF("off", "Off", 0f),
+    SUBTLE("subtle", "Subtle", 0.45f),
+    BALANCED("balanced", "Balanced", 0.75f),
     EXPRESSIVE("expressive", "Expressive", 1.0f);
 
     companion object {
@@ -83,16 +122,39 @@ enum class ArtworkAnimationOption(val id: String, val label: String) {
     }
 }
 
+/**
+ * 20 independently customizable Mini-Player visual styles.
+ * Preserves legacy IDs (compact_bar, floating_pill, artwork_focus, wave_mini) for seamless migration.
+ */
 enum class MiniPlayerStyle(val id: String, val displayName: String, val subtitle: String) {
-    FLOATING_PILL("floating_pill", "Floating Pill", "Signature rounded pill with circular artwork"),
-    COMPACT_BAR("compact_bar", "Compact Dock", "Slim editorial bar with square artwork & inline progress"),
-    ARTWORK_FOCUS("artwork_focus", "Artwork Card", "Elevated tonal card spotlighting album cover & audio tag"),
-    WAVE_MINI("wave_mini", "Waveform Mini", "Translucent mini deck with micro waveform progress");
+    COMPACT_BAR("compact_bar", "Classic Bar", "Album thumbnail, title, artist, play/pause & next"),
+    GLASS_BAR("glass_bar", "Glass Bar", "Translucent frosted glass with soft blurred backdrop"),
+    FLOATING_PILL("floating_pill", "Floating Pill", "Rounded floating pill with circular artwork & controls"),
+    DYNAMIC_ARTWORK_BAR("dynamic_artwork_bar", "Dynamic Artwork Bar", "Surface tinted directly from current album palette"),
+    AMOLED_BAR("amoled_bar", "AMOLED Bar", "Pure black OLED bar with crisp white controls"),
+    GRADIENT_BAR("gradient_bar", "Gradient Bar", "Smooth album-art horizontal gradient ribbon"),
+    VINYL_MINI("vinyl_mini", "Vinyl Mini", "Small rotating vinyl disc beside song information"),
+    CASSETTE_MINI("cassette_mini", "Cassette Mini", "Compact analog cassette tape deck with dual reels"),
+    CD_MINI("cd_mini", "CD Mini", "Spinning iridescent CD disc with jewel center ring"),
+    WAVE_MINI("wave_mini", "Waveform Mini", "Live audio waveform replacing traditional progress bar"),
+    SPECTRUM_MINI("spectrum_mini", "Spectrum Mini", "Animated mini equalizer bars synchronized to playback"),
+    ARTWORK_FOCUS("artwork_focus", "Floating Artwork", "Elevated card spotlighting album cover & audio tag"),
+    CIRCULAR_PLAYER("circular_player", "Circular Player", "Circular artwork encircled by radial progress ring"),
+    EXPANDABLE_CARD("expandable_card", "Expandable Card", "Expandable deck revealing inline queue & extra controls"),
+    MINIMAL_TEXT("minimal_text", "Minimal Text", "Clean typography-first bar with compact controls"),
+    BLUR_CARD("blur_card", "Blur Card", "Atmospheric blurred artwork cover with sharp overlay text"),
+    NEON_MINI("neon_mini", "Neon Mini", "Dark shell with neon outline and luminous progress glow"),
+    MATERIAL_YOU_MINI("material_you_mini", "Material You Mini", "Rounded adaptive-color M3 tonal card & squircle play"),
+    EDGE_TO_EDGE_MINI("edge_to_edge_mini", "Edge-to-Edge Mini", "Full-width docked bottom bar with top progress line"),
+    FLOATING_CORNER_PLAYER("floating_corner_player", "Floating Corner Player", "Movable compact floating music card inside the app");
 
     companion object {
         val DEFAULT = FLOATING_PILL
-        fun fromId(id: String?): MiniPlayerStyle =
-            entries.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: DEFAULT
+        fun fromId(id: String?): MiniPlayerStyle {
+            if (id.isNullOrBlank()) return DEFAULT
+            if (id.equals("classic_bar", ignoreCase = true)) return COMPACT_BAR
+            return entries.firstOrNull { it.id.equals(id.trim(), ignoreCase = true) } ?: DEFAULT
+        }
     }
 }
 
@@ -112,13 +174,19 @@ data class PlayerAppearanceConfig(
     val artworkSize: ArtworkSizeOption = ArtworkSizeOption.BALANCED,
     val cornerRadius: CornerRadiusOption = CornerRadiusOption.ROUNDED,
     val backgroundStyle: PlayerBackgroundStyle = PlayerBackgroundStyle.GRADIENT_GLOW,
+    val blurIntensity: Float = 0.55f,
+    val gradientIntensity: Float = 0.65f,
+    val dynamicColorIntensity: Float = 0.80f,
     val controlArrangement: ControlArrangement = ControlArrangement.BALANCED,
     val buttonShape: ButtonShapeOption = ButtonShapeOption.CIRCLE,
+    val buttonSize: ControlButtonSizeOption = ControlButtonSizeOption.MEDIUM,
+    val typographyOption: PlayerTypographyOption = PlayerTypographyOption.MODERN_SANS,
     val typographyScale: Float = 1.0f,
     val seekbarThicknessScale: Float = 1.0f,
     val useDynamicAlbumAccent: Boolean = true,
     val animationIntensity: AnimationIntensity = AnimationIntensity.EXPRESSIVE,
     val artworkAnimation: ArtworkAnimationOption = ArtworkAnimationOption.BREATHING,
+    val layoutOption: PlayerLayoutOption = PlayerLayoutOption.STYLE_DEFAULT,
     val showAudioFormatMetadata: Boolean = true,
     val showAlbumMetadata: Boolean = true,
     val showLyricsShortcut: Boolean = true,

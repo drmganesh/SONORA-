@@ -23,17 +23,33 @@ object OnlineHomeMixBuilder {
         discoverSections: Map<DiscoverSectionType, DiscoverSectionState>,
         recentlyPlayedOnline: List<Song>,
         savedOnlineTracks: List<Song>,
-        recommendationProfile: OnlineRecommendationProfile
+        recommendationProfile: OnlineRecommendationProfile,
+        countryCode: String = recommendationProfile.regionCode
     ): OnlineYourMixBundle {
-        val recTracks = sectionTracks(discoverSections[DiscoverSectionType.MUSIC_RECOMMENDATIONS])
-        val trendingTracks = sectionTracks(discoverSections[DiscoverSectionType.TRENDING_MUSIC])
-        val popularTracks = sectionTracks(discoverSections[DiscoverSectionType.POPULAR_SONGS])
-        val artistItems = (discoverSections[DiscoverSectionType.POPULAR_ARTISTS] as? DiscoverSectionState.Success)
-            ?.items.orEmpty()
+        val recTracks = RegionMusicEligibilityFilter.filterTracksForRegion(
+            sectionTracks(discoverSections[DiscoverSectionType.MUSIC_RECOMMENDATIONS]),
+            countryCode
+        )
+        val trendingTracks = RegionMusicEligibilityFilter.filterTracksForRegion(
+            sectionTracks(discoverSections[DiscoverSectionType.TRENDING_MUSIC]),
+            countryCode
+        )
+        val popularTracks = RegionMusicEligibilityFilter.filterTracksForRegion(
+            sectionTracks(discoverSections[DiscoverSectionType.POPULAR_SONGS]),
+            countryCode
+        )
+        val artistItems = RegionMusicEligibilityFilter.filterTracksForRegion(
+            (discoverSections[DiscoverSectionType.POPULAR_ARTISTS] as? DiscoverSectionState.Success)
+                ?.items.orEmpty(),
+            countryCode
+        )
+
+        val eligibleSaved = RegionMusicEligibilityFilter.filterSongsForRegion(savedOnlineTracks, countryCode)
+        val eligibleRecent = RegionMusicEligibilityFilter.filterSongsForRegion(recentlyPlayedOnline, countryCode)
 
         val orderedOnline = LinkedHashMap<Long, Song>()
-        savedOnlineTracks.take(6).forEach { orderedOnline.putIfAbsent(it.id, it) }
-        recentlyPlayedOnline.take(6).forEach { orderedOnline.putIfAbsent(it.id, it) }
+        eligibleSaved.take(6).forEach { orderedOnline.putIfAbsent(it.id, it) }
+        eligibleRecent.take(6).forEach { orderedOnline.putIfAbsent(it.id, it) }
         recTracks.forEach { t ->
             if (orderedOnline.size < 24) {
                 val song = OnlineTrackMapper.toUnifiedSong(t)
@@ -107,14 +123,28 @@ object OnlineHomeMixBuilder {
         countryCode: String,
         discoverLanguage: DiscoverMusicLanguage
     ): List<DailyMix> {
-        val trendingSongs = sectionTracks(discoverSections[DiscoverSectionType.TRENDING_MUSIC])
-            .map { OnlineTrackMapper.toUnifiedSong(it) }
-        val popularSongs = sectionTracks(discoverSections[DiscoverSectionType.POPULAR_SONGS])
-            .map { OnlineTrackMapper.toUnifiedSong(it) }
-        val recSongs = sectionTracks(discoverSections[DiscoverSectionType.MUSIC_RECOMMENDATIONS])
-            .map { OnlineTrackMapper.toUnifiedSong(it) }
-        val newReleaseSongs = sectionTracks(discoverSections[DiscoverSectionType.NEW_RELEASES])
-            .map { OnlineTrackMapper.toUnifiedSong(it) }
+        val trendingSongs = RegionMusicEligibilityFilter.filterSongsForRegion(
+            sectionTracks(discoverSections[DiscoverSectionType.TRENDING_MUSIC])
+                .map { OnlineTrackMapper.toUnifiedSong(it) },
+            countryCode
+        )
+        val popularSongs = RegionMusicEligibilityFilter.filterSongsForRegion(
+            sectionTracks(discoverSections[DiscoverSectionType.POPULAR_SONGS])
+                .map { OnlineTrackMapper.toUnifiedSong(it) },
+            countryCode
+        )
+        val recSongs = RegionMusicEligibilityFilter.filterSongsForRegion(
+            sectionTracks(discoverSections[DiscoverSectionType.MUSIC_RECOMMENDATIONS])
+                .map { OnlineTrackMapper.toUnifiedSong(it) },
+            countryCode
+        )
+        val newReleaseSongs = RegionMusicEligibilityFilter.filterSongsForRegion(
+            sectionTracks(discoverSections[DiscoverSectionType.NEW_RELEASES])
+                .map { OnlineTrackMapper.toUnifiedSong(it) },
+            countryCode
+        )
+        val eligibleSavedOnline = RegionMusicEligibilityFilter.filterSongsForRegion(savedOnlineTracks, countryCode)
+        val eligibleRecentOnline = RegionMusicEligibilityFilter.filterSongsForRegion(recentlyPlayedOnline, countryCode)
 
         val regionName = if (countryCode.equals("IN", ignoreCase = true)) "India" else countryCode.uppercase()
         val langPrefix = if (discoverLanguage != DiscoverMusicLanguage.ALL) "${discoverLanguage.label} " else ""
@@ -181,7 +211,7 @@ object OnlineHomeMixBuilder {
             )
         }
 
-        val personalOnline = (savedOnlineTracks + recentlyPlayedOnline).distinctBy { it.id }
+        val personalOnline = (eligibleSavedOnline + eligibleRecentOnline).distinctBy { it.id }
         if (personalOnline.isNotEmpty()) {
             mixes.add(
                 DailyMix(

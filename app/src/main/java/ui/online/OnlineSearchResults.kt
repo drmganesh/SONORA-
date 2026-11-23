@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.BookmarkAdded
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
@@ -191,6 +193,8 @@ fun OnlineResultRow(
     isBuffering: Boolean,
     isSaved: Boolean,
     colors: EditorialColors,
+    isDownloaded: Boolean = false,
+    onDownloadClick: (() -> Unit)? = null,
     onClick: () -> Unit,
     onMoreClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -314,6 +318,22 @@ fun OnlineResultRow(
                             modifier = Modifier.size(14.dp)
                         )
                     }
+                }
+            }
+
+            if (track.kind == OnlineItemKind.TRACK && onDownloadClick != null) {
+                IconButton(
+                    onClick = onDownloadClick,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("online_download_btn_${track.stableId}")
+                ) {
+                    Icon(
+                        imageVector = if (isDownloaded) Icons.Rounded.DownloadDone else Icons.Rounded.Download,
+                        contentDescription = if (isDownloaded) "Downloaded Offline" else "Download ${track.title}",
+                        tint = if (isDownloaded) colors.accentStrong else colors.textSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
 

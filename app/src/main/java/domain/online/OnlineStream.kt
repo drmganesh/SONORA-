@@ -85,5 +85,11 @@ data class ResolvedOnlineStreamResult(
     val isLive: Boolean = false,
     val viewCount: Long = -1L,
     val relatedTracks: List<OnlineTrack> = emptyList(),
-    val extractedAtMs: Long = System.currentTimeMillis()
-)
+    val extractedAtMs: Long = System.currentTimeMillis(),
+    val expiresAtMs: Long = extractedAtMs + 20L * 60_000L,
+    val fromCache: Boolean = false
+) {
+    fun isExpired(nowMs: Long = System.currentTimeMillis(), safetyMarginMs: Long = 30_000L): Boolean {
+        return expiresAtMs > 0L && nowMs >= (expiresAtMs - safetyMarginMs)
+    }
+}

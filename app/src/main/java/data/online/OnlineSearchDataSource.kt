@@ -287,8 +287,8 @@ class OnlineSearchDataSource(
             providerName: String,
             operation: String,
             requestInfo: String = "",
-            maxAttempts: Int = 2,
-            initialBackoffMs: Long = 350L,
+            maxAttempts: Int = 3,
+            initialBackoffMs: Long = 280L,
             block: suspend () -> T
         ): T {
             var attempt = 0
@@ -305,10 +305,10 @@ class OnlineSearchDataSource(
                     }
                     Log.w(
                         TAG,
-                        "Transient failure on service=$providerName op=$operation ($requestInfo) attempt=$attempt: ${t::class.java.simpleName}"
+                        "Transient failure on service=$providerName op=$operation ($requestInfo) attempt=$attempt/$maxAttempts: ${t::class.java.simpleName}"
                     )
                     delay(delayMs)
-                    delayMs *= 2L
+                    delayMs = (delayMs * 2L).coerceAtMost(2_000L)
                 }
             }
         }

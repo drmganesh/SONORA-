@@ -18,8 +18,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,6 +35,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -72,7 +78,7 @@ fun isSystemReduceMotionActive(context: Context): Boolean {
 }
 
 /**
- * Original 5-phase cinematic SONORA launch sequence (~1.8s total) that sits non-blockingly over
+ * Original 5-phase cinematic SONORA launch sequence (~2.1s total) that sits non-blockingly over
  * the live SONORA Home screen, respects system & app Reduce Motion preferences, and hands off
  * smoothly without duplicating splash screens or delaying media/library initialization.
  */
@@ -89,6 +95,7 @@ fun SonoraSplashScreen(
     val latestOnFinished by rememberUpdatedState(onAnimationFinished)
 
     var phase by remember { mutableStateOf(SonoraSplashPhase.DARK_INTRO) }
+    var developerCreditVisible by remember(reducedMotion) { mutableStateOf(reducedMotion) }
     val phaseTransition = updateTransition(targetState = phase, label = "sonora_splash_phase")
 
     val overlayAlpha by phaseTransition.animateFloat(
@@ -135,7 +142,8 @@ fun SonoraSplashScreen(
     LaunchedEffect(reducedMotion) {
         if (reducedMotion) {
             phase = SonoraSplashPhase.BRAND_REVEAL
-            delay(280L)
+            developerCreditVisible = true
+            delay(360L)
             phase = SonoraSplashPhase.TRANSITION_HOME
             delay(230L)
             phase = SonoraSplashPhase.COMPLETED
@@ -190,7 +198,7 @@ fun SonoraSplashScreen(
         }
         delay(310L)
 
-        // Phase 4: Brand Reveal ("SONORA" + "Premium Music Experience")
+        // Phase 4: Brand Reveal ("SONORA" + "A Music Experience Beyond Listening" + Developer Credit)
         phase = SonoraSplashPhase.BRAND_REVEAL
         launch {
             letterSpacingSp.animateTo(
@@ -198,7 +206,9 @@ fun SonoraSplashScreen(
                 animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing)
             )
         }
-        delay(840L)
+        delay(220L)
+        developerCreditVisible = true
+        delay(920L)
 
         // Phase 5: Smooth transition into live Home screen
         glowJob.cancel()
@@ -231,70 +241,150 @@ fun SonoraSplashScreen(
                     )
                 )
             )
+            .statusBarsPadding()
+            .navigationBarsPadding()
             .testTag("sonora_splash_overlay"),
         contentAlignment = Alignment.Center
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 24.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            SonoraLogoAnimation(
-                logoScale = logoScale.value,
-                logoAlpha = logoAlpha.value,
-                ambientGlowAlpha = ambientGlowAlpha.value,
-                ringExpansionProgress = ringExpansion.value,
-                lightSweepProgress = lightSweep.value,
-                reducedMotion = reducedMotion
-            )
+            Spacer(modifier = Modifier.weight(1f))
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (!reducedMotion) {
-                SonoraWaveAnimation(
-                    visibilityAlpha = waveAlpha.value,
-                    amplitudeProgress = waveAmplitude.value,
-                    travelProgress = waveTravel.value
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                SonoraLogoAnimation(
+                    logoScale = logoScale.value,
+                    logoAlpha = logoAlpha.value,
+                    ambientGlowAlpha = ambientGlowAlpha.value,
+                    ringExpansionProgress = ringExpansion.value,
+                    lightSweepProgress = lightSweep.value,
+                    reducedMotion = reducedMotion
                 )
-                Spacer(modifier = Modifier.height(22.dp))
-            } else {
-                Spacer(modifier = Modifier.height(14.dp))
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (!reducedMotion) {
+                    SonoraWaveAnimation(
+                        visibilityAlpha = waveAlpha.value,
+                        amplitudeProgress = waveAmplitude.value,
+                        travelProgress = waveTravel.value
+                    )
+                    Spacer(modifier = Modifier.height(22.dp))
+                } else {
+                    Spacer(modifier = Modifier.height(14.dp))
+                }
+
+                AnimatedVisibility(
+                    visible = brandVisible,
+                    enter = if (reducedMotion) {
+                        fadeIn(snap())
+                    } else {
+                        fadeIn(animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing)) +
+                            slideInVertically(
+                                animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
+                                initialOffsetY = { it / 4 }
+                            )
+                    }
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = stringResource(id = R.string.app_name),
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 30.sp,
+                            letterSpacing = letterSpacingSp.value.sp,
+                            color = BrandIvory,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.testTag("sonora_splash_brand_title")
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = stringResource(id = R.string.splash_brand_tagline),
+                            fontFamily = PlusJakartaFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.5.sp,
+                            letterSpacing = 0.6.sp,
+                            color = BrandWarmGold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.testTag("sonora_splash_brand_subtitle")
+                        )
+                    }
+                }
             }
 
-            AnimatedVisibility(
-                visible = brandVisible,
-                enter = if (reducedMotion) {
-                    fadeIn(snap())
-                } else {
-                    fadeIn(animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing)) +
-                        slideInVertically(
-                            animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
-                            initialOffsetY = { it / 4 }
-                        )
-                }
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Subtle, minimal developer attribution anchored responsively near bottom safe area
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = stringResource(id = R.string.app_name),
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 30.sp,
-                        letterSpacing = letterSpacingSp.value.sp,
-                        color = BrandIvory,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.testTag("sonora_splash_brand_title")
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(id = R.string.splash_brand_tagline),
-                        fontFamily = PlusJakartaFontFamily,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 13.5.sp,
-                        letterSpacing = 0.8.sp,
-                        color = BrandWarmGold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.testTag("sonora_splash_brand_subtitle")
-                    )
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = developerCreditVisible,
+                    enter = if (reducedMotion) {
+                        fadeIn(snap())
+                    } else {
+                        fadeIn(animationSpec = tween(durationMillis = 440, easing = FastOutSlowInEasing)) +
+                            slideInVertically(
+                                animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+                                initialOffsetY = { it / 5 }
+                            )
+                    }
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.testTag("splash_developer_credit")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(28.dp)
+                                .height(1.dp)
+                                .clip(RoundedCornerShape(1.dp))
+                                .background(BrandWarmGold.copy(alpha = 0.36f))
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(id = R.string.developer_credit_label),
+                            fontFamily = PlusJakartaFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.2.sp,
+                            color = BrandWarmGold.copy(alpha = 0.78f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.testTag("splash_developer_label")
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = stringResource(id = R.string.developer_credit_name),
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.5.sp,
+                            letterSpacing = 0.8.sp,
+                            color = BrandIvory.copy(alpha = 0.94f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.testTag("splash_developer_name")
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(id = R.string.developer_credit_qualification),
+                            fontFamily = PlusJakartaFontFamily,
+                            fontWeight = FontWeight.Normal,
+                            fontSize = 11.5.sp,
+                            letterSpacing = 0.4.sp,
+                            color = BrandWarmGold.copy(alpha = 0.72f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.testTag("splash_developer_qualification")
+                        )
+                    }
                 }
             }
         }

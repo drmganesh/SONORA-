@@ -46,7 +46,8 @@ fun CircularProgressSeekbar(
     isPlaying: Boolean = false,
     enabled: Boolean = true,
     accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    inactiveColor: Color = SonoraCharcoalBorder,
+    onSeekCancelled: () -> Unit = {}
 ) {
     val colors = LocalEditorialColors.current
     val clamped = progress.coerceIn(0f, 1f)
@@ -62,16 +63,24 @@ fun CircularProgressSeekbar(
                 .size(48.dp)
                 .pointerInput(enabled) {
                     if (!enabled) return@pointerInput
+                    var latestRadial = clamped
                     detectDragGestures(
-                        onDragEnd = { onSeekConfirmed(clamped) },
-                        onDragCancel = { onSeekConfirmed(clamped) },
+                        onDragStart = { pos ->
+                            val cx = size.width / 2f
+                            val cy = size.height / 2f
+                            val angle = Math.toDegrees(atan2((pos.y - cy).toDouble(), (pos.x - cx).toDouble()))
+                            latestRadial = (((angle + 90.0 + 360.0) % 360.0) / 360.0).toFloat().coerceIn(0f, 1f)
+                            onSeekProgress(latestRadial)
+                        },
+                        onDragEnd = { onSeekConfirmed(latestRadial) },
+                        onDragCancel = { onSeekCancelled() },
                         onDrag = { change, _ ->
                             change.consume()
                             val cx = size.width / 2f
                             val cy = size.height / 2f
                             val angle = Math.toDegrees(atan2((change.position.y - cy).toDouble(), (change.position.x - cx).toDouble()))
-                            val normalized = (((angle + 90.0 + 360.0) % 360.0) / 360.0).toFloat().coerceIn(0f, 1f)
-                            onSeekProgress(normalized)
+                            latestRadial = (((angle + 90.0 + 360.0) % 360.0) / 360.0).toFloat().coerceIn(0f, 1f)
+                            onSeekProgress(latestRadial)
                         }
                     )
                 },
@@ -122,31 +131,15 @@ fun CircularProgressSeekbar(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .height(32.dp)
-                .pointerInput(enabled) {
-                    if (!enabled) return@pointerInput
-                    detectTapGestures(
-                        onPress = { offset ->
-                            val frac = (offset.x / size.width).coerceIn(0f, 1f)
-                            onSeekProgress(frac)
-                            onSeekConfirmed(frac)
-                        }
-                    )
-                }
-                .pointerInput(enabled) {
-                    if (!enabled) return@pointerInput
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            onSeekProgress((offset.x / size.width).coerceIn(0f, 1f))
-                        },
-                        onDragEnd = { onSeekConfirmed(clamped) },
-                        onDragCancel = { onSeekConfirmed(clamped) },
-                        onDrag = { change, _ ->
-                            change.consume()
-                            onSeekProgress((change.position.x / size.width).coerceIn(0f, 1f))
-                        }
-                    )
-                }
+                .height(36.dp)
+                .scrubSeekGestures(
+                    enabled = enabled,
+                    progress = clamped,
+                    onScrubStart = onSeekProgress,
+                    onScrubUpdate = onSeekProgress,
+                    onScrubEnd = onSeekConfirmed,
+                    onScrubCancel = onSeekCancelled
+                )
         ) {
             Canvas(modifier = Modifier.matchParentSize()) {
                 val trackY = size.height / 2f

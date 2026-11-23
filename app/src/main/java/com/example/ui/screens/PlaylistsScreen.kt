@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -92,6 +93,8 @@ import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
 import kotlinx.coroutines.flow.flowOf
 import ui.components.CircularArtwork
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraTransitions
 import ui.theme.EditorialColors
 import ui.theme.LocalEditorialColors
 
@@ -149,13 +152,27 @@ fun PlaylistsScreen(
                 .fillMaxSize()
                 .widthIn(max = 760.dp)
         ) {
-            val customPlaylist = selectedCustomPlaylist
-            val smartTarget = selectedSmartTarget
-            if (customPlaylist != null || smartTarget != null) {
-                val detailTitle = customPlaylist?.name ?: smartTarget?.title.orEmpty()
-                val detailSongs = if (customPlaylist != null) activePlaylistSongs else smartTarget?.songs.orEmpty()
-                val isCustom = customPlaylist != null
-                val totalDurationLabel = remember(detailSongs) { formatTotalDuration(detailSongs) }
+            val motionState = LocalEffectiveMotionState.current
+            val isDetailOpen = selectedCustomPlaylist != null || selectedSmartTarget != null
+
+            AnimatedContent(
+                targetState = isDetailOpen,
+                transitionSpec = {
+                    SonoraTransitions.tabTransition(
+                        forward = targetState,
+                        motion = motionState
+                    )
+                },
+                label = "playlists_detail_transition",
+                modifier = Modifier.fillMaxSize()
+            ) { showDetail ->
+                val customPlaylist = selectedCustomPlaylist
+                val smartTarget = selectedSmartTarget
+                if (showDetail && (customPlaylist != null || smartTarget != null)) {
+                    val detailTitle = customPlaylist?.name ?: smartTarget?.title.orEmpty()
+                    val detailSongs = if (customPlaylist != null) activePlaylistSongs else smartTarget?.songs.orEmpty()
+                    val isCustom = customPlaylist != null
+                    val totalDurationLabel = remember(detailSongs) { formatTotalDuration(detailSongs) }
 
                 PlaylistDetailView(
                     title = detailTitle,
@@ -458,6 +475,7 @@ fun PlaylistsScreen(
                         }
                     }
                 }
+            }
             }
         }
     }

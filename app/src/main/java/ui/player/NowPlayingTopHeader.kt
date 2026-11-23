@@ -15,9 +15,14 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.HighQuality
@@ -26,7 +31,9 @@ import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.SpatialAudio
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -51,11 +58,26 @@ import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.theme.LocalEditorialColors
 
+data class NowPlayingDownloadAction(
+    val isDownloaded: Boolean,
+    val onDownloadClick: () -> Unit
+)
+
+data class NowPlayingOnlineLibraryAction(
+    val isSaved: Boolean,
+    val onToggleSaveClick: () -> Unit,
+    val onAddToOnlinePlaylistClick: () -> Unit
+)
+
+val LocalNowPlayingDownloadAction = compositionLocalOf<NowPlayingDownloadAction?> { null }
+val LocalNowPlayingOnlineLibraryAction = compositionLocalOf<NowPlayingOnlineLibraryAction?> { null }
+val LocalNowPlayingStopAction = compositionLocalOf<(() -> Unit)?> { null }
+
 /**
  * Unified SONORA AESTHETIC UI Header for Now Playing:
  * - 48dp accessible Collapse, Queue, and Overflow Menu touch targets.
  * - SONORA branding + audio format badge pill.
- * - Overflow menu exposing Equalizer, Audio Studio (8D & FX), Output Device, Focus Mode, Style Wheel, Visualizer, Lyrics, and Sleep Timer.
+ * - Overflow menu exposing Download, Equalizer, Audio Studio (8D & FX), Output Device, Focus Mode, Style Wheel, Visualizer, Lyrics, and Sleep Timer.
  */
 @Composable
 fun NowPlayingTopHeader(
@@ -76,6 +98,9 @@ fun NowPlayingTopHeader(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val downloadAction = LocalNowPlayingDownloadAction.current
+    val onlineLibraryAction = LocalNowPlayingOnlineLibraryAction.current
+    val stopAction = LocalNowPlayingStopAction.current
     var showMenu by remember { mutableStateOf(false) }
 
     Column(
@@ -188,6 +213,78 @@ fun NowPlayingTopHeader(
                         .background(colors.surface)
                         .border(BorderStroke(1.dp, colors.cardBorder), RoundedCornerShape(18.dp))
                 ) {
+                    if (song?.isOnline == true && onlineLibraryAction != null) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (onlineLibraryAction.isSaved) "Saved in Online Library" else "Save to Online Library",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    color = if (onlineLibraryAction.isSaved) colors.accentStrong else colors.textPrimary,
+                                    fontSize = 13.sp
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    if (onlineLibraryAction.isSaved) Icons.Default.BookmarkAdded else Icons.Default.BookmarkAdd,
+                                    contentDescription = null,
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onlineLibraryAction.onToggleSaveClick()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Add to Online Playlist",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    color = colors.textPrimary,
+                                    fontSize = 13.sp
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.PlaylistAdd,
+                                    contentDescription = null,
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onlineLibraryAction.onAddToOnlinePlaylistClick()
+                            }
+                        )
+                    }
+
+                    if (song?.isOnline == true && downloadAction != null) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (downloadAction.isDownloaded) "Downloaded Offline" else "Download Track",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    color = colors.textPrimary,
+                                    fontSize = 13.sp
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    if (downloadAction.isDownloaded) Icons.Default.DownloadDone else Icons.Default.Download,
+                                    contentDescription = null,
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                downloadAction.onDownloadClick()
+                            }
+                        )
+                    }
+
                     if (song?.isOnline == true && onOpenStreamQuality != null) {
                         DropdownMenuItem(
                             text = { Text("Stream Quality", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
@@ -244,7 +341,7 @@ fun NowPlayingTopHeader(
                     }
 
                     DropdownMenuItem(
-                        text = { Text("Player Style (19 Styles)", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
+                        text = { Text("Quick Style Wheel", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
                         leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, tint = colors.accentStrong, modifier = Modifier.size(18.dp)) },
                         onClick = {
                             showMenu = false
@@ -254,7 +351,7 @@ fun NowPlayingTopHeader(
 
                     if (onOpenCustomization != null) {
                         DropdownMenuItem(
-                            text = { Text("Customize Appearance", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
+                            text = { Text("Music Player", fontFamily = PlusJakartaFontFamily, color = colors.textPrimary, fontSize = 13.sp) },
                             leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, tint = colors.accentStrong, modifier = Modifier.size(18.dp)) },
                             onClick = {
                                 showMenu = false
@@ -289,6 +386,33 @@ fun NowPlayingTopHeader(
                             onOpenSleepTimer()
                         }
                     )
+
+                    if (stopAction != null) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Stop Playback",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colors.accentStrong,
+                                    fontSize = 13.sp
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.StopCircle,
+                                    contentDescription = "Stop Playback",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                stopAction()
+                            },
+                            modifier = Modifier.testTag("now_playing_stop_playback_item")
+                        )
+                    }
                 }
             }
         }

@@ -70,6 +70,7 @@ import domain.online.OnlineItemKind
 import domain.online.OnlineMusicProvider
 import domain.online.OnlineTrack
 import ui.components.EditorialPlaylistPickerDialog
+import ui.library.OnlinePlaylistPickerDialog
 import ui.theme.EditorialColors
 
 @Composable
@@ -96,6 +97,10 @@ fun OnlineSearchScreen(
     val allOnlineTracks by viewModel.allOnlineTracks.collectAsState()
     val collectionState by viewModel.onlineCollectionState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
+    val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
+    val savedOnlineAlbumIds by viewModel.savedOnlineAlbumIds.collectAsState()
+    val followedOnlineArtistIds by viewModel.followedOnlineArtistIds.collectAsState()
+    val savedOnlinePlaylistUrls by viewModel.savedOnlinePlaylistUrls.collectAsState()
 
     val savedIds = remember(savedOnlineTracks) { savedOnlineTracks.map { it.id }.toSet() }
     val favoriteIds = remember(allOnlineTracks) { allOnlineTracks.filter { it.isFavorite }.map { it.id }.toSet() }
@@ -103,6 +108,7 @@ fun OnlineSearchScreen(
     var showQualitySheet by remember { mutableStateOf(false) }
     var optionsTarget by remember { mutableStateOf<OnlineTrack?>(null) }
     var playlistPickerSong by remember { mutableStateOf<Song?>(null) }
+    var onlinePlaylistPickerSong by remember { mutableStateOf<Song?>(null) }
 
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -606,6 +612,7 @@ fun OnlineSearchScreen(
                             val playableTracks = state.items.filter { it.kind == OnlineItemKind.TRACK }
                             items(state.items, key = { "res_${it.stableId}_${it.contentUrl}" }) { item ->
                                 val isCurrent = currentSong?.id == item.stableId
+                                val isDownloaded = viewModel.isTrackDownloaded(item)
                                 OnlineResultRow(
                                     track = item,
                                     isCurrent = isCurrent,
@@ -613,6 +620,8 @@ fun OnlineSearchScreen(
                                     isBuffering = playbackInfo.isBuffering,
                                     isSaved = item.stableId in savedIds,
                                     colors = colors,
+                                    isDownloaded = isDownloaded,
+                                    onDownloadClick = { viewModel.requestDownloadTrack(item) },
                                     onClick = {
                                         if (item.kind == OnlineItemKind.TRACK) {
                                             viewModel.playOnlineTrack(item, playableTracks)
@@ -665,10 +674,21 @@ fun OnlineSearchScreen(
     }
 
     optionsTarget?.let { target ->
+        val artistUrl = if (target.kind == OnlineItemKind.ARTIST) target.contentUrl else target.artistUrl.orEmpty()
+        val isArtistFollowed = artistUrl.isNotBlank() &&
+            OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, artistUrl.trim()) in followedOnlineArtistIds
+        val isCollectionSaved = when (target.kind) {
+            OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, target.contentUrl.trim()) in savedOnlineAlbumIds
+            OnlineItemKind.PLAYLIST -> target.contentUrl.trim() in savedOnlinePlaylistUrls
+            else -> false
+        }
         OnlineTrackOptionsSheet(
             track = target,
             isSaved = target.stableId in savedIds,
             isFavorite = target.stableId in favoriteIds,
+            isDownloaded = viewModel.isTrackDownloaded(target),
+            isArtistFollowed = isArtistFollowed,
+            isCollectionSaved = isCollectionSaved,
             resolvedStream = currentResolvedStream,
             colors = colors,
             onPlayNow = {
@@ -684,6 +704,18 @@ fun OnlineSearchScreen(
             onToggleSave = { viewModel.toggleSaveOnlineTrack(target) },
             onToggleFavorite = { viewModel.toggleFavorite(OnlineTrackMapper.toUnifiedSong(target)) },
             onAddToPlaylist = { playlistPickerSong = OnlineTrackMapper.toUnifiedSong(target) },
+            onAddToOnlinePlaylist = if (target.kind == OnlineItemKind.TRACK) {
+                { onlinePlaylistPickerSong = OnlineTrackMapper.toUnifiedSong(target) }
+            } else null,
+            onToggleFollowArtist = if (artistUrl.isNotBlank()) {
+                { viewModel.toggleFollowOnlineArtist(target) }
+            } else null,
+            onToggleSaveCollection = when (target.kind) {
+                OnlineItemKind.ALBUM -> ({ viewModel.toggleSaveOnlineAlbum(target) })
+                OnlineItemKind.PLAYLIST -> ({ viewModel.toggleSaveExternalOnlinePlaylist(target) })
+                else -> null
+            },
+            onDownload = { viewModel.requestDownloadTrack(target) },
             onOpenQualitySettings = { showQualitySheet = true },
             onViewArtistChannel = buildArtistExploreTrack(target)?.let { channelItem ->
                 { viewModel.openOnlineCollection(channelItem) }
@@ -706,6 +738,21 @@ fun OnlineSearchScreen(
         )
     }
 
+    onlinePlaylistPickerSong?.let { songTarget ->
+        OnlinePlaylistPickerDialog(
+            song = songTarget,
+            playlists = onlinePlaylists,
+            colors = colors,
+            onDismiss = { onlinePlaylistPickerSong = null },
+            onSelectPlaylist = { playlist ->
+                viewModel.addTrackToOnlinePlaylist(playlist.id, songTarget, playlist.name)
+            },
+            onCreatePlaylistWithSong = { name ->
+                viewModel.createOnlinePlaylist(name, initialTrack = songTarget)
+            }
+        )
+    }
+
     OnlineCollectionDetailsSheet(
         state = collectionState,
         currentSongId = currentSong?.id,
@@ -713,6 +760,24 @@ fun OnlineSearchScreen(
         isBuffering = playbackInfo.isBuffering,
         savedIds = savedIds,
         colors = colors,
+        isTrackDownloaded = { viewModel.isTrackDownloaded(it) },
+        onDownloadTrack = { viewModel.requestDownloadTrack(it) },
+        isCollectionSavedOrFollowed = { source ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in followedOnlineArtistIds
+                OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in savedOnlineAlbumIds
+                OnlineItemKind.PLAYLIST -> source.contentUrl.trim() in savedOnlinePlaylistUrls
+                else -> false
+            }
+        },
+        onToggleSaveOrFollowCollection = { source, details ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> viewModel.toggleFollowOnlineArtist(source, details)
+                OnlineItemKind.ALBUM -> viewModel.toggleSaveOnlineAlbum(source, details)
+                OnlineItemKind.PLAYLIST -> viewModel.toggleSaveExternalOnlinePlaylist(source, details)
+                else -> Unit
+            }
+        },
         onPlayTrack = { track, tracks -> viewModel.playOnlineTrack(track, tracks) },
         onPlayAll = { tracks, shuffle ->
             val songs = tracks.map { OnlineTrackMapper.toUnifiedSong(it) }

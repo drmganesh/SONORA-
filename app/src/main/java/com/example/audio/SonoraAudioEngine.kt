@@ -14,6 +14,7 @@ import android.os.Looper
 import android.util.Log
 import com.example.equalizer.AdaptiveEqualizerEngine
 import com.example.equalizer.AdaptiveEqualizerSettings
+import com.example.model.OnlinePlaybackStage
 import com.example.model.SpatialAudioConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,7 @@ class SonoraAudioEngine(private val context: Context) {
 
     val adaptiveEqualizer = AdaptiveEqualizerEngine.getInstance(context)
     val dspProcessor = SonoraDspProcessor()
+    private val cacheManager = data.cache.SonoraMediaCacheManager.getInstance(context)
 
     private val pcmPlayer = PcmTrackPlayer(
         context = context,
@@ -72,7 +74,15 @@ class SonoraAudioEngine(private val context: Context) {
             _dspDiagnosticMessage.value = dspProcessor.lastDspError
         },
         onBufferingChanged = { buffering ->
-            _isBuffering.value = buffering
+            if (usingOnlinePlayer) {
+                _isBuffering.value = buffering
+            }
+        },
+        onStageChanged = { stage, msg ->
+            if (usingOnlinePlayer) {
+                _playbackStage.value = stage
+                _statusMessage.value = msg
+            }
         }
     )
 
@@ -83,6 +93,12 @@ class SonoraAudioEngine(private val context: Context) {
 
     private val _isBuffering = MutableStateFlow(false)
     val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
+
+    private val _playbackStage = MutableStateFlow(OnlinePlaybackStage.IDLE)
+    val playbackStage: StateFlow<OnlinePlaybackStage> = _playbackStage.asStateFlow()
+
+    private val _statusMessage = MutableStateFlow("")
+    val statusMessage: StateFlow<String> = _statusMessage.asStateFlow()
 
     val bufferedPositionMs: Long
         get() = if (usingOnlinePlayer) onlinePlaybackHandler.cachedBufferedPositionMs else 0L
@@ -116,6 +132,15 @@ class SonoraAudioEngine(private val context: Context) {
             usingOnlinePlayer -> onlinePlaybackHandler.cachedDurationMs.coerceAtLeast(cachedDurationMs)
             usingFallbackPlayer -> cachedDurationMs
             else -> pcmPlayer.durationMs.coerceAtLeast(cachedDurationMs)
+        }
+
+    val isCurrentTrackLive: Boolean
+        get() = usingOnlinePlayer && onlinePlaybackHandler.isCurrentItemLive
+
+    val isCurrentTrackSeekable: Boolean
+        get() = when {
+            usingOnlinePlayer -> onlinePlaybackHandler.isCurrentItemSeekable && !onlinePlaybackHandler.isCurrentItemLive && duration > 0L
+            else -> duration > 0L
         }
 
     @Volatile
@@ -357,9 +382,12 @@ class SonoraAudioEngine(private val context: Context) {
 
         stopFallbackMediaPlayer()
         onlinePlaybackHandler.stop()
+        cacheManager.onMusicPlayerStateChanged(isOpen = true)
         usingFallbackPlayer = false
         usingOnlinePlayer = false
         _isBuffering.value = false
+        _playbackStage.value = OnlinePlaybackStage.IDLE
+        _statusMessage.value = ""
         _isPreparedState = false
         _isPlayingState = false
         cachedPositionMs = 0L
@@ -376,6 +404,8 @@ class SonoraAudioEngine(private val context: Context) {
                 cachedDurationMs = durMs
                 _isPreparedState = true
                 _isPlayingState = true
+                _playbackStage.value = OnlinePlaybackStage.PLAYING
+                _statusMessage.value = OnlinePlaybackStage.PLAYING.defaultMessage
                 _isBassBoostSupported.value = true
                 _isVirtualizerSupported.value = true
                 _isReverbSupported.value = true
@@ -389,6 +419,8 @@ class SonoraAudioEngine(private val context: Context) {
                 if (reqGen != playbackRequestGeneration) return@prepareAndPlay
                 _isPreparedState = false
                 _isPlayingState = false
+                _playbackStage.value = OnlinePlaybackStage.IDLE
+                _statusMessage.value = ""
                 onCompletion()
             },
             onFallbackRequired = { resumePositionMs, reason ->
@@ -412,7 +444,8 @@ class SonoraAudioEngine(private val context: Context) {
         startPositionMs: Long = 0L,
         onPrepared: (durationMs: Long) -> Unit,
         onCompletion: () -> Unit,
-        onError: (message: String, mayBeExpiredStream: Boolean) -> Unit
+        onError: (message: String, mayBeExpiredStream: Boolean) -> Unit,
+        onAutoTransitionToNext: ((mediaId: String) -> Unit)? = null
     ) {
         val reqGen = ++playbackRequestGeneration
         crossfadeJob?.cancel()
@@ -428,6 +461,8 @@ class SonoraAudioEngine(private val context: Context) {
         _isPreparedState = false
         _isPlayingState = false
         _isBuffering.value = true
+        _playbackStage.value = OnlinePlaybackStage.PREPARING_PLAYER
+        _statusMessage.value = OnlinePlaybackStage.PREPARING_PLAYER.defaultMessage
         cachedPositionMs = startPositionMs.coerceAtLeast(0L)
         cachedDurationMs = resolved.durationMs
         _dspDiagnosticMessage.value = null
@@ -443,6 +478,8 @@ class SonoraAudioEngine(private val context: Context) {
                 _isPreparedState = true
                 _isPlayingState = true
                 _isBuffering.value = false
+                _playbackStage.value = OnlinePlaybackStage.PLAYING
+                _statusMessage.value = OnlinePlaybackStage.PLAYING.defaultMessage
                 _isBassBoostSupported.value = true
                 _isVirtualizerSupported.value = true
                 _isReverbSupported.value = true
@@ -459,6 +496,8 @@ class SonoraAudioEngine(private val context: Context) {
                 _isPreparedState = false
                 _isPlayingState = false
                 _isBuffering.value = false
+                _playbackStage.value = OnlinePlaybackStage.IDLE
+                _statusMessage.value = ""
                 onCompletion()
             },
             onError = { msg, mayBeExpired ->
@@ -466,9 +505,44 @@ class SonoraAudioEngine(private val context: Context) {
                 _isPreparedState = false
                 _isPlayingState = false
                 _isBuffering.value = false
+                _playbackStage.value = OnlinePlaybackStage.FAILED
+                _statusMessage.value = msg
                 onError(msg, mayBeExpired)
+            },
+            onAutoTransitionToNext = { mediaId ->
+                if (reqGen != playbackRequestGeneration) return@prepareAndPlayStream
+                cachedDurationMs = onlinePlaybackHandler.cachedDurationMs
+                cachedPositionMs = onlinePlaybackHandler.cachedPositionMs
+                _isPreparedState = onlinePlaybackHandler.isPrepared
+                _isPlayingState = onlinePlaybackHandler.isPlaying
+                _isBuffering.value = onlinePlaybackHandler.isBuffering
+                _playbackStage.value = onlinePlaybackHandler.currentStage
+                _statusMessage.value = onlinePlaybackHandler.currentStage.defaultMessage
+                val sid = onlinePlaybackHandler.audioSessionId
+                if (sid != 0) {
+                    currentSessionId = sid
+                    adaptiveEqualizer.attachToAudioSession(sid, softwareDspHandled = true)
+                }
+                onAutoTransitionToNext?.invoke(mediaId)
             }
         )
+    }
+
+    fun stageNextOnlineStream(resolvedNext: domain.online.ResolvedOnlineStreamResult) {
+        if (!usingOnlinePlayer) return
+        onlinePlaybackHandler.stageNextStream(resolvedNext)
+    }
+
+    fun preloadNextOnlineTrackWindow(resolvedNext: domain.online.ResolvedOnlineStreamResult) {
+        onlinePlaybackHandler.preloadNextTrackWindow(resolvedNext)
+    }
+
+    fun clearStagedNextOnlineStream() {
+        onlinePlaybackHandler.clearStagedNextStream()
+    }
+
+    fun isNextOnlineStreamStaged(contentUrl: String): Boolean {
+        return onlinePlaybackHandler.isNextStreamStaged(contentUrl)
     }
 
     private fun prepareFallbackMediaPlayer(
@@ -648,23 +722,45 @@ class SonoraAudioEngine(private val context: Context) {
         }
     }
 
+    /**
+     * Stops active audio playback cleanly while leaving the engine reusable if playback starts again.
+     */
+    fun stopPlayback() {
+        cachedPositionMs = currentPosition
+        _isPlayingState = false
+        fallbackOrbitJob?.cancel()
+        runCatching { onlinePlaybackHandler.stop() }
+        runCatching {
+            if (usingFallbackPlayer) {
+                fallbackMediaPlayer?.pause()
+            } else if (pcmPlayer.isPrepared) {
+                pcmPlayer.pause()
+            }
+        }
+    }
+
     fun seekTo(positionMs: Long) {
-        cachedPositionMs = positionMs.coerceAtLeast(0L)
+        if (usingOnlinePlayer && (!onlinePlaybackHandler.isCurrentItemSeekable || onlinePlaybackHandler.isCurrentItemLive)) {
+            return
+        }
+        val maxDur = duration
+        val clamped = if (maxDur > 0L) positionMs.coerceIn(0L, maxDur) else positionMs.coerceAtLeast(0L)
+        cachedPositionMs = clamped
         when {
-            usingOnlinePlayer -> onlinePlaybackHandler.seekTo(cachedPositionMs)
+            usingOnlinePlayer -> onlinePlaybackHandler.seekTo(clamped)
             usingFallbackPlayer -> {
                 if (!_isPreparedState) return
                 try {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        fallbackMediaPlayer?.seekTo(positionMs, MediaPlayer.SEEK_CLOSEST)
+                        fallbackMediaPlayer?.seekTo(clamped, MediaPlayer.SEEK_CLOSEST)
                     } else {
-                        fallbackMediaPlayer?.seekTo(positionMs.toInt())
+                        fallbackMediaPlayer?.seekTo(clamped.toInt())
                     }
                 } catch (e: Exception) {
                     Log.e(tag, "Seek error", e)
                 }
             }
-            else -> pcmPlayer.seekTo(positionMs)
+            else -> pcmPlayer.seekTo(clamped)
         }
     }
 
@@ -958,10 +1054,13 @@ class SonoraAudioEngine(private val context: Context) {
         pcmPlayer.stop()
         stopFallbackMediaPlayer()
         onlinePlaybackHandler.release()
+        cacheManager.onMusicPlayerStateChanged(isOpen = false)
         adaptiveEqualizer.releaseHardwareEffects()
         scope.cancel()
         _isPreparedState = false
         _isPlayingState = false
         _isBuffering.value = false
+        _playbackStage.value = OnlinePlaybackStage.IDLE
+        _statusMessage.value = ""
     }
 }

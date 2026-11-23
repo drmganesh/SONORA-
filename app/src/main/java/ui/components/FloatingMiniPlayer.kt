@@ -14,8 +14,9 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
@@ -37,8 +39,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -82,54 +86,61 @@ fun FloatingMiniPlayer(
     onPlayNext: () -> Unit,
     onPlayPrevious: () -> Unit,
     onClick: () -> Unit,
+    onSeekTo: (Long) -> Unit = {},
+    onOpenLyrics: (() -> Unit)? = null,
     gesturesEnabled: Boolean = true,
+    swipeDownDismissEnabled: Boolean = true,
+    onSwipeDownDismiss: () -> Unit = {},
     miniPlayerStyle: MiniPlayerStyle = MiniPlayerStyle.DEFAULT,
     trackDirection: Int = 0,
     swipeThresholdDp: Int = 64,
+    frequencies: FloatArray = FloatArray(0),
+    queue: List<Song> = emptyList(),
+    queueIndex: Int = 0,
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
 
+    val dynamicPalette = ui.theme.LocalDynamicColorPalette.current
     val motionState = LocalEffectiveMotionState.current
     val performHaptic = rememberMotionAwareHaptic()
-    val density = LocalDensity.current
-    val swipeThresholdPx = with(density) { swipeThresholdDp.coerceAtLeast(36).dp.toPx() }
-    val velocityThresholdPx = with(density) { motionState.velocityThresholdDpPerSec.dp.toPx() }
-    val verticalExpandPx = with(density) { 48.dp.toPx() }
 
     val progress = if (playbackInfo.durationMs > 0L) {
         (playbackInfo.currentPositionMs.toFloat() / playbackInfo.durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
-    var totalDragX by remember { mutableFloatStateOf(0f) }
-    var totalDragY by remember { mutableFloatStateOf(0f) }
-    val animatedDragOffsetX by animateFloatAsState(
-        targetValue = if (motionState.animationsEnabled) (totalDragX * 0.28f).coerceIn(-42f, 42f) else 0f,
-        animationSpec = if (motionState.animationsEnabled) {
-            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
-        } else {
-            snap()
-        },
-        label = "miniPlayerDragOffset"
-    )
-    val latestOnPlayNext by rememberUpdatedState(onPlayNext)
-    val latestOnPlayPrevious by rememberUpdatedState(onPlayPrevious)
-    val latestOnClick by rememberUpdatedState(onClick)
-    val latestMotionState by rememberUpdatedState(motionState)
+    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
+    var isScrubbingSeekbar by remember { mutableStateOf(false) }
+    val miniSeekController = remember(playbackInfo) {
+        MiniSeekController(
+            playbackInfo = playbackInfo,
+            onSeekTo = { targetMs -> latestOnSeekTo(targetMs) },
+            onScrubbingChanged = { active -> isScrubbingSeekbar = active }
+        )
+    }
 
+    val isCompactFloatingStyle = miniPlayerStyle == MiniPlayerStyle.CIRCULAR_PLAYER ||
+        miniPlayerStyle == MiniPlayerStyle.FLOATING_CORNER_PLAYER
     val horizontalPad = when (miniPlayerStyle) {
+        MiniPlayerStyle.EDGE_TO_EDGE_MINI -> 0.dp
         MiniPlayerStyle.COMPACT_BAR -> 14.dp
+        MiniPlayerStyle.FLOATING_CORNER_PLAYER -> 16.dp
         else -> 20.dp
     }
     val shape = when (miniPlayerStyle) {
+        MiniPlayerStyle.EDGE_TO_EDGE_MINI -> RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)
         MiniPlayerStyle.COMPACT_BAR -> RoundedCornerShape(16.dp)
-        MiniPlayerStyle.ARTWORK_FOCUS -> RoundedCornerShape(22.dp)
-        MiniPlayerStyle.WAVE_MINI -> RoundedCornerShape(20.dp)
-        MiniPlayerStyle.FLOATING_PILL -> RoundedCornerShape(24.dp)
+        MiniPlayerStyle.ARTWORK_FOCUS, MiniPlayerStyle.BLUR_CARD, MiniPlayerStyle.EXPANDABLE_CARD -> RoundedCornerShape(22.dp)
+        MiniPlayerStyle.WAVE_MINI, MiniPlayerStyle.NEON_MINI, MiniPlayerStyle.CASSETTE_MINI -> RoundedCornerShape(20.dp)
+        MiniPlayerStyle.CIRCULAR_PLAYER, MiniPlayerStyle.FLOATING_CORNER_PLAYER -> RoundedCornerShape(32.dp)
+        MiniPlayerStyle.MATERIAL_YOU_MINI -> RoundedCornerShape(26.dp)
+        else -> RoundedCornerShape(24.dp)
     }
     val surfaceColor = when (miniPlayerStyle) {
         MiniPlayerStyle.ARTWORK_FOCUS -> colors.surfaceTinted
         MiniPlayerStyle.WAVE_MINI -> colors.surfaceElevated.copy(alpha = 0.94f)
+        MiniPlayerStyle.AMOLED_BAR -> androidx.compose.ui.graphics.Color.Black
+        MiniPlayerStyle.NEON_MINI -> androidx.compose.ui.graphics.Color(0xFF080912)
         else -> colors.miniPlayerBackground
     }
     val sourceLabel = if (song.isOnline) "ONLINE" else "LOCAL"
@@ -142,13 +153,29 @@ fun FloatingMiniPlayer(
         }
     }
 
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = when (miniPlayerStyle) {
+            MiniPlayerStyle.FLOATING_CORNER_PLAYER -> Alignment.CenterEnd
+            MiniPlayerStyle.CIRCULAR_PLAYER -> Alignment.Center
+            else -> Alignment.Center
+        }
+    ) {
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
+        modifier = Modifier
+            .then(if (isCompactFloatingStyle) Modifier else Modifier.fillMaxWidth())
             .padding(horizontal = horizontalPad)
-            .graphicsLayer {
-                translationX = animatedDragOffsetX
-            }
+            .universalMiniPlayerGestures(
+                miniPlayerStyle = miniPlayerStyle,
+                gesturesEnabled = gesturesEnabled,
+                swipeDownEnabled = swipeDownDismissEnabled,
+                swipeThresholdDp = swipeThresholdDp,
+                isScrubbingSeekbar = { isScrubbingSeekbar },
+                onPlayNext = onPlayNext,
+                onPlayPrevious = onPlayPrevious,
+                onExpandNowPlaying = onClick,
+                onSwipeDownMinimize = onSwipeDownDismiss
+            )
             .shadow(
                 elevation = if (miniPlayerStyle == MiniPlayerStyle.COMPACT_BAR) 10.dp else 14.dp,
                 shape = shape,
@@ -157,74 +184,12 @@ fun FloatingMiniPlayer(
             )
             .border(0.75.dp, colors.cardBorder, shape)
             .clip(shape)
-            .pointerInput(gesturesEnabled, swipeThresholdPx, velocityThresholdPx) {
-                if (!gesturesEnabled) return@pointerInput
-                var tracker: VelocityTracker? = null
-                detectHorizontalDragGestures(
-                    onDragStart = {
-                        totalDragX = 0f
-                        tracker = VelocityTracker()
-                    },
-                    onDragEnd = {
-                        val velocityX = tracker?.calculateVelocity()?.x ?: 0f
-                        val triggered = latestMotionState.shouldTriggerSwipe(
-                            dragPx = totalDragX,
-                            velocityPxPerSec = velocityX,
-                            thresholdPx = swipeThresholdPx,
-                            velocityPxThreshold = velocityThresholdPx
-                        )
-                        if (triggered) {
-                            val isLeftSwipe = if (abs(totalDragX) > swipeThresholdPx * 0.45f) totalDragX < 0f else velocityX < 0f
-                            performHaptic(HapticFeedbackType.TextHandleMove)
-                            if (isLeftSwipe) latestOnPlayNext() else latestOnPlayPrevious()
-                        }
-                        totalDragX = 0f
-                        tracker = null
-                    },
-                    onDragCancel = {
-                        totalDragX = 0f
-                        tracker = null
-                    },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragX += dragAmount
-                        tracker?.addPosition(change.uptimeMillis, change.position)
-                    }
-                )
-            }
-            .pointerInput(gesturesEnabled, verticalExpandPx) {
-                if (!gesturesEnabled) return@pointerInput
-                var tracker: VelocityTracker? = null
-                detectVerticalDragGestures(
-                    onDragStart = {
-                        totalDragY = 0f
-                        tracker = VelocityTracker()
-                    },
-                    onDragEnd = {
-                        val velocityY = tracker?.calculateVelocity()?.y ?: 0f
-                        if (totalDragY < -verticalExpandPx || velocityY < -velocityThresholdPx) {
-                            performHaptic(HapticFeedbackType.TextHandleMove)
-                            latestOnClick()
-                        }
-                        totalDragY = 0f
-                        tracker = null
-                    },
-                    onDragCancel = {
-                        totalDragY = 0f
-                        tracker = null
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragY += dragAmount
-                        tracker?.addPosition(change.uptimeMillis, change.position)
-                    }
-                )
-            }
             .clickable { onClick() }
             .testTag("mini_player"),
         color = surfaceColor,
         tonalElevation = 4.dp
     ) {
+        CompositionLocalProvider(LocalMiniSeekController provides miniSeekController) {
         when (miniPlayerStyle) {
             MiniPlayerStyle.COMPACT_BAR -> {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -265,6 +230,24 @@ fun FloatingMiniPlayer(
                         }
                         Spacer(modifier = Modifier.width(6.dp))
                         MiniPlayerSourceBadge(sourceLabel = sourceLabel, isOnline = song.isOnline, colors = colors)
+                        if (onOpenLyrics != null) {
+                            IconButton(
+                                onClick = {
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
+                                    onOpenLyrics()
+                                },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("mini_lyrics_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Lyrics,
+                                    contentDescription = "Open Lyrics",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
                         IconButton(
                             onClick = {
                                 performHaptic(HapticFeedbackType.TextHandleMove)
@@ -311,29 +294,12 @@ fun FloatingMiniPlayer(
                             )
                         }
                     }
-                    if (playbackInfo.isBuffering) {
-                        LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(2.dp),
-                            color = colors.accentStrong,
-                            trackColor = colors.cardBorder.copy(alpha = 0.4f)
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(2.dp)
-                                .background(colors.cardBorder.copy(alpha = 0.4f))
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(progress)
-                                    .height(2.dp)
-                                    .background(colors.accentStrong)
-                            )
-                        }
-                    }
+                    InteractiveMiniSeekbar(
+                        activeColor = colors.accentStrong,
+                        trackColor = colors.cardBorder.copy(alpha = 0.4f),
+                        trackHeight = 2.5.dp,
+                        touchHeight = 14.dp
+                    )
                 }
             }
 
@@ -377,8 +343,15 @@ fun FloatingMiniPlayer(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val focusSubtitle = if (playbackInfo.isBuffering && song.isOnline) {
+                                        playbackInfo.statusMessage.ifBlank {
+                                            playbackInfo.playbackStage.defaultMessage
+                                        }.ifBlank { "Buffering audio..." }
+                                    } else {
+                                        "${song.artist} • $badge"
+                                    }
                                     Text(
-                                        text = if (playbackInfo.isBuffering) "Buffering • ${song.artist}" else "${song.artist} • $badge",
+                                        text = focusSubtitle,
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 12.sp,
                                         color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
@@ -389,6 +362,24 @@ fun FloatingMiniPlayer(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     MiniPlayerSourceBadge(sourceLabel = sourceLabel, isOnline = song.isOnline, colors = colors)
                                 }
+                            }
+                        }
+                        if (onOpenLyrics != null) {
+                            IconButton(
+                                onClick = {
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
+                                    onOpenLyrics()
+                                },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("mini_lyrics_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Lyrics,
+                                    contentDescription = "Open Lyrics",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
                         IconButton(
@@ -444,23 +435,16 @@ fun FloatingMiniPlayer(
                             )
                         }
                     }
-                    Box(
+                    InteractiveMiniSeekbar(
+                        activeColor = colors.accentStrong,
+                        trackColor = colors.cardBorder.copy(alpha = 0.45f),
+                        trackHeight = 4.dp,
+                        touchHeight = 16.dp,
+                        rounded = true,
                         modifier = Modifier
-                            .fillMaxWidth()
                             .padding(horizontal = 12.dp)
-                            .padding(bottom = 8.dp)
-                            .height(4.dp)
-                            .clip(CircleShape)
-                            .background(colors.cardBorder.copy(alpha = 0.45f))
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(progress)
-                                .height(4.dp)
-                                .clip(CircleShape)
-                                .background(colors.accentStrong)
-                        )
-                    }
+                            .padding(bottom = 4.dp)
+                    )
                 }
             }
 
@@ -508,36 +492,31 @@ fun FloatingMiniPlayer(
                                 }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
-                            // Micro waveform progress strip
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                val bars = 24
-                                val heights = remember {
-                                    listOf(0.35f, 0.7f, 0.55f, 0.9f, 0.45f, 0.8f, 0.6f, 1.0f, 0.5f, 0.75f, 0.4f, 0.85f)
-                                }
-                                for (i in 0 until bars) {
-                                    val barPos = i.toFloat() / bars.toFloat()
-                                    val played = barPos <= progress
-                                    val hFraction = heights[i % heights.size]
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .padding(horizontal = 1.dp)
-                                            .height((9.dp * hFraction).coerceAtLeast(3.dp))
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (played) colors.accentStrong
-                                                else colors.cardBorder.copy(alpha = 0.7f)
-                                            )
-                                    )
-                                }
-                            }
+                            // Interactive micro waveform drag-to-seek strip
+                            InteractiveMiniWaveformSeekbar(
+                                activeColor = colors.accentStrong,
+                                trackColor = colors.cardBorder.copy(alpha = 0.7f)
+                            )
                         }
                         Spacer(modifier = Modifier.width(6.dp))
+                        if (onOpenLyrics != null) {
+                            IconButton(
+                                onClick = {
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
+                                    onOpenLyrics()
+                                },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("mini_lyrics_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Lyrics,
+                                    contentDescription = "Open Lyrics",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
                         IconButton(
                             onClick = {
                                 performHaptic(HapticFeedbackType.TextHandleMove)
@@ -636,8 +615,15 @@ fun FloatingMiniPlayer(
                                 )
                                 Spacer(modifier = Modifier.height(1.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val pillSubtitle = if (playbackInfo.isBuffering && song.isOnline) {
+                                        playbackInfo.statusMessage.ifBlank {
+                                            playbackInfo.playbackStage.defaultMessage
+                                        }.ifBlank { "Buffering audio..." }
+                                    } else {
+                                        song.artist
+                                    }
                                     Text(
-                                        text = if (playbackInfo.isBuffering) "Buffering stream..." else song.artist,
+                                        text = pillSubtitle,
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 12.sp,
                                         color = if (playbackInfo.isBuffering) colors.accentStrong else colors.textSecondary,
@@ -665,7 +651,26 @@ fun FloatingMiniPlayer(
                             }
                         }
 
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        if (onOpenLyrics != null) {
+                            IconButton(
+                                onClick = {
+                                    performHaptic(HapticFeedbackType.TextHandleMove)
+                                    onOpenLyrics()
+                                },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("mini_lyrics_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Lyrics,
+                                    contentDescription = "Open Lyrics",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
 
                         IconButton(
                             onClick = {
@@ -723,33 +728,36 @@ fun FloatingMiniPlayer(
                         }
                     }
 
-                    // Minimal progress bar along bottom edge
-                    if (playbackInfo.isBuffering) {
-                        LinearProgressIndicator(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(2.5.dp),
-                            color = colors.accentStrong,
-                            trackColor = colors.cardBorder.copy(alpha = 0.5f)
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(2.5.dp)
-                                .background(colors.cardBorder.copy(alpha = 0.5f))
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(progress)
-                                    .height(2.5.dp)
-                                    .background(colors.accentStrong)
-                            )
-                        }
-                    }
+                    // Interactive progress bar along bottom edge
+                    InteractiveMiniSeekbar(
+                        activeColor = colors.accentStrong,
+                        trackColor = colors.cardBorder.copy(alpha = 0.5f),
+                        trackHeight = 2.5.dp,
+                        touchHeight = 14.dp
+                    )
                 }
             }
+
+            else -> {
+                RenderExtendedMiniPlayerStyle(
+                    style = miniPlayerStyle,
+                    song = song,
+                    playbackInfo = playbackInfo,
+                    progress = progress,
+                    colors = colors,
+                    palette = dynamicPalette,
+                    frequencies = frequencies,
+                    queue = queue,
+                    queueIndex = queueIndex,
+                    onTogglePlayPause = onTogglePlayPause,
+                    onPlayNext = onPlayNext,
+                    onPlayPrevious = onPlayPrevious,
+                    onOpenLyrics = onOpenLyrics
+                )
+            }
         }
+        }
+    }
     }
 }
 

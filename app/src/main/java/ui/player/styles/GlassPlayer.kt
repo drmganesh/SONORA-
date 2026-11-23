@@ -1,5 +1,6 @@
 package ui.player.styles
 
+import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -18,9 +19,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.ui.components.ArtworkAlbumView
 import ui.components.AdaptiveSeekbar
 import ui.components.ArtworkContainer
 import ui.components.PlaybackControls
@@ -50,32 +54,54 @@ fun GlassPlayer(
     val duration = state.playbackInfo.durationMs.coerceAtLeast(song?.durationMs ?: 0L)
     val accent = PlayerStyleManager.resolveAccentColor(state.appearance, colors, palette)
 
+    val blurStrength = state.appearance.blurIntensity.coerceIn(0f, 1f)
+    val gradientStrength = state.appearance.gradientIntensity.coerceIn(0f, 1f)
     val glassSurface = if (colors.isDark) {
-        Color.White.copy(alpha = 0.09f)
+        Color.White.copy(alpha = 0.10f + blurStrength * 0.05f)
     } else {
-        Color.White.copy(alpha = 0.62f)
+        Color.White.copy(alpha = 0.58f + blurStrength * 0.14f)
     }
     val glassBorder = if (colors.isDark) {
-        Color.White.copy(alpha = 0.22f)
+        Color.White.copy(alpha = 0.24f)
     } else {
-        Color.White.copy(alpha = 0.85f)
+        Color.White.copy(alpha = 0.88f)
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        palette.primary.copy(alpha = if (colors.isDark) 0.30f else 0.22f),
-                        colors.background,
-                        palette.secondary.copy(alpha = if (colors.isDark) 0.24f else 0.18f)
-                    )
-                )
-            )
+            .background(colors.background)
             .navigationBarsPadding(),
         contentAlignment = Alignment.TopCenter
     ) {
+        ArtworkAlbumView(
+            song = song,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurStrength > 0.05f) {
+                        Modifier.blur((10f + blurStrength * 26f).dp)
+                    } else {
+                        Modifier
+                    }
+                )
+                .alpha(if (colors.isDark) 0.30f else 0.22f),
+            cornerRadius = 0.dp,
+            isPlaying = false
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            palette.primary.copy(alpha = (if (colors.isDark) 0.42f else 0.28f) * (0.4f + gradientStrength * 0.6f)),
+                            colors.background.copy(alpha = if (colors.isDark) 0.68f else 0.54f),
+                            palette.secondary.copy(alpha = (if (colors.isDark) 0.36f else 0.24f) * (0.4f + gradientStrength * 0.6f))
+                        )
+                    )
+                )
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()

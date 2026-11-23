@@ -27,8 +27,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,7 +69,7 @@ import ui.theme.EditorialColors
 /**
  * Compact Editorial Top Greeting Header:
  * Left: Dedicated circular User Profile Avatar (48-52dp) + responsive greeting + active mode subtitle
- * Right: Scalloped Music Mode Switcher button (Offline / Online with active indicator) + Settings button
+ * Right: Scalloped Music Mode Switcher button (Offline Music / Online Music / Online Video) + Settings button
  */
 @Composable
 fun GreetingHeader(
@@ -75,6 +81,10 @@ fun GreetingHeader(
     onSettingsClick: () -> Unit,
     activeMode: HomeMusicMode = HomeMusicMode.OFFLINE,
     reduceAnimations: Boolean = false,
+    unreadVideoNotificationsCount: Int = 0,
+    onVideoNotificationsClick: (() -> Unit)? = null,
+    showRestoreNowPlayingIcon: Boolean = false,
+    onRestoreNowPlayingClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
@@ -82,18 +92,50 @@ fun GreetingHeader(
     var iconBurstScale by remember { mutableFloatStateOf(1f) }
     var iconTiltDegrees by remember { mutableFloatStateOf(0f) }
 
+    var previousUnreadCount by remember { mutableIntStateOf(unreadVideoNotificationsCount) }
+    var bellPulseScale by remember { mutableFloatStateOf(1f) }
+    var bellRingAngle by remember { mutableFloatStateOf(0f) }
+
     LaunchedEffect(activeMode, reduceAnimations) {
         if (activeMode != previousMode) {
+            val movingForward = activeMode.ordinal > previousMode.ordinal
             previousMode = activeMode
             if (!reduceAnimations) {
                 iconBurstScale = 1.16f
-                iconTiltDegrees = if (activeMode == HomeMusicMode.ONLINE) 14f else -14f
+                iconTiltDegrees = if (movingForward) 14f else -14f
                 delay(180)
                 iconBurstScale = 1f
                 iconTiltDegrees = 0f
             }
         }
     }
+
+    LaunchedEffect(unreadVideoNotificationsCount, activeMode, reduceAnimations) {
+        val arrived = unreadVideoNotificationsCount > previousUnreadCount
+        previousUnreadCount = unreadVideoNotificationsCount
+        if (arrived && activeMode == HomeMusicMode.ONLINE_VIDEO && !reduceAnimations) {
+            bellPulseScale = 1.15f
+            bellRingAngle = 14f
+            delay(110)
+            bellRingAngle = -12f
+            delay(110)
+            bellRingAngle = 8f
+            delay(95)
+            bellRingAngle = 0f
+            bellPulseScale = 1f
+        }
+    }
+
+    val animatedBellScale by animateFloatAsState(
+        targetValue = bellPulseScale,
+        animationSpec = if (reduceAnimations) snap() else spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMediumLow),
+        label = "video_bell_scale"
+    )
+    val animatedBellAngle by animateFloatAsState(
+        targetValue = bellRingAngle,
+        animationSpec = if (reduceAnimations) snap() else spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+        label = "video_bell_ring"
+    )
 
     val animatedScale by animateFloatAsState(
         targetValue = iconBurstScale,
@@ -105,13 +147,18 @@ fun GreetingHeader(
         animationSpec = if (reduceAnimations) snap() else spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMedium),
         label = "mode_icon_tilt"
     )
+    val isOnlineActive = activeMode != HomeMusicMode.OFFLINE
     val modeButtonContainer by animateColorAsState(
-        targetValue = if (activeMode == HomeMusicMode.ONLINE) colors.accentStrong else colors.accentPill,
+        targetValue = when (activeMode) {
+            HomeMusicMode.OFFLINE -> colors.accentPill
+            HomeMusicMode.ONLINE -> colors.accentStrong
+            HomeMusicMode.ONLINE_VIDEO -> colors.accentStrong
+        },
         animationSpec = if (reduceAnimations) snap() else tween(360),
         label = "mode_button_bg"
     )
     val modeButtonIconTint by animateColorAsState(
-        targetValue = if (activeMode == HomeMusicMode.ONLINE) colors.onAccentStrong else colors.onAccentPill,
+        targetValue = if (isOnlineActive) colors.onAccentStrong else colors.onAccentPill,
         animationSpec = if (reduceAnimations) snap() else tween(360),
         label = "mode_button_tint"
     )
@@ -172,16 +219,22 @@ fun GreetingHeader(
                         },
                         label = "header_mode_indicator_anim"
                     ) { mode ->
+                        val highlighted = mode != HomeMusicMode.OFFLINE
+                        val badgeIcon = when (mode) {
+                            HomeMusicMode.OFFLINE -> Icons.Rounded.Storage
+                            HomeMusicMode.ONLINE -> Icons.Rounded.Headphones
+                            HomeMusicMode.ONLINE_VIDEO -> Icons.Rounded.PlayCircle
+                        }
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = if (mode == HomeMusicMode.ONLINE) {
+                            color = if (highlighted) {
                                 colors.accentStrong.copy(alpha = 0.14f)
                             } else {
                                 colors.surfaceTinted
                             },
                             border = BorderStroke(
                                 0.5.dp,
-                                if (mode == HomeMusicMode.ONLINE) colors.accentStrong.copy(alpha = 0.45f) else colors.cardBorder
+                                if (highlighted) colors.accentStrong.copy(alpha = 0.45f) else colors.cardBorder
                             ),
                             modifier = Modifier
                                 .padding(top = 3.dp)
@@ -190,22 +243,20 @@ fun GreetingHeader(
                             Row(
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (mode == HomeMusicMode.ONLINE) colors.accentStrong else colors.textSecondary
-                                        )
+                                Icon(
+                                    imageVector = badgeIcon,
+                                    contentDescription = null,
+                                    tint = if (highlighted) colors.accentStrong else colors.textSecondary,
+                                    modifier = Modifier.size(11.dp)
                                 )
                                 Text(
                                     text = mode.title,
                                     fontFamily = PlusJakartaFontFamily,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 10.5.sp,
-                                    color = if (mode == HomeMusicMode.ONLINE) colors.accentStrong else colors.textSecondary,
+                                    color = if (highlighted) colors.accentStrong else colors.textSecondary,
                                     maxLines = 1
                                 )
                             }
@@ -216,9 +267,108 @@ fun GreetingHeader(
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                // Music Mode Switcher Scallop Starburst Button (48.dp touch target)
+                // Persistent header Now Playing restore entry — strictly ONLY in Music modes when mini player was swiped away
+                if (activeMode != HomeMusicMode.ONLINE_VIDEO &&
+                    showRestoreNowPlayingIcon &&
+                    onRestoreNowPlayingClick != null
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onRestoreNowPlayingClick()
+                            }
+                            .semantics { contentDescription = "Open Now Playing and restore mini player" }
+                            .testTag("header_restore_now_playing_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(colors.accentPill)
+                                .border(1.dp, colors.accentStrong.copy(alpha = 0.45f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MusicNote,
+                                contentDescription = null,
+                                tint = colors.onAccentPill,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Global Online Video Notification Bell — strictly visible ONLY in Online Video mode
+                if (activeMode == HomeMusicMode.ONLINE_VIDEO && onVideoNotificationsClick != null) {
+                    val hasUnread = unreadVideoNotificationsCount > 0
+                    val bellDescription = if (hasUnread) {
+                        "Online video notifications, $unreadVideoNotificationsCount unread"
+                    } else {
+                        "Online video notifications"
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onVideoNotificationsClick()
+                            }
+                            .semantics { contentDescription = bellDescription }
+                            .testTag("online_video_notifications_bell"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .graphicsLayer {
+                                    scaleX = animatedBellScale
+                                    scaleY = animatedBellScale
+                                    rotationZ = animatedBellAngle
+                                }
+                                .clip(CircleShape)
+                                .background(
+                                    if (hasUnread) colors.accentStrong.copy(alpha = 0.16f) else colors.accentPill
+                                )
+                                .border(
+                                    width = if (hasUnread) 1.dp else 0.dp,
+                                    color = if (hasUnread) colors.accentStrong.copy(alpha = 0.55f) else colors.cardBorder.copy(alpha = 0f),
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (hasUnread) Icons.Rounded.NotificationsActive else Icons.Rounded.Notifications,
+                                contentDescription = null,
+                                tint = if (hasUnread) colors.accentStrong else colors.onAccentPill,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+
+                        if (hasUnread) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(top = 6.dp, end = 6.dp)
+                                    .size(11.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.background)
+                                    .padding(1.5.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.accentStrong)
+                                    .testTag("online_video_notifications_badge")
+                            )
+                        }
+                    }
+                }
+
+                // Three-Mode Home Switcher Scallop Starburst Button (48.dp touch target)
                 Box(
                     modifier = Modifier
                         .size(48.dp)
@@ -228,7 +378,7 @@ fun GreetingHeader(
                             onDiscoveryClick()
                         }
                         .semantics {
-                            contentDescription = "Switch music mode, currently ${activeMode.title}"
+                            contentDescription = "Switch Home mode, currently ${activeMode.title}"
                         }
                         .testTag("discovery_icon_button"),
                     contentAlignment = Alignment.Center
@@ -245,9 +395,14 @@ fun GreetingHeader(
                             .background(modeButtonContainer),
                         contentAlignment = Alignment.Center
                     ) {
+                        val headerIcon = when (activeMode) {
+                            HomeMusicMode.OFFLINE -> Icons.Rounded.MusicNote
+                            HomeMusicMode.ONLINE -> Icons.Rounded.Headphones
+                            HomeMusicMode.ONLINE_VIDEO -> Icons.Rounded.PlayCircle
+                        }
                         Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = "Switch Offline or Online Music mode",
+                            imageVector = headerIcon,
+                            contentDescription = "Switch Offline Music, Online Music, or Online Video mode",
                             tint = modeButtonIconTint,
                             modifier = Modifier.size(19.dp)
                         )
@@ -264,7 +419,7 @@ fun GreetingHeader(
                             .padding(1.5.dp)
                             .clip(CircleShape)
                             .background(
-                                if (activeMode == HomeMusicMode.ONLINE) colors.accentStrong else colors.textSecondary
+                                if (isOnlineActive) colors.accentStrong else colors.textSecondary
                             )
                             .border(0.5.dp, colors.cardBorder, CircleShape)
                     )

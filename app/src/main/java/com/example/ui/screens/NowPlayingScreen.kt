@@ -13,6 +13,7 @@ fun NowPlayingScreen(
     onOpenEqualizer: (() -> Unit)? = null,
     onOpenAudioStudio: (() -> Unit)? = null,
     onOpenQueueScreen: (() -> Unit)? = null,
+    onOpenLyricsScreen: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     PlayerScreen(
@@ -21,6 +22,7 @@ fun NowPlayingScreen(
         onOpenEqualizer = onOpenEqualizer,
         onOpenAudioStudio = onOpenAudioStudio,
         onOpenQueueScreen = onOpenQueueScreen,
+        onOpenLyricsScreen = onOpenLyricsScreen,
         modifier = modifier.testTag("now_playing_screen")
     )
 }

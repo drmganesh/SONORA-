@@ -66,12 +66,19 @@ import domain.online.OnlineItemKind
 import domain.online.OnlineTrack
 import ui.components.CollectionDetailSheet
 import ui.components.EditorialPlaylistPickerDialog
+import ui.library.OnlinePlaylistPickerDialog
 import ui.components.MusicContextMenuSheet
 import ui.online.OnlineCollectionDetailsSheet
 import ui.online.OnlineQualitySelectorSheet
 import ui.online.OnlineTrackOptionsSheet
 import ui.online.buildArtistExploreTrack
 import ui.theme.EditorialColors
+import ui.video.SearchVideoControlsHeader
+import ui.video.VideoOptionsBottomSheet
+import ui.video.VideoPlaylistPickerDialog
+import ui.video.onlineVideoSearchLazyContent
+import ui.video.openOfficialExternalUrl
+import ui.video.shareVideoLink
 
 /**
  * Mode-aware Search Screen for SONORA.
@@ -114,6 +121,24 @@ fun SearchScreen(
     val savedOnlineTracks by viewModel.onlineSavedTracks.collectAsState()
     val allOnlineTracks by viewModel.allOnlineTracks.collectAsState()
     val onlineCollectionState by viewModel.onlineCollectionState.collectAsState()
+    val downloadedSourceKeys by viewModel.downloadedSourceKeys.collectAsState()
+    val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
+    val savedOnlineAlbumIds by viewModel.savedOnlineAlbumIds.collectAsState()
+    val followedOnlineArtistIds by viewModel.followedOnlineArtistIds.collectAsState()
+    val savedOnlinePlaylistUrls by viewModel.savedOnlinePlaylistUrls.collectAsState()
+
+    val videoController = viewModel.videoController
+    val videoSearchFilter by videoController.searchFilter.collectAsState()
+    val videoSearchSuggestions by videoController.searchSuggestions.collectAsState()
+    val videoSearchState by videoController.searchState.collectAsState()
+    val videoSearchHistory by videoController.videoSearchHistory.collectAsState()
+    val videoPlayerState by videoController.playerState.collectAsState()
+    val watchLaterVideos by videoController.watchLaterVideos.collectAsState()
+    val savedVideos by videoController.savedVideos.collectAsState()
+    val videoPlaylists by videoController.videoPlaylists.collectAsState()
+    val watchLaterIds = remember(watchLaterVideos) { watchLaterVideos.map { it.videoId }.toSet() }
+    val savedVideoIds = remember(savedVideos) { savedVideos.map { it.videoId }.toSet() }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val savedOnlineIds = remember(savedOnlineTracks) { savedOnlineTracks.map { it.id }.toSet() }
     val favoriteOnlineIds = remember(allOnlineTracks) {
@@ -122,15 +147,19 @@ fun SearchScreen(
 
     var searchScope by remember {
         mutableStateOf(
-            if (homeMusicMode == HomeMusicMode.ONLINE) SearchSourceScope.ONLINE else SearchSourceScope.LOCAL
+            when (homeMusicMode) {
+                HomeMusicMode.OFFLINE -> SearchSourceScope.LOCAL
+                HomeMusicMode.ONLINE -> SearchSourceScope.ONLINE
+                HomeMusicMode.ONLINE_VIDEO -> SearchSourceScope.VIDEO
+            }
         )
     }
 
     LaunchedEffect(homeMusicMode) {
-        searchScope = if (homeMusicMode == HomeMusicMode.ONLINE) {
-            SearchSourceScope.ONLINE
-        } else {
-            SearchSourceScope.LOCAL
+        searchScope = when (homeMusicMode) {
+            HomeMusicMode.OFFLINE -> SearchSourceScope.LOCAL
+            HomeMusicMode.ONLINE -> SearchSourceScope.ONLINE
+            HomeMusicMode.ONLINE_VIDEO -> SearchSourceScope.VIDEO
         }
     }
 
@@ -139,7 +168,10 @@ fun SearchScreen(
     var activeModal by remember { mutableStateOf<SearchCollectionModal?>(null) }
     var contextMenuSong by remember { mutableStateOf<Song?>(null) }
     var onlineOptionsTarget by remember { mutableStateOf<OnlineTrack?>(null) }
+    var videoOptionsTarget by remember { mutableStateOf<domain.video.OnlineVideoItem?>(null) }
+    var videoPlaylistPickerTarget by remember { mutableStateOf<domain.video.OnlineVideoItem?>(null) }
     var playlistPickerSong by remember { mutableStateOf<Song?>(null) }
+    var onlinePlaylistPickerSong by remember { mutableStateOf<Song?>(null) }
     var showQualitySheet by remember { mutableStateOf(false) }
 
     val haptic = LocalHapticFeedback.current
@@ -193,13 +225,20 @@ fun SearchScreen(
     val executeSearchForCurrentScope: (String, Boolean) -> Unit = { term, force ->
         query = term
         keyboardController?.hide()
-        if (searchScope == SearchSourceScope.LOCAL || searchScope == SearchSourceScope.COMBINED) {
-            if (term.isNotBlank()) viewModel.addRecentSearch(term)
-        }
-        if (searchScope == SearchSourceScope.ONLINE || searchScope == SearchSourceScope.COMBINED) {
-            viewModel.updateOnlineSearchQuery(term)
+        if (searchScope == SearchSourceScope.VIDEO) {
+            videoController.updateSearchQuery(term)
             if (term.isNotBlank()) {
-                viewModel.executeOnlineSearch(term, forceRefresh = force)
+                videoController.executeSearch(term)
+            }
+        } else {
+            if (searchScope == SearchSourceScope.LOCAL || searchScope == SearchSourceScope.COMBINED) {
+                if (term.isNotBlank()) viewModel.addRecentSearch(term)
+            }
+            if (searchScope == SearchSourceScope.ONLINE || searchScope == SearchSourceScope.COMBINED) {
+                viewModel.updateOnlineSearchQuery(term)
+                if (term.isNotBlank()) {
+                    viewModel.executeOnlineSearch(term, forceRefresh = force)
+                }
             }
         }
     }
@@ -242,6 +281,7 @@ fun SearchScreen(
                         text = when (searchScope) {
                             SearchSourceScope.LOCAL -> "Offline library only"
                             SearchSourceScope.ONLINE -> "Streaming via ${selectedOnlineProvider?.displayName ?: "YT Music"}"
+                            SearchSourceScope.VIDEO -> "Online Video search via NewPipe Extractor"
                             SearchSourceScope.COMBINED -> "Searching local & online music"
                         },
                         fontFamily = PlusJakartaFontFamily,
@@ -255,7 +295,7 @@ fun SearchScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (searchScope != SearchSourceScope.LOCAL) {
+                    if (searchScope == SearchSourceScope.ONLINE || searchScope == SearchSourceScope.COMBINED) {
                         Surface(
                             onClick = { showQualitySheet = true },
                             shape = RoundedCornerShape(18.dp),
@@ -317,7 +357,9 @@ fun SearchScreen(
                 selectedScope = searchScope,
                 onSelectScope = { newScope ->
                     searchScope = newScope
-                    if (newScope != SearchSourceScope.LOCAL && query.isNotBlank()) {
+                    if (newScope == SearchSourceScope.VIDEO) {
+                        videoController.updateSearchQuery(query)
+                    } else if (newScope != SearchSourceScope.LOCAL && query.isNotBlank()) {
                         viewModel.updateOnlineSearchQuery(query)
                     }
                 },
@@ -331,14 +373,17 @@ fun SearchScreen(
                 value = query,
                 onValueChange = { updated ->
                     query = updated
-                    if (searchScope != SearchSourceScope.LOCAL) {
-                        viewModel.updateOnlineSearchQuery(updated)
+                    when (searchScope) {
+                        SearchSourceScope.VIDEO -> videoController.updateSearchQuery(updated)
+                        SearchSourceScope.ONLINE, SearchSourceScope.COMBINED -> viewModel.updateOnlineSearchQuery(updated)
+                        SearchSourceScope.LOCAL -> Unit
                     }
                 },
                 placeholder = {
                     val hint = when (searchScope) {
                         SearchSourceScope.LOCAL -> "Local songs, artists, albums, or folders..."
                         SearchSourceScope.ONLINE -> "Search songs, artists, albums online..."
+                        SearchSourceScope.VIDEO -> "Search videos, channels, playlists..."
                         SearchSourceScope.COMBINED -> "Search offline & online music..."
                     }
                     Text(
@@ -360,8 +405,10 @@ fun SearchScreen(
                         IconButton(
                             onClick = {
                                 query = ""
-                                if (searchScope != SearchSourceScope.LOCAL) {
-                                    viewModel.updateOnlineSearchQuery("")
+                                when (searchScope) {
+                                    SearchSourceScope.VIDEO -> videoController.updateSearchQuery("")
+                                    SearchSourceScope.ONLINE, SearchSourceScope.COMBINED -> viewModel.updateOnlineSearchQuery("")
+                                    SearchSourceScope.LOCAL -> Unit
                                 }
                             },
                             modifier = Modifier.size(48.dp)
@@ -453,12 +500,51 @@ fun SearchScreen(
                 }
             }
 
+            AnimatedVisibility(visible = searchScope == SearchSourceScope.VIDEO) {
+                Column {
+                    SearchVideoControlsHeader(
+                        isNetworkOnline = isNetworkOnline,
+                        selectedFilter = videoSearchFilter,
+                        query = query,
+                        suggestions = videoSearchSuggestions,
+                        colors = colors,
+                        onSelectFilter = { videoController.selectSearchFilter(it) },
+                        onExecuteSuggestion = { sug -> executeSearchForCurrentScope(sug, false) }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("search_results_list"),
                 contentPadding = PaddingValues(bottom = 184.dp, top = 4.dp)
             ) {
+                if (searchScope == SearchSourceScope.VIDEO) {
+                    onlineVideoSearchLazyContent(
+                        searchState = videoSearchState,
+                        searchHistory = videoSearchHistory,
+                        query = query,
+                        activeVideoId = videoPlayerState.activeVideo?.videoId,
+                        colors = colors,
+                        onExecuteSearch = { term -> executeSearchForCurrentScope(term, false) },
+                        onRemoveHistory = { videoController.removeSearchHistory(it) },
+                        onClearHistory = { videoController.clearSearchHistory() },
+                        onPlayVideo = { video, pool -> videoController.playVideo(video, pool, expandPlayer = true) },
+                        onOpenChannel = { ch ->
+                            videoController.openChannelProfile(
+                                channelUrl = ch.channelUrl,
+                                channelName = ch.name,
+                                initialAvatarUrl = ch.avatarUrl
+                            )
+                        },
+                        onOpenPlaylist = { pl -> videoController.openChannelPlaylistDetail(pl) },
+                        onVideoMoreClick = { videoOptionsTarget = it },
+                        onLoadMore = { videoController.loadMoreSearchResults() }
+                    )
+                }
+
                 if (searchScope == SearchSourceScope.ONLINE || searchScope == SearchSourceScope.COMBINED) {
                     onlineSearchLazyContent(
                         searchState = onlineSearchState,
@@ -469,6 +555,8 @@ fun SearchScreen(
                         currentSong = currentSong,
                         playbackInfo = playbackInfo,
                         savedIds = savedOnlineIds,
+                        downloadedKeys = downloadedSourceKeys,
+                        canonicalKeyForTrack = { viewModel.canonicalSourceKeyForTrack(it) },
                         colors = colors,
                         showCombinedHeader = searchScope == SearchSourceScope.COMBINED,
                         onExecuteSearch = { term, force -> executeSearchForCurrentScope(term, force) },
@@ -477,6 +565,7 @@ fun SearchScreen(
                         onPlayTrack = { track, pool -> viewModel.playOnlineTrack(track, pool) },
                         onOpenCollection = { viewModel.openOnlineCollection(it) },
                         onMoreClick = { onlineOptionsTarget = it },
+                        onDownloadClick = { viewModel.requestDownloadTrack(it) },
                         onLoadMore = { viewModel.loadMoreOnlineSearchResults() },
                         onRetryPlayback = { viewModel.retryCurrentPlayback() },
                         onSwitchSoundCloudFallback = { viewModel.switchToSoundCloudFallback() },
@@ -525,6 +614,10 @@ fun SearchScreen(
         MusicContextMenuSheet(
             song = target,
             colors = colors,
+            isDownloaded = viewModel.isSongDownloaded(target),
+            onDownload = if (target.isOnline) {
+                { viewModel.requestDownloadSong(target) }
+            } else null,
             onDismiss = { contextMenuSong = null },
             onPlayNow = { viewModel.playSong(target, allSongs) },
             onPlayNext = { viewModel.playNextInQueue(target) },
@@ -549,10 +642,21 @@ fun SearchScreen(
     }
 
     onlineOptionsTarget?.let { target ->
+        val artistUrl = if (target.kind == OnlineItemKind.ARTIST) target.contentUrl else target.artistUrl.orEmpty()
+        val isArtistFollowed = artistUrl.isNotBlank() &&
+            OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, artistUrl.trim()) in followedOnlineArtistIds
+        val isCollectionSaved = when (target.kind) {
+            OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, target.contentUrl.trim()) in savedOnlineAlbumIds
+            OnlineItemKind.PLAYLIST -> target.contentUrl.trim() in savedOnlinePlaylistUrls
+            else -> false
+        }
         OnlineTrackOptionsSheet(
             track = target,
             isSaved = target.stableId in savedOnlineIds,
             isFavorite = target.stableId in favoriteOnlineIds,
+            isDownloaded = viewModel.isTrackDownloaded(target),
+            isArtistFollowed = isArtistFollowed,
+            isCollectionSaved = isCollectionSaved,
             resolvedStream = currentResolvedStream,
             colors = colors,
             onPlayNow = {
@@ -568,6 +672,18 @@ fun SearchScreen(
             onToggleSave = { viewModel.toggleSaveOnlineTrack(target) },
             onToggleFavorite = { viewModel.toggleFavorite(OnlineTrackMapper.toUnifiedSong(target)) },
             onAddToPlaylist = { playlistPickerSong = OnlineTrackMapper.toUnifiedSong(target) },
+            onAddToOnlinePlaylist = if (target.kind == OnlineItemKind.TRACK) {
+                { onlinePlaylistPickerSong = OnlineTrackMapper.toUnifiedSong(target) }
+            } else null,
+            onToggleFollowArtist = if (artistUrl.isNotBlank()) {
+                { viewModel.toggleFollowOnlineArtist(target) }
+            } else null,
+            onToggleSaveCollection = when (target.kind) {
+                OnlineItemKind.ALBUM -> ({ viewModel.toggleSaveOnlineAlbum(target) })
+                OnlineItemKind.PLAYLIST -> ({ viewModel.toggleSaveExternalOnlinePlaylist(target) })
+                else -> null
+            },
+            onDownload = { viewModel.requestDownloadTrack(target) },
             onOpenQualitySettings = { showQualitySheet = true },
             onViewArtistChannel = buildArtistExploreTrack(target)?.let { channelItem ->
                 { viewModel.openOnlineCollection(channelItem) }
@@ -594,6 +710,21 @@ fun SearchScreen(
         )
     }
 
+    onlinePlaylistPickerSong?.let { songTarget ->
+        OnlinePlaylistPickerDialog(
+            song = songTarget,
+            playlists = onlinePlaylists,
+            colors = colors,
+            onDismiss = { onlinePlaylistPickerSong = null },
+            onSelectPlaylist = { playlist ->
+                viewModel.addTrackToOnlinePlaylist(playlist.id, songTarget, playlist.name)
+            },
+            onCreatePlaylistWithSong = { name ->
+                viewModel.createOnlinePlaylist(name, initialTrack = songTarget)
+            }
+        )
+    }
+
     OnlineCollectionDetailsSheet(
         state = onlineCollectionState,
         currentSongId = currentSong?.id,
@@ -601,6 +732,24 @@ fun SearchScreen(
         isBuffering = playbackInfo.isBuffering,
         savedIds = savedOnlineIds,
         colors = colors,
+        isTrackDownloaded = { viewModel.isTrackDownloaded(it) },
+        onDownloadTrack = { viewModel.requestDownloadTrack(it) },
+        isCollectionSavedOrFollowed = { source ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in followedOnlineArtistIds
+                OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in savedOnlineAlbumIds
+                OnlineItemKind.PLAYLIST -> source.contentUrl.trim() in savedOnlinePlaylistUrls
+                else -> false
+            }
+        },
+        onToggleSaveOrFollowCollection = { source, details ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> viewModel.toggleFollowOnlineArtist(source, details)
+                OnlineItemKind.ALBUM -> viewModel.toggleSaveOnlineAlbum(source, details)
+                OnlineItemKind.PLAYLIST -> viewModel.toggleSaveExternalOnlinePlaylist(source, details)
+                else -> Unit
+            }
+        },
         onPlayTrack = { track, tracks -> viewModel.playOnlineTrack(track, tracks) },
         onPlayAll = { tracks, shuffle ->
             val songs = tracks.map { OnlineTrackMapper.toUnifiedSong(it) }
@@ -637,6 +786,37 @@ fun SearchScreen(
             onShufflePlay = { viewModel.playCollection(modal.songs, shuffle = true) },
             onPlaySong = { track -> viewModel.playSong(track, modal.songs) },
             onSongMoreClick = { track -> contextMenuSong = track }
+        )
+    }
+
+    videoOptionsTarget?.let { target ->
+        VideoOptionsBottomSheet(
+            video = target,
+            isWatchLater = target.videoId in watchLaterIds,
+            isSaved = target.videoId in savedVideoIds,
+            colors = colors,
+            onPlayNow = { videoController.playVideo(target, expandPlayer = true) },
+            onPlayNext = { videoController.enqueueVideoNext(target) },
+            onToggleWatchLater = { videoController.toggleWatchLater(target) },
+            onToggleSave = { videoController.toggleSaveVideo(target) },
+            onAddToPlaylist = { videoPlaylistPickerTarget = target },
+            onOpenChannel = target.channelUrl?.let { url ->
+                { videoController.openChannelProfile(url, target.channelName) }
+            },
+            onShare = { shareVideoLink(context, target) },
+            onOpenOfficialApp = { openOfficialExternalUrl(context, target.contentUrl) },
+            onDismiss = { videoOptionsTarget = null }
+        )
+    }
+
+    videoPlaylistPickerTarget?.let { target ->
+        VideoPlaylistPickerDialog(
+            video = target,
+            playlists = videoPlaylists,
+            colors = colors,
+            onSelectPlaylist = { pl -> videoController.addVideoToPlaylist(pl.id, pl.name, target) },
+            onCreatePlaylistWithVideo = { name -> videoController.createVideoPlaylist(name, target) },
+            onDismiss = { videoPlaylistPickerTarget = null }
         )
     }
 }

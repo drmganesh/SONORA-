@@ -16,6 +16,7 @@ import domain.online.OnlineRecommendationProfile
 import domain.online.OnlineResult
 import domain.online.OnlineSearchFilter
 import domain.online.OnlineTrack
+import domain.online.RegionMusicEligibilityFilter
 import domain.online.ResolvedOnlineStreamResult
 import domain.online.StreamDeliveryType
 import kotlinx.coroutines.CancellationException
@@ -58,6 +59,7 @@ class OnlineStreamResolver(
 ) {
 
     private data class CachedStreamExtraction(
+        val videoOrTrackId: String,
         val serviceId: Int,
         val providerKey: String,
         val providerName: String,
@@ -71,8 +73,13 @@ class OnlineStreamResolver(
         val isLive: Boolean,
         val viewCount: Long,
         val relatedTracks: List<OnlineTrack>,
-        val extractedAtMs: Long
-    )
+        val extractedAtMs: Long,
+        val expiresAtMs: Long
+    ) {
+        fun isExpired(nowMs: Long = System.currentTimeMillis(), safetyMarginMs: Long = 30_000L): Boolean {
+            return nowMs >= (expiresAtMs - safetyMarginMs)
+        }
+    }
 
     private data class CachedDiscoverSection(
         val fetchedAtMs: Long,
@@ -94,7 +101,7 @@ class OnlineStreamResolver(
         val nextPageToken: String?
     )
 
-    private val streamExtractionCache = LruCache<String, CachedStreamExtraction>(40)
+    private val streamExtractionCache = LruCache<String, CachedStreamExtraction>(48)
     private val inFlightStreamResolutions =
         ConcurrentHashMap<String, CompletableDeferred<OnlineResult<ResolvedOnlineStreamResult>>>()
     private val discoveryCache = LruCache<String, Pair<Long, List<OnlineTrack>>>(12)
@@ -105,6 +112,28 @@ class OnlineStreamResolver(
         private const val TAG = "OnlineStreamResolver"
         private val STREAM_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(20)
         private val DISCOVERY_CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(15)
+        private val SIGNED_URL_EXPIRE_PARAM_REGEX = Regex("[?&](?:expire|expires)=(\\d{9,12})(?:&|$)")
+
+        internal fun computeStreamExpiresAtMs(
+            options: List<OnlineAudioStreamOption>,
+            extractedAtMs: Long,
+            fallbackTtlMs: Long = STREAM_CACHE_TTL_MS
+        ): Long {
+            val defaultExpiry = extractedAtMs + fallbackTtlMs
+            val earliestSignedExpiry = options
+                .asSequence()
+                .mapNotNull { opt ->
+                    val raw = SIGNED_URL_EXPIRE_PARAM_REGEX.find(opt.url)?.groupValues?.getOrNull(1)?.toLongOrNull()
+                    raw?.let { it * 1000L }
+                }
+                .filter { it > extractedAtMs }
+                .minOrNull()
+            return if (earliestSignedExpiry != null) {
+                minOf(defaultExpiry, (earliestSignedExpiry - 45_000L).coerceAtLeast(extractedAtMs + 60_000L))
+            } else {
+                defaultExpiry
+            }
+        }
 
         private val EXCLUDED_YOUTUBE_NON_MUSIC_KIOSKS = setOf(
             "trending_gaming",
@@ -385,7 +414,48 @@ class OnlineStreamResolver(
     }
 
     fun invalidateStreamCache(contentUrl: String) {
-        streamExtractionCache.remove(contentUrl)
+        if (contentUrl.isNotBlank()) {
+            streamExtractionCache.remove(contentUrl)
+        }
+    }
+
+    fun hasValidCachedStream(contentUrl: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        if (contentUrl.isBlank()) return false
+        val cached = streamExtractionCache.get(contentUrl) ?: return false
+        if (cached.isExpired(nowMs)) {
+            streamExtractionCache.remove(contentUrl)
+            return false
+        }
+        return cached.options.isNotEmpty()
+    }
+
+    fun getCachedStreamCount(): Int = streamExtractionCache.size()
+
+    internal fun putPreResolvedForTesting(
+        resolved: ResolvedOnlineStreamResult,
+        videoOrTrackId: String = resolved.contentUrl
+    ) {
+        streamExtractionCache.put(
+            resolved.contentUrl,
+            CachedStreamExtraction(
+                videoOrTrackId = videoOrTrackId,
+                serviceId = resolved.serviceId,
+                providerKey = resolved.providerKey,
+                providerName = resolved.providerName,
+                contentUrl = resolved.contentUrl,
+                title = resolved.title,
+                artist = resolved.artist,
+                artistUrl = resolved.artistUrl,
+                durationMs = resolved.durationMs,
+                artworkUrl = resolved.artworkUrl,
+                options = resolved.availableStreams.ifEmpty { listOf(resolved.selectedStream) },
+                isLive = resolved.isLive,
+                viewCount = resolved.viewCount,
+                relatedTracks = resolved.relatedTracks,
+                extractedAtMs = resolved.extractedAtMs,
+                expiresAtMs = resolved.expiresAtMs
+            )
+        )
     }
 
     fun clearDiscoverCache() {
@@ -398,16 +468,23 @@ class OnlineStreamResolver(
         options: List<OnlineAudioStreamOption>,
         preference: AudioQualityPreference,
         isMeteredConnection: Boolean,
-        manualStreamId: String? = null
+        manualStreamId: String? = null,
+        excludedStreamIds: Set<String> = emptySet()
     ): OnlineAudioStreamOption? {
         if (options.isEmpty()) return null
 
-        if (!manualStreamId.isNullOrBlank()) {
-            options.firstOrNull { it.id == manualStreamId }?.let { return it }
+        val nonExcluded = if (excludedStreamIds.isNotEmpty()) {
+            options.filterNot { it.id in excludedStreamIds }.ifEmpty { options }
+        } else {
+            options
         }
 
-        val audioOnly = options.filter { it.isAudioOnly }
-        val pool = if (audioOnly.isNotEmpty()) audioOnly else options
+        if (!manualStreamId.isNullOrBlank()) {
+            nonExcluded.firstOrNull { it.id == manualStreamId }?.let { return it }
+        }
+
+        val audioOnly = nonExcluded.filter { it.isAudioOnly }
+        val pool = if (audioOnly.isNotEmpty()) audioOnly else nonExcluded
 
         val progressivePreferred = pool.filter {
             it.deliveryType == StreamDeliveryType.PROGRESSIVE_HTTP ||
@@ -461,6 +538,7 @@ class OnlineStreamResolver(
         qualityPreference: AudioQualityPreference,
         manualStreamId: String? = null,
         forceRefresh: Boolean = false,
+        excludedStreamIds: Set<String> = emptySet(),
         trackTitleHint: String = "",
         trackArtistHint: String = "",
         expectedDurationMs: Long = 0L
@@ -475,33 +553,40 @@ class OnlineStreamResolver(
 
         val now = System.currentTimeMillis()
         val cached = if (!forceRefresh) streamExtractionCache.get(contentUrl) else null
-        if (cached != null && (now - cached.extractedAtMs) < STREAM_CACHE_TTL_MS) {
-            val picked = selectBestAudioStream(
-                options = cached.options,
-                preference = qualityPreference,
-                isMeteredConnection = connectivityMonitor.isCurrentlyMetered(),
-                manualStreamId = manualStreamId
-            )
-            if (picked != null) {
-                return@withContext OnlineResult.Success(
-                    ResolvedOnlineStreamResult(
-                        serviceId = cached.serviceId,
-                        providerKey = cached.providerKey,
-                        providerName = cached.providerName,
-                        contentUrl = cached.contentUrl,
-                        title = cached.title,
-                        artist = cached.artist,
-                        artistUrl = cached.artistUrl,
-                        durationMs = cached.durationMs,
-                        artworkUrl = cached.artworkUrl,
-                        selectedStream = picked,
-                        availableStreams = cached.options,
-                        isLive = cached.isLive,
-                        viewCount = cached.viewCount,
-                        relatedTracks = cached.relatedTracks,
-                        extractedAtMs = cached.extractedAtMs
-                    )
+        if (cached != null) {
+            if (cached.isExpired(now)) {
+                streamExtractionCache.remove(contentUrl)
+            } else {
+                val picked = selectBestAudioStream(
+                    options = cached.options,
+                    preference = qualityPreference,
+                    isMeteredConnection = connectivityMonitor.isCurrentlyMetered(),
+                    manualStreamId = manualStreamId,
+                    excludedStreamIds = excludedStreamIds
                 )
+                if (picked != null && picked.id !in excludedStreamIds) {
+                    return@withContext OnlineResult.Success(
+                        ResolvedOnlineStreamResult(
+                            serviceId = cached.serviceId,
+                            providerKey = cached.providerKey,
+                            providerName = cached.providerName,
+                            contentUrl = cached.contentUrl,
+                            title = cached.title,
+                            artist = cached.artist,
+                            artistUrl = cached.artistUrl,
+                            durationMs = cached.durationMs,
+                            artworkUrl = cached.artworkUrl,
+                            selectedStream = picked,
+                            availableStreams = cached.options,
+                            isLive = cached.isLive,
+                            viewCount = cached.viewCount,
+                            relatedTracks = cached.relatedTracks,
+                            extractedAtMs = cached.extractedAtMs,
+                            expiresAtMs = cached.expiresAtMs,
+                            fromCache = true
+                        )
+                    )
+                }
             }
         }
 
@@ -513,7 +598,7 @@ class OnlineStreamResolver(
             )
         }
 
-        val useSingleFlight = !forceRefresh && manualStreamId.isNullOrBlank()
+        val useSingleFlight = !forceRefresh && manualStreamId.isNullOrBlank() && excludedStreamIds.isEmpty()
         var ownerDeferred: CompletableDeferred<OnlineResult<ResolvedOnlineStreamResult>>? = null
 
         if (useSingleFlight) {
@@ -550,6 +635,7 @@ class OnlineStreamResolver(
                 contentUrl = contentUrl,
                 qualityPreference = qualityPreference,
                 manualStreamId = manualStreamId,
+                excludedStreamIds = excludedStreamIds,
                 trackTitleHint = trackTitleHint,
                 trackArtistHint = trackArtistHint,
                 expectedDurationMs = expectedDurationMs
@@ -575,6 +661,31 @@ class OnlineStreamResolver(
         }
     }
 
+    suspend fun preloadStream(
+        serviceId: Int,
+        providerKey: String,
+        providerName: String,
+        contentUrl: String,
+        qualityPreference: AudioQualityPreference,
+        trackTitleHint: String = "",
+        trackArtistHint: String = "",
+        expectedDurationMs: Long = 0L
+    ): OnlineResult<ResolvedOnlineStreamResult> {
+        return resolveStream(
+            serviceId = serviceId,
+            providerKey = providerKey,
+            providerName = providerName,
+            contentUrl = contentUrl,
+            qualityPreference = qualityPreference,
+            manualStreamId = null,
+            forceRefresh = false,
+            excludedStreamIds = emptySet(),
+            trackTitleHint = trackTitleHint,
+            trackArtistHint = trackArtistHint,
+            expectedDurationMs = expectedDurationMs
+        )
+    }
+
     private suspend fun executeResolveStream(
         serviceId: Int,
         providerKey: String,
@@ -582,6 +693,7 @@ class OnlineStreamResolver(
         contentUrl: String,
         qualityPreference: AudioQualityPreference,
         manualStreamId: String?,
+        excludedStreamIds: Set<String> = emptySet(),
         trackTitleHint: String,
         trackArtistHint: String,
         expectedDurationMs: Long
@@ -624,19 +736,28 @@ class OnlineStreamResolver(
                     options = effectiveOptions,
                     preference = qualityPreference,
                     isMeteredConnection = connectivityMonitor.isCurrentlyMetered(),
-                    manualStreamId = manualStreamId
-                ) ?: effectiveOptions.first()
+                    manualStreamId = manualStreamId,
+                    excludedStreamIds = excludedStreamIds
+                ) ?: effectiveOptions.firstOrNull { it.id !in excludedStreamIds } ?: effectiveOptions.first()
 
                 val artworkUrl = OnlineTrackMapper.selectBestArtworkUrl(streamInfo.thumbnails)
                 val durationMs = if (streamInfo.duration > 0L) streamInfo.duration * 1000L else 0L
-                val related = OnlineTrackMapper.streamInfoRelatedTracks(
+                val rawRelated = OnlineTrackMapper.streamInfoRelatedTracks(
                     streamInfo = streamInfo,
                     serviceId = service.serviceId,
                     providerKey = providerKey,
                     providerName = providerName
                 )
+                val related = RegionMusicEligibilityFilter.filterTracksForRegion(
+                    tracks = rawRelated,
+                    countryCode = NewPipeInitializer.currentCountryCode()
+                )
+                val extractedAtMs = System.currentTimeMillis()
+                val expiresAtMs = computeStreamExpiresAtMs(effectiveOptions, extractedAtMs)
+                val videoOrTrackId = YoutubeFallbackPlayerClient.extractVideoId(contentUrl) ?: contentUrl
 
                 val extraction = CachedStreamExtraction(
+                    videoOrTrackId = videoOrTrackId,
                     serviceId = service.serviceId,
                     providerKey = providerKey,
                     providerName = providerName,
@@ -651,7 +772,8 @@ class OnlineStreamResolver(
                         streamInfo.streamType == org.schabi.newpipe.extractor.stream.StreamType.AUDIO_LIVE_STREAM,
                     viewCount = streamInfo.viewCount,
                     relatedTracks = related,
-                    extractedAtMs = System.currentTimeMillis()
+                    extractedAtMs = extractedAtMs,
+                    expiresAtMs = expiresAtMs
                 )
                 streamExtractionCache.put(contentUrl, extraction)
 
@@ -671,7 +793,9 @@ class OnlineStreamResolver(
                         isLive = extraction.isLive,
                         viewCount = extraction.viewCount,
                         relatedTracks = related,
-                        extractedAtMs = extraction.extractedAtMs
+                        extractedAtMs = extraction.extractedAtMs,
+                        expiresAtMs = extraction.expiresAtMs,
+                        fromCache = false
                     )
                 )
             }
@@ -735,10 +859,16 @@ class OnlineStreamResolver(
                         options = payload.options,
                         preference = qualityPreference,
                         isMeteredConnection = connectivityMonitor.isCurrentlyMetered(),
-                        manualStreamId = manualStreamId
-                    ) ?: payload.options.first()
+                        manualStreamId = manualStreamId,
+                        excludedStreamIds = excludedStreamIds
+                    ) ?: payload.options.firstOrNull { it.id !in excludedStreamIds } ?: payload.options.first()
+
+                    val extractedAtMs = System.currentTimeMillis()
+                    val expiresAtMs = computeStreamExpiresAtMs(payload.options, extractedAtMs)
+                    val videoOrTrackId = YoutubeFallbackPlayerClient.extractVideoId(contentUrl) ?: contentUrl
 
                     val extraction = CachedStreamExtraction(
+                        videoOrTrackId = videoOrTrackId,
                         serviceId = serviceId,
                         providerKey = providerKey,
                         providerName = providerName,
@@ -752,7 +882,8 @@ class OnlineStreamResolver(
                         isLive = payload.isLive,
                         viewCount = payload.viewCount,
                         relatedTracks = emptyList(),
-                        extractedAtMs = System.currentTimeMillis()
+                        extractedAtMs = extractedAtMs,
+                        expiresAtMs = expiresAtMs
                     )
                     streamExtractionCache.put(contentUrl, extraction)
 
@@ -772,7 +903,9 @@ class OnlineStreamResolver(
                             isLive = extraction.isLive,
                             viewCount = extraction.viewCount,
                             relatedTracks = emptyList(),
-                            extractedAtMs = extraction.extractedAtMs
+                            extractedAtMs = extraction.extractedAtMs,
+                            expiresAtMs = extraction.expiresAtMs,
+                            fromCache = false
                         )
                     )
                 }
@@ -795,7 +928,8 @@ class OnlineStreamResolver(
                     trackTitle = trackTitleHint,
                     trackArtist = trackArtistHint,
                     expectedDurationMs = expectedDurationMs,
-                    qualityPreference = qualityPreference
+                    qualityPreference = qualityPreference,
+                    excludedStreamIds = excludedStreamIds
                 )
                 if (crossProvider != null) {
                     return OnlineResult.Success(crossProvider)
@@ -817,7 +951,8 @@ class OnlineStreamResolver(
         trackTitle: String,
         trackArtist: String,
         expectedDurationMs: Long,
-        qualityPreference: AudioQualityPreference
+        qualityPreference: AudioQualityPreference,
+        excludedStreamIds: Set<String> = emptySet()
     ): ResolvedOnlineStreamResult? {
         return try {
             NewPipeInitializer.ensureInitialized(null)
@@ -875,14 +1010,18 @@ class OnlineStreamResolver(
                 options = scOptions,
                 preference = qualityPreference,
                 isMeteredConnection = connectivityMonitor.isCurrentlyMetered(),
-                manualStreamId = null
-            ) ?: scOptions.first()
+                manualStreamId = null,
+                excludedStreamIds = excludedStreamIds
+            ) ?: scOptions.firstOrNull { it.id !in excludedStreamIds } ?: scOptions.first()
 
             val artworkUrl = OnlineTrackMapper.selectBestArtworkUrl(scInfo.thumbnails) ?: matched.artworkUrl
             val durationMs = if (scInfo.duration > 0L) scInfo.duration * 1000L else matched.durationMs
             val fallbackProviderLabel = "SoundCloud (YT Fallback)"
+            val extractedAtMs = System.currentTimeMillis()
+            val expiresAtMs = computeStreamExpiresAtMs(scOptions, extractedAtMs)
 
             val extraction = CachedStreamExtraction(
+                videoOrTrackId = matched.contentUrl,
                 serviceId = soundCloud.serviceId,
                 providerKey = OnlineMusicProvider.KEY_SOUNDCLOUD,
                 providerName = fallbackProviderLabel,
@@ -896,7 +1035,8 @@ class OnlineStreamResolver(
                 isLive = false,
                 viewCount = scInfo.viewCount,
                 relatedTracks = emptyList(),
-                extractedAtMs = System.currentTimeMillis()
+                extractedAtMs = extractedAtMs,
+                expiresAtMs = expiresAtMs
             )
             streamExtractionCache.put(cacheKeyContentUrl, extraction)
             Log.i(TAG, "Recovered YT IP-blocked track '$trackTitle' via verified SoundCloud stream '${matched.title}'")
@@ -916,7 +1056,9 @@ class OnlineStreamResolver(
                 isLive = false,
                 viewCount = extraction.viewCount,
                 relatedTracks = emptyList(),
-                extractedAtMs = extraction.extractedAtMs
+                extractedAtMs = extraction.extractedAtMs,
+                expiresAtMs = extraction.expiresAtMs,
+                fromCache = false
             )
         } catch (ce: CancellationException) {
             throw ce
@@ -928,9 +1070,11 @@ class OnlineStreamResolver(
 
     suspend fun fetchDiscoveryFeed(
         provider: OnlineMusicProvider,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        countryCode: String = NewPipeInitializer.currentCountryCode()
     ): OnlineResult<List<OnlineTrack>> = withContext(Dispatchers.IO) {
-        val cacheKey = provider.key
+        val cleanCountry = countryCode.trim().uppercase().ifBlank { NewPipeInitializer.currentCountryCode() }
+        val cacheKey = "${provider.key}|$cleanCountry"
         val now = System.currentTimeMillis()
         if (!forceRefresh) {
             val cached = discoveryCache.get(cacheKey)
@@ -949,10 +1093,14 @@ class OnlineStreamResolver(
 
         try {
             val result = extractKioskTracksWithCandidates(provider)
-            if (result.items.isNotEmpty()) {
-                discoveryCache.put(cacheKey, now to result.items)
+            val filteredItems = RegionMusicEligibilityFilter.filterTracksForRegion(
+                tracks = result.items,
+                countryCode = cleanCountry
+            )
+            if (filteredItems.isNotEmpty()) {
+                discoveryCache.put(cacheKey, now to filteredItems)
             }
-            OnlineResult.Success(result.items)
+            OnlineResult.Success(filteredItems)
         } catch (ce: CancellationException) {
             throw ce
         } catch (t: Throwable) {
@@ -1035,19 +1183,23 @@ class OnlineStreamResolver(
                         null
                     }
 
-                    if (kioskResult != null && kioskResult.items.isNotEmpty()) {
+                    val filteredKioskItems = kioskResult?.items?.let {
+                        RegionMusicEligibilityFilter.filterTracksForRegion(it, cleanCountry)
+                    }.orEmpty()
+
+                    if (kioskResult != null && filteredKioskItems.isNotEmpty()) {
                         val sourceLabel = "${provider.displayName} Charts ($cleanCountry)"
                         discoverSectionCache.put(
                             cacheKey,
                             CachedDiscoverSection(
                                 fetchedAtMs = now,
-                                items = kioskResult.items,
+                                items = filteredKioskItems,
                                 sourceLabel = sourceLabel,
                                 nextPageToken = kioskResult.nextPageToken
                             )
                         )
                         DiscoverSectionState.Success(
-                            items = kioskResult.items,
+                            items = filteredKioskItems,
                             sourceLabel = sourceLabel,
                             nextPageToken = kioskResult.nextPageToken,
                             hasMore = !kioskResult.nextPageToken.isNullOrBlank(),
@@ -1067,7 +1219,8 @@ class OnlineStreamResolver(
                             provider = provider,
                             searchDataSource = searchDataSource,
                             cacheKey = cacheKey,
-                            sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage)
+                            sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage),
+                            countryCode = cleanCountry
                         )
                     }
                 }
@@ -1081,7 +1234,8 @@ class OnlineStreamResolver(
                         provider = provider,
                         searchDataSource = searchDataSource,
                         cacheKey = cacheKey,
-                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage)
+                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage),
+                        countryCode = cleanCountry
                     )
                 }
 
@@ -1094,7 +1248,8 @@ class OnlineStreamResolver(
                         provider = provider,
                         searchDataSource = searchDataSource,
                         cacheKey = cacheKey,
-                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage)
+                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage),
+                        countryCode = cleanCountry
                     )
                 }
 
@@ -1112,7 +1267,8 @@ class OnlineStreamResolver(
                         provider = provider,
                         searchDataSource = searchDataSource,
                         cacheKey = cacheKey,
-                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage)
+                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage),
+                        countryCode = cleanCountry
                     )
                 }
 
@@ -1125,7 +1281,8 @@ class OnlineStreamResolver(
                         provider = provider,
                         searchDataSource = searchDataSource,
                         cacheKey = cacheKey,
-                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage)
+                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage),
+                        countryCode = cleanCountry
                     )
                 }
 
@@ -1138,7 +1295,8 @@ class OnlineStreamResolver(
                         provider = provider,
                         searchDataSource = searchDataSource,
                         cacheKey = cacheKey,
-                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage)
+                        sourceSuffix = formatSourceLabel(provider.displayName, cleanCountry, discoverLanguage),
+                        countryCode = cleanCountry
                     )
                 }
             }
@@ -1163,8 +1321,10 @@ class OnlineStreamResolver(
         sectionType: DiscoverSectionType,
         provider: OnlineMusicProvider,
         previousToken: String,
-        searchDataSource: OnlineSearchDataSource
+        searchDataSource: OnlineSearchDataSource,
+        countryCode: String = NewPipeInitializer.currentCountryCode()
     ): OnlineResult<Pair<List<OnlineTrack>, String?>> = withContext(Dispatchers.IO) {
+        val cleanCountry = countryCode.trim().uppercase().ifBlank { NewPipeInitializer.currentCountryCode() }
         if (previousToken.isBlank()) {
             return@withContext OnlineResult.Success(emptyList<OnlineTrack>() to null)
         }
@@ -1188,17 +1348,20 @@ class OnlineStreamResolver(
                     NewPipeInitializer.ensureInitialized(null)
                     val service = NewPipeInitializer.getServiceForProviderKey(state.providerKey)
                     val more = KioskInfo.getMoreItems(service, state.kioskUrl, state.nextPage)
-                    val mapped = more.items
-                        .orEmpty()
-                        .mapNotNull { item ->
-                            OnlineTrackMapper.mapInfoItem(
-                                item = item,
-                                serviceId = state.serviceId,
-                                providerKey = state.providerKey,
-                                providerName = state.providerName
-                            )
-                        }
-                        .filter { it.kind == OnlineItemKind.TRACK }
+                    val mapped = RegionMusicEligibilityFilter.filterTracksForRegion(
+                        tracks = more.items
+                            .orEmpty()
+                            .mapNotNull { item ->
+                                OnlineTrackMapper.mapInfoItem(
+                                    item = item,
+                                    serviceId = state.serviceId,
+                                    providerKey = state.providerKey,
+                                    providerName = state.providerName
+                                )
+                            }
+                            .filter { it.kind == OnlineItemKind.TRACK },
+                        countryCode = cleanCountry
+                    )
                     val nextPage = more.nextPage
                     val nextToken = if (more.hasNextPage() && nextPage != null) {
                         "kiosk:${UUID.randomUUID()}".also { key ->
@@ -1222,7 +1385,10 @@ class OnlineStreamResolver(
         }
 
         return@withContext when (val res = searchDataSource.loadMore(previousToken)) {
-            is OnlineResult.Success -> OnlineResult.Success(res.value.items to res.value.nextPageToken)
+            is OnlineResult.Success -> {
+                val filtered = RegionMusicEligibilityFilter.filterTracksForRegion(res.value.items, cleanCountry)
+                OnlineResult.Success(filtered to res.value.nextPageToken)
+            }
             is OnlineResult.Error -> res
         }
     }
@@ -1261,19 +1427,24 @@ class OnlineStreamResolver(
 
         val prefix = languageHint.trim()
         val hasLocaleFocus = prefix.isNotBlank()
+        val regionSafeFallback = RegionMusicEligibilityFilter.regionSafeFallbackQuery(
+            sectionType = sectionType,
+            countryCode = countryCode,
+            discoverLanguage = discoverLanguage
+        )
 
-        return when (sectionType) {
+        val rawSpec = when (sectionType) {
             DiscoverSectionType.TRENDING_MUSIC -> DiscoverQuerySpec(
-                primaryQuery = if (hasLocaleFocus) "trending $prefix music hits" else "trending music hits",
-                broaderFallbackQuery = if (hasLocaleFocus) "trending music hits" else null
+                primaryQuery = if (hasLocaleFocus) "trending $prefix music hits" else "trending music hits $countryCode",
+                broaderFallbackQuery = regionSafeFallback
             )
             DiscoverSectionType.POPULAR_SONGS -> DiscoverQuerySpec(
-                primaryQuery = if (hasLocaleFocus) "popular $prefix songs" else "popular music songs",
-                broaderFallbackQuery = if (hasLocaleFocus) "popular music songs" else null
+                primaryQuery = if (hasLocaleFocus) "popular $prefix songs" else "popular music songs $countryCode",
+                broaderFallbackQuery = regionSafeFallback
             )
             DiscoverSectionType.NEW_RELEASES -> DiscoverQuerySpec(
-                primaryQuery = if (hasLocaleFocus) "new $prefix music releases" else "new music releases",
-                broaderFallbackQuery = if (hasLocaleFocus) "new music releases" else null
+                primaryQuery = if (hasLocaleFocus) "new $prefix music releases" else "new music releases $countryCode",
+                broaderFallbackQuery = regionSafeFallback
             )
             DiscoverSectionType.MUSIC_RECOMMENDATIONS -> {
                 if (recommendationProfile != null && recommendationProfile.seedQuery.isNotBlank()) {
@@ -1281,29 +1452,51 @@ class OnlineStreamResolver(
                         primaryQuery = recommendationProfile.seedQuery,
                         broaderFallbackQuery = recommendationProfile.fallbackQuery
                             .takeIf { !it.equals(recommendationProfile.seedQuery, ignoreCase = true) }
+                            ?: regionSafeFallback
                     )
                 } else {
+                    val safeSeed = cleanSeed?.takeIf {
+                        !RegionMusicEligibilityFilter.isIndiaRegion(countryCode) ||
+                            RegionMusicEligibilityFilter.isVerifiedIndianMusic(title = it, artist = it)
+                    }
                     val primary = when {
                         discoverLanguage != DiscoverMusicLanguage.ALL -> "$prefix chill music playlist mix"
-                        cleanSeed != null -> "$cleanSeed mix"
+                        safeSeed != null -> "$safeSeed mix"
                         hasLocaleFocus -> "$prefix indie Bollywood chill playlist"
-                        else -> "chill music mix playlist"
+                        else -> "chill music mix playlist $countryCode"
                     }
                     DiscoverQuerySpec(
                         primaryQuery = primary,
-                        broaderFallbackQuery = if (hasLocaleFocus || cleanSeed != null) "chill music mix playlist" else null
+                        broaderFallbackQuery = regionSafeFallback
                     )
                 }
             }
             DiscoverSectionType.POPULAR_ARTISTS -> DiscoverQuerySpec(
-                primaryQuery = if (hasLocaleFocus) "popular $prefix music artists singers" else "popular music artists",
-                broaderFallbackQuery = if (hasLocaleFocus) "popular music artists" else null
+                primaryQuery = if (hasLocaleFocus) "popular $prefix music artists singers" else "popular music artists $countryCode",
+                broaderFallbackQuery = regionSafeFallback
             )
             DiscoverSectionType.ONLINE_PLAYLISTS -> DiscoverQuerySpec(
-                primaryQuery = if (hasLocaleFocus) "$prefix curated music playlists hits" else "top music playlists mix",
-                broaderFallbackQuery = if (hasLocaleFocus) "top music playlists mix" else null
+                primaryQuery = if (hasLocaleFocus) "$prefix curated music playlists hits" else "top music playlists mix $countryCode",
+                broaderFallbackQuery = regionSafeFallback
             )
         }
+
+        val scopedPrimary = RegionMusicEligibilityFilter.scopeRecommendationQuery(
+            baseQuery = rawSpec.primaryQuery,
+            countryCode = countryCode,
+            discoverLanguage = discoverLanguage
+        )
+        val scopedFallback = rawSpec.broaderFallbackQuery?.let {
+            RegionMusicEligibilityFilter.scopeRecommendationQuery(
+                baseQuery = it,
+                countryCode = countryCode,
+                discoverLanguage = discoverLanguage
+            )
+        }
+        return DiscoverQuerySpec(
+            primaryQuery = scopedPrimary,
+            broaderFallbackQuery = scopedFallback?.takeIf { !it.equals(scopedPrimary, ignoreCase = true) }
+        )
     }
 
     private suspend fun searchBackedSectionWithFallback(
@@ -1314,13 +1507,16 @@ class OnlineStreamResolver(
         provider: OnlineMusicProvider,
         searchDataSource: OnlineSearchDataSource,
         cacheKey: String,
-        sourceSuffix: String
+        sourceSuffix: String,
+        countryCode: String
     ): DiscoverSectionState {
         val chosenFilter = preferredFilters.firstOrNull { it in provider.supportedFilters }
             ?: provider.defaultFilter
         return when (val res = searchDataSource.search(primaryQuery, provider, chosenFilter)) {
             is OnlineResult.Success -> {
-                val items = res.value.items.take(20)
+                val items = RegionMusicEligibilityFilter
+                    .filterTracksForRegion(res.value.items, countryCode)
+                    .take(20)
                 val nextToken = res.value.nextPageToken
                 if (items.isNotEmpty()) {
                     discoverSectionCache.put(
@@ -1340,15 +1536,27 @@ class OnlineStreamResolver(
                         isLoadingMore = false
                     )
                 } else if (!broaderFallbackQuery.isNullOrBlank() && !broaderFallbackQuery.equals(primaryQuery, ignoreCase = true)) {
-                    // Graceful fallback when a provider (e.g., Bandcamp/PeerTube) has no results for a specific language/region query
+                    // Region-safe fallback only: strictly filtered and NEVER backfilled with foreign tracks in India mode
                     when (val fallbackRes = searchDataSource.search(broaderFallbackQuery, provider, chosenFilter)) {
                         is OnlineResult.Success -> {
-                            val fallbackItems = fallbackRes.value.items.take(20)
+                            val fallbackItems = RegionMusicEligibilityFilter
+                                .filterTracksForRegion(fallbackRes.value.items, countryCode)
+                                .take(20)
                             val fallbackToken = fallbackRes.value.nextPageToken
                             if (fallbackItems.isEmpty()) {
-                                DiscoverSectionState.Empty("No ${sectionType.title.lowercase()} available for this filter on ${provider.displayName}.")
+                                DiscoverSectionState.Empty(
+                                    RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
+                                        sectionTitle = sectionType.title,
+                                        countryCode = countryCode,
+                                        providerName = provider.displayName
+                                    )
+                                )
                             } else {
-                                val fallbackLabel = "${provider.displayName} Global Fallback"
+                                val fallbackLabel = if (RegionMusicEligibilityFilter.isIndiaRegion(countryCode)) {
+                                    "${provider.displayName} (India)"
+                                } else {
+                                    "${provider.displayName} ($countryCode)"
+                                }
                                 discoverSectionCache.put(
                                     cacheKey,
                                     CachedDiscoverSection(
@@ -1368,11 +1576,23 @@ class OnlineStreamResolver(
                             }
                         }
                         is OnlineResult.Error -> {
-                            DiscoverSectionState.Empty("No ${sectionType.title.lowercase()} available for this filter on ${provider.displayName}.")
+                            DiscoverSectionState.Empty(
+                                RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
+                                    sectionTitle = sectionType.title,
+                                    countryCode = countryCode,
+                                    providerName = provider.displayName
+                                )
+                            )
                         }
                     }
                 } else {
-                    DiscoverSectionState.Empty("No ${sectionType.title.lowercase()} found on ${provider.displayName}.")
+                    DiscoverSectionState.Empty(
+                        RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
+                            sectionTitle = sectionType.title,
+                            countryCode = countryCode,
+                            providerName = provider.displayName
+                        )
+                    )
                 }
             }
             is OnlineResult.Error -> {

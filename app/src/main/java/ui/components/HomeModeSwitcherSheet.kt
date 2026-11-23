@@ -19,15 +19,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.CloudQueue
-import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -55,10 +58,9 @@ import domain.home.HomeMusicMode
 import ui.theme.EditorialColors
 
 /**
- * Compact animated selector sheet opened from the Home header music-note icon.
- * Lets the listener toggle cleanly between Offline Music (local MediaStore library)
- * and Online Music (India & regional NewPipe streaming discovery) without interrupting
- * active playback, queue state, or Audio Studio DSP effects.
+ * Animated three-mode Home selector sheet opened from the Home header icon.
+ * Lets the listener switch seamlessly between Offline Music, Online Music, and Online Video
+ * without stopping active music or video playback unnecessarily.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,6 +87,7 @@ fun HomeModeSwitcherSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp)
                 .testTag("home_mode_switcher_sheet")
@@ -98,7 +101,11 @@ fun HomeModeSwitcherSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.MusicNote,
+                        imageVector = when (currentMode) {
+                            HomeMusicMode.OFFLINE -> Icons.Rounded.MusicNote
+                            HomeMusicMode.ONLINE -> Icons.Rounded.Headphones
+                            HomeMusicMode.ONLINE_VIDEO -> Icons.Rounded.PlayCircle
+                        },
                         contentDescription = null,
                         tint = colors.onAccentPill,
                         modifier = Modifier.size(22.dp)
@@ -107,14 +114,14 @@ fun HomeModeSwitcherSheet(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Music Experience",
+                        text = "SONORA Experience",
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp,
                         color = colors.textPrimary
                     )
                     Text(
-                        text = "Switch Home between local library & online discovery",
+                        text = "Switch Home between Offline Music, Online Music & Online Video",
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
                         color = colors.textSecondary
@@ -124,7 +131,7 @@ fun HomeModeSwitcherSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Animated segmented pill bar for instant 1-tap toggle
+            // Animated three-option segmented pill bar for instant 1-tap toggle
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = colors.surfaceTinted,
@@ -137,7 +144,7 @@ fun HomeModeSwitcherSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     HomeMusicMode.entries.forEach { mode ->
                         val selected = currentMode == mode
@@ -152,10 +159,20 @@ fun HomeModeSwitcherSheet(
                             label = "segment_fg_${mode.id}"
                         )
                         val segmentScale by animateFloatAsState(
-                            targetValue = if (selected) 1f else 0.98f,
+                            targetValue = if (selected) 1f else 0.97f,
                             animationSpec = if (reduceAnimations) snap() else spring(dampingRatio = 0.7f),
                             label = "segment_scale_${mode.id}"
                         )
+                        val modeIcon = when (mode) {
+                            HomeMusicMode.OFFLINE -> Icons.Rounded.Storage
+                            HomeMusicMode.ONLINE -> Icons.Rounded.Headphones
+                            HomeMusicMode.ONLINE_VIDEO -> Icons.Rounded.PlayCircle
+                        }
+                        val shortSegmentLabel = when (mode) {
+                            HomeMusicMode.OFFLINE -> "Offline"
+                            HomeMusicMode.ONLINE -> "Music"
+                            HomeMusicMode.ONLINE_VIDEO -> "Video"
+                        }
 
                         Surface(
                             onClick = {
@@ -176,26 +193,22 @@ fun HomeModeSwitcherSheet(
                                 .testTag("home_mode_segment_${mode.id}")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 12.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
                             ) {
                                 Icon(
-                                    imageVector = if (mode == HomeMusicMode.OFFLINE) {
-                                        Icons.Rounded.LibraryMusic
-                                    } else {
-                                        Icons.Rounded.CloudQueue
-                                    },
-                                    contentDescription = null,
+                                    imageVector = modeIcon,
+                                    contentDescription = mode.title,
                                     tint = segmentTextColor,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Text(
-                                    text = mode.title,
+                                    text = shortSegmentLabel,
                                     fontFamily = PlusJakartaFontFamily,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     color = segmentTextColor,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -208,13 +221,13 @@ fun HomeModeSwitcherSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Detailed mode option cards
+            // Detailed three-mode option cards
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ModeOptionDetailCard(
                     title = "Offline Music",
-                    subtitle = "$localTrackCount local tracks • Albums, Daily Mixes, Lossless Audio",
+                    subtitle = "$localTrackCount local tracks • Albums, Daily Mixes & 15-Band Audio Studio",
                     badgeText = "OFFLINE",
-                    icon = Icons.Rounded.LibraryMusic,
+                    icon = Icons.Rounded.Storage,
                     isSelected = currentMode == HomeMusicMode.OFFLINE,
                     colors = colors,
                     reduceAnimations = reduceAnimations,
@@ -229,12 +242,12 @@ fun HomeModeSwitcherSheet(
                 ModeOptionDetailCard(
                     title = "Online Music",
                     subtitle = if (isNetworkOnline) {
-                        "India charts, Hindi & regional hits, playlists & recommendations"
+                        "India charts, Hindi & regional songs, playlists & recommendations"
                     } else {
-                        "Currently offline • Switch anytime; cached state stays safe"
+                        "Currently offline • Switch anytime; cached music stays ready"
                     },
-                    badgeText = "ONLINE",
-                    icon = if (isNetworkOnline) Icons.Rounded.CloudQueue else Icons.Rounded.WifiOff,
+                    badgeText = "MUSIC",
+                    icon = if (isNetworkOnline) Icons.Rounded.Headphones else Icons.Rounded.WifiOff,
                     isSelected = currentMode == HomeMusicMode.ONLINE,
                     colors = colors,
                     reduceAnimations = reduceAnimations,
@@ -245,12 +258,32 @@ fun HomeModeSwitcherSheet(
                     },
                     modifier = Modifier.testTag("mode_option_online")
                 )
+
+                ModeOptionDetailCard(
+                    title = "Online Video",
+                    subtitle = if (isNetworkOnline) {
+                        "Trending & regional Indian videos, HD playback, channels & Watch Later"
+                    } else {
+                        "Currently offline • Browse Watch Later & saved Video Library"
+                    },
+                    badgeText = "VIDEO",
+                    icon = if (isNetworkOnline) Icons.Rounded.PlayCircle else Icons.Rounded.WifiOff,
+                    isSelected = currentMode == HomeMusicMode.ONLINE_VIDEO,
+                    colors = colors,
+                    reduceAnimations = reduceAnimations,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onSelectMode(HomeMusicMode.ONLINE_VIDEO)
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("mode_option_online_video")
+                )
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Switching Home modes preserves your active song, queue, and Audio Studio DSP effects.",
+                text = "Switching Home modes never stops your active music or video playback.",
                 fontFamily = PlusJakartaFontFamily,
                 fontSize = 11.5.sp,
                 color = colors.textMuted,

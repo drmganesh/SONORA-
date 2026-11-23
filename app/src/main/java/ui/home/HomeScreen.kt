@@ -63,12 +63,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,6 +79,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -105,6 +108,7 @@ import ui.components.CircularArtwork
 import ui.components.CollectionDetailSheet
 import ui.components.EditorialArtworkCard
 import ui.components.EditorialPlaylistPickerDialog
+import ui.library.OnlinePlaylistPickerDialog
 import ui.components.HomeModeSwitcherSheet
 import ui.components.MusicContextMenuSheet
 import ui.online.OnlineCollectionDetailsSheet
@@ -113,10 +117,21 @@ import ui.online.OnlineQualitySelectorSheet
 import ui.online.OnlineRegionSheet
 import ui.online.OnlineTrackOptionsSheet
 import ui.online.buildArtistExploreTrack
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraTransitions
+import ui.motion.carouselItemDepthEffect
+import ui.motion.horizontalSwipeNavigation
 import ui.profile.UserProfileSheet
+import domain.video.OnlineVideoItem
 import ui.theme.EditorialAccentSwatches
 import ui.theme.EditorialColors
 import ui.theme.HomeThemeMode
+import ui.video.OnlineVideoHomeContent
+import ui.video.VideoNotificationsPanel
+import ui.video.VideoOptionsBottomSheet
+import ui.video.VideoPlaylistPickerDialog
+import ui.video.openOfficialExternalUrl
+import ui.video.shareVideoLink
 
 private data class ActiveCollectionModal(
     val title: String,
@@ -145,13 +160,15 @@ fun HomeScreen(
     onOpenQueue: () -> Unit = {},
     onOpenDynamicColors: () -> Unit = {},
     onOpenPlayerStyles: () -> Unit = {},
+    onOpenMusicAnalytics: () -> Unit = {},
     screenVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val motionState = ui.motion.LocalEffectiveMotionState.current
+    val motionState = LocalEffectiveMotionState.current
     val allSongs by viewModel.allSongs.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val miniPlayerDisplayState by viewModel.miniPlayerDisplayState.collectAsState()
     val favorites by viewModel.favoriteSongs.collectAsState()
     val mostPlayed by viewModel.mostPlayedSongs.collectAsState()
     val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
@@ -171,6 +188,7 @@ fun HomeScreen(
     val reduceAnimations by viewModel.reduceAnimations.collectAsState()
     val homeAnimationLevel by viewModel.homeAnimationLevel.collectAsState()
     val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
+    val snowfallSettings by viewModel.snowfallSettings.collectAsState()
     val appearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
     val colorIntensity by viewModel.dynamicColorIntensity.collectAsState()
     val playerStyle by viewModel.playerStyle.collectAsState()
@@ -190,6 +208,26 @@ fun HomeScreen(
     val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
     val onlineCollectionState by viewModel.onlineCollectionState.collectAsState()
     val onlineQualityPreference by viewModel.onlineQualityPreference.collectAsState()
+    val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
+    val savedOnlineAlbumIds by viewModel.savedOnlineAlbumIds.collectAsState()
+    val followedOnlineArtistIds by viewModel.followedOnlineArtistIds.collectAsState()
+    val savedOnlinePlaylistUrls by viewModel.savedOnlinePlaylistUrls.collectAsState()
+
+    val videoHomeSections by viewModel.videoController.homeSections.collectAsStateWithLifecycle()
+    val videoRecentlyWatched by viewModel.videoController.videoHistory.collectAsStateWithLifecycle()
+    val videoRegionalLanguage by viewModel.videoController.regionalLanguage.collectAsStateWithLifecycle()
+    val videoPlayerState by viewModel.videoController.playerState.collectAsStateWithLifecycle()
+    val watchLaterVideos by viewModel.videoController.watchLaterVideos.collectAsStateWithLifecycle()
+    val savedVideos by viewModel.videoController.savedVideos.collectAsStateWithLifecycle()
+    val videoPlaylists by viewModel.videoController.videoPlaylists.collectAsStateWithLifecycle()
+    val personalizedVideoShelves by viewModel.videoController.personalizedHomeShelves.collectAsStateWithLifecycle()
+    val videoInterestTopics by viewModel.videoController.userInterestTopics.collectAsStateWithLifecycle()
+    val videoNotifications by viewModel.videoController.videoNotifications.collectAsStateWithLifecycle()
+    val unreadVideoNotificationCount by viewModel.videoController.unreadVideoNotificationCount.collectAsStateWithLifecycle()
+    val isSyncingVideoNotifications by viewModel.videoController.isSyncingNotifications.collectAsStateWithLifecycle()
+
+    val watchLaterVideoIds = remember(watchLaterVideos) { watchLaterVideos.map { it.videoId }.toSet() }
+    val savedVideoIds = remember(savedVideos) { savedVideos.map { it.videoId }.toSet() }
 
     val savedOnlineIds = remember(onlineSavedTracks) { onlineSavedTracks.map { it.id }.toSet() }
     val favoriteOnlineIds = remember(allOnlineTracks) {
@@ -197,19 +235,30 @@ fun HomeScreen(
     }
 
     val greeting = remember { HomeDiscoveryEngine.currentGreeting() }
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
     var isRefreshing by remember { mutableStateOf(false) }
     var contextMenuSong by remember { mutableStateOf<Song?>(null) }
     var onlineOptionsTarget by remember { mutableStateOf<OnlineTrack?>(null) }
+    var videoOptionsTarget by remember { mutableStateOf<OnlineVideoItem?>(null) }
+    var videoPlaylistPickerTarget by remember { mutableStateOf<OnlineVideoItem?>(null) }
     var playlistPickerSong by remember { mutableStateOf<Song?>(null) }
+    var onlinePlaylistPickerSong by remember { mutableStateOf<Song?>(null) }
     var activeCollection by remember { mutableStateOf<ActiveCollectionModal?>(null) }
     var showModeSwitcherSheet by remember { mutableStateOf(false) }
     var showDiscoverySheet by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
     var showOnlineRegionSheet by remember { mutableStateOf(false) }
     var showOnlineQualitySheet by remember { mutableStateOf(false) }
+    var showVideoNotificationsSheet by remember { mutableStateOf(false) }
+
+    LaunchedEffect(homeMusicMode, isNetworkOnline) {
+        if (homeMusicMode == HomeMusicMode.ONLINE_VIDEO && isNetworkOnline) {
+            viewModel.videoController.syncFollowedChannelNotificationsNow(userInitiated = false)
+        }
+    }
 
     // Derived collage songs (distinct albums for artistic collage variety)
     val collageSongs = remember(allSongs, yourMixSongs) {
@@ -243,6 +292,20 @@ fun HomeScreen(
     val isMixActivelyPlaying = playbackInfo.isPlaying && currentSong != null &&
         yourMixSongs.any { it.id == currentSong?.id }
 
+    val isSnowfallActive = remember(
+        homeMusicMode,
+        playbackInfo.isPlaying,
+        currentSong?.id,
+        snowfallSettings
+    ) {
+        data.preferences.SnowfallSettings.shouldShowSnowfall(
+            homeMusicMode = homeMusicMode,
+            isMusicPlaying = playbackInfo.isPlaying,
+            hasCurrentSong = currentSong != null,
+            settings = snowfallSettings
+        )
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -251,18 +314,43 @@ fun HomeScreen(
             .testTag("home_screen"),
         contentAlignment = Alignment.TopCenter
     ) {
+        // Atmospheric background snowfall layer (behind all Home content; non-interactive)
+        ui.components.SnowfallOverlay(
+            isActive = isSnowfallActive,
+            settings = snowfallSettings,
+            colors = colors,
+            screenVisible = screenVisible,
+            modifier = Modifier.fillMaxSize(),
+            testTagName = "home_snowfall_overlay"
+        )
+
         Column(
             modifier = Modifier
                 .widthIn(max = 760.dp)
                 .fillMaxSize()
         ) {
             // Persistent Top Greeting Header with Offline / Online Mode Switcher
+            val showHeaderRestoreNowPlaying = domain.player.MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
+                hasCurrentSong = currentSong != null,
+                displayState = miniPlayerDisplayState,
+                isInOnlineVideoExperience = homeMusicMode == HomeMusicMode.ONLINE_VIDEO || videoPlayerState.hasActiveVideo
+            )
             GreetingHeader(
                 greeting = greeting,
                 userProfile = userProfile,
                 colors = colors,
                 activeMode = homeMusicMode,
                 reduceAnimations = reduceAnimations,
+                unreadVideoNotificationsCount = unreadVideoNotificationCount,
+                onVideoNotificationsClick = if (homeMusicMode == HomeMusicMode.ONLINE_VIDEO) {
+                    { showVideoNotificationsSheet = true }
+                } else null,
+                showRestoreNowPlayingIcon = showHeaderRestoreNowPlaying,
+                onRestoreNowPlayingClick = if (showHeaderRestoreNowPlaying) {
+                    {
+                        viewModel.restoreMusicMiniPlayer()
+                    }
+                } else null,
                 onAvatarClick = { showProfileSheet = true },
                 onDiscoveryClick = { showModeSwitcherSheet = true },
                 onSettingsClick = onOpenSettings
@@ -273,10 +361,14 @@ fun HomeScreen(
                 onRefresh = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     isRefreshing = true
-                    if (homeMusicMode == HomeMusicMode.OFFLINE) {
-                        viewModel.loadLocalSongs()
-                    } else if (isNetworkOnline) {
-                        viewModel.refreshOnlineDiscovery(forceRefresh = true)
+                    when (homeMusicMode) {
+                        HomeMusicMode.OFFLINE -> viewModel.loadLocalSongs()
+                        HomeMusicMode.ONLINE -> if (isNetworkOnline) {
+                            viewModel.refreshOnlineDiscovery(forceRefresh = true)
+                        }
+                        HomeMusicMode.ONLINE_VIDEO -> if (isNetworkOnline) {
+                            viewModel.videoController.refreshHomeDiscovery(forceRefresh = true)
+                        }
                     }
                     scope.launch {
                         delay(700)
@@ -286,30 +378,30 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .then(
-                        ui.motion.horizontalSwipeNavigation(
-                            enabled = screenVisible,
-                            motion = motionState,
-                            onSwipeLeft = {
-                                if (homeMusicMode == HomeMusicMode.OFFLINE) {
-                                    viewModel.setHomeMusicMode(HomeMusicMode.ONLINE)
-                                } else {
-                                    onNavigateToSearch()
-                                }
-                            },
-                            onSwipeRight = {
-                                if (homeMusicMode == HomeMusicMode.ONLINE) {
-                                    viewModel.setHomeMusicMode(HomeMusicMode.OFFLINE)
-                                }
+                    .horizontalSwipeNavigation(
+                        enabled = screenVisible,
+                        motion = motionState,
+                        onSwipeLeft = {
+                            when (homeMusicMode) {
+                                HomeMusicMode.OFFLINE -> viewModel.setHomeMusicMode(HomeMusicMode.ONLINE)
+                                HomeMusicMode.ONLINE -> viewModel.setHomeMusicMode(HomeMusicMode.ONLINE_VIDEO)
+                                HomeMusicMode.ONLINE_VIDEO -> onNavigateToSearch()
                             }
-                        )
+                        },
+                        onSwipeRight = {
+                            when (homeMusicMode) {
+                                HomeMusicMode.ONLINE_VIDEO -> viewModel.setHomeMusicMode(HomeMusicMode.ONLINE)
+                                HomeMusicMode.ONLINE -> viewModel.setHomeMusicMode(HomeMusicMode.OFFLINE)
+                                HomeMusicMode.OFFLINE -> Unit
+                            }
+                        }
                     )
             ) {
                 AnimatedContent(
                     targetState = homeMusicMode,
                     transitionSpec = {
-                        ui.motion.SonoraTransitions.homeModeTransition(
-                            toOnline = targetState == HomeMusicMode.ONLINE,
+                        SonoraTransitions.homeModeTransition(
+                            toOnline = targetState.ordinal >= initialState.ordinal,
                             motion = motionState
                         )
                     },
@@ -327,7 +419,15 @@ fun HomeScreen(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .testTag("home_lazy_column"),
-                                    contentPadding = PaddingValues(top = 4.dp, bottom = 184.dp),
+                                    contentPadding = PaddingValues(
+                                        top = 4.dp,
+                                        bottom = domain.player.MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
+                                            isMusicMiniPlayerVisible = currentSong != null &&
+                                                miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER &&
+                                                !videoPlayerState.hasActiveVideo,
+                                            isVideoMiniPlayerVisible = videoPlayerState.hasActiveVideo && !videoPlayerState.isPlayerExpanded
+                                        )
+                                    ),
                                     verticalArrangement = Arrangement.spacedBy(26.dp)
                                 ) {
                                     // Empty local library fallback
@@ -698,9 +798,40 @@ fun HomeScreen(
                                     onSwitchSoundCloudFallback = { viewModel.switchToSoundCloudFallback() },
                                     onDismissPlaybackError = { viewModel.clearPlaybackError() },
                                     onOpenPlaylistsScreen = onOpenPlaylists,
-                                    onOpenViewAllOnline = onOpenOnlineMusic
+                                    onOpenViewAllOnline = onOpenOnlineMusic,
+                                    hasMusicMiniPlayer = currentSong != null &&
+                                        miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER
                                 )
                             }
+                        }
+
+                        HomeMusicMode.ONLINE_VIDEO -> {
+                            OnlineVideoHomeContent(
+                                sections = videoHomeSections,
+                                recentlyWatched = videoRecentlyWatched,
+                                selectedRegionalLanguage = videoRegionalLanguage,
+                                countryCode = onlineCountryCode,
+                                isNetworkOnline = isNetworkOnline,
+                                activeVideoId = videoPlayerState.activeVideo?.videoId,
+                                colors = colors,
+                                onOpenVideoSearch = onNavigateToSearch,
+                                onOpenRegionSheet = { showOnlineRegionSheet = true },
+                                onSelectRegionalLanguage = { viewModel.videoController.selectRegionalLanguage(it) },
+                                onRefreshAll = { viewModel.videoController.refreshHomeDiscovery(forceRefresh = true) },
+                                onRetrySection = { viewModel.videoController.loadHomeSection(it, forceRefresh = true) },
+                                onLoadMoreSection = { viewModel.videoController.loadMoreHomeSection(it) },
+                                onPlayVideo = { video, pool ->
+                                    viewModel.videoController.playVideo(video, pool, expandPlayer = true)
+                                },
+                                onOpenChannel = { url, name ->
+                                    viewModel.videoController.openChannelProfile(url, name)
+                                },
+                                onVideoMoreClick = { videoOptionsTarget = it },
+                                personalizedShelves = personalizedVideoShelves,
+                                selectedInterestTopics = videoInterestTopics,
+                                onToggleInterestTopic = { viewModel.videoController.toggleUserInterestTopic(it) },
+                                hasVideoMiniPlayer = videoPlayerState.hasActiveVideo && !videoPlayerState.isPlayerExpanded
+                            )
                         }
                     }
                 }
@@ -713,6 +844,10 @@ fun HomeScreen(
         MusicContextMenuSheet(
             song = target,
             colors = colors,
+            isDownloaded = viewModel.isSongDownloaded(target),
+            onDownload = if (target.isOnline) {
+                { viewModel.requestDownloadSong(target) }
+            } else null,
             onDismiss = { contextMenuSong = null },
             onPlayNow = { viewModel.playSong(target, allSongs) },
             onPlayNext = { viewModel.playNextInQueue(target) },
@@ -761,10 +896,21 @@ fun HomeScreen(
 
     // Online Track Context Menu Bottom Sheet
     onlineOptionsTarget?.let { target ->
+        val artistUrl = if (target.kind == OnlineItemKind.ARTIST) target.contentUrl else target.artistUrl.orEmpty()
+        val isArtistFollowed = artistUrl.isNotBlank() &&
+            OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, artistUrl.trim()) in followedOnlineArtistIds
+        val isCollectionSaved = when (target.kind) {
+            OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, target.contentUrl.trim()) in savedOnlineAlbumIds
+            OnlineItemKind.PLAYLIST -> target.contentUrl.trim() in savedOnlinePlaylistUrls
+            else -> false
+        }
         OnlineTrackOptionsSheet(
             track = target,
             isSaved = target.stableId in savedOnlineIds,
             isFavorite = target.stableId in favoriteOnlineIds,
+            isDownloaded = viewModel.isTrackDownloaded(target),
+            isArtistFollowed = isArtistFollowed,
+            isCollectionSaved = isCollectionSaved,
             resolvedStream = currentResolvedStream,
             colors = colors,
             onPlayNow = {
@@ -785,11 +931,38 @@ fun HomeScreen(
             onToggleSave = { viewModel.toggleSaveOnlineTrack(target) },
             onToggleFavorite = { viewModel.toggleFavorite(OnlineTrackMapper.toUnifiedSong(target)) },
             onAddToPlaylist = { playlistPickerSong = OnlineTrackMapper.toUnifiedSong(target) },
+            onAddToOnlinePlaylist = if (target.kind == OnlineItemKind.TRACK) {
+                { onlinePlaylistPickerSong = OnlineTrackMapper.toUnifiedSong(target) }
+            } else null,
+            onToggleFollowArtist = if (artistUrl.isNotBlank()) {
+                { viewModel.toggleFollowOnlineArtist(target) }
+            } else null,
+            onToggleSaveCollection = when (target.kind) {
+                OnlineItemKind.ALBUM -> ({ viewModel.toggleSaveOnlineAlbum(target) })
+                OnlineItemKind.PLAYLIST -> ({ viewModel.toggleSaveExternalOnlinePlaylist(target) })
+                else -> null
+            },
+            onDownload = { viewModel.requestDownloadTrack(target) },
             onOpenQualitySettings = { showOnlineQualitySheet = true },
             onViewArtistChannel = buildArtistExploreTrack(target)?.let { channelItem ->
                 { viewModel.openOnlineCollection(channelItem) }
             },
             onDismiss = { onlineOptionsTarget = null }
+        )
+    }
+
+    onlinePlaylistPickerSong?.let { songTarget ->
+        OnlinePlaylistPickerDialog(
+            song = songTarget,
+            playlists = onlinePlaylists,
+            colors = colors,
+            onDismiss = { onlinePlaylistPickerSong = null },
+            onSelectPlaylist = { playlist ->
+                viewModel.addTrackToOnlinePlaylist(playlist.id, songTarget, playlist.name)
+            },
+            onCreatePlaylistWithSong = { name ->
+                viewModel.createOnlinePlaylist(name, initialTrack = songTarget)
+            }
         )
     }
 
@@ -801,6 +974,24 @@ fun HomeScreen(
         isBuffering = playbackInfo.isBuffering,
         savedIds = savedOnlineIds,
         colors = colors,
+        isTrackDownloaded = { viewModel.isTrackDownloaded(it) },
+        onDownloadTrack = { viewModel.requestDownloadTrack(it) },
+        isCollectionSavedOrFollowed = { source ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in followedOnlineArtistIds
+                OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in savedOnlineAlbumIds
+                OnlineItemKind.PLAYLIST -> source.contentUrl.trim() in savedOnlinePlaylistUrls
+                else -> false
+            }
+        },
+        onToggleSaveOrFollowCollection = { source, details ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> viewModel.toggleFollowOnlineArtist(source, details)
+                OnlineItemKind.ALBUM -> viewModel.toggleSaveOnlineAlbum(source, details)
+                OnlineItemKind.PLAYLIST -> viewModel.toggleSaveExternalOnlinePlaylist(source, details)
+                else -> Unit
+            }
+        },
         onPlayTrack = { track, tracks ->
             viewModel.playOnlineTrack(track, tracks)
             onOpenNowPlaying()
@@ -864,7 +1055,7 @@ fun HomeScreen(
         )
     }
 
-    // Home Music Mode Switcher Sheet (Offline Music <-> Online Music)
+    // Home Music Mode Switcher Sheet (Offline Music <-> Online Music <-> Online Video)
     if (showModeSwitcherSheet) {
         HomeModeSwitcherSheet(
             currentMode = homeMusicMode,
@@ -875,6 +1066,60 @@ fun HomeScreen(
             onSelectMode = { mode -> viewModel.setHomeMusicMode(mode) },
             onOpenThemesAndShuffle = { showDiscoverySheet = true },
             onDismiss = { showModeSwitcherSheet = false }
+        )
+    }
+
+    videoOptionsTarget?.let { target ->
+        VideoOptionsBottomSheet(
+            video = target,
+            isWatchLater = target.videoId in watchLaterVideoIds,
+            isSaved = target.videoId in savedVideoIds,
+            colors = colors,
+            onPlayNow = { viewModel.videoController.playVideo(target, expandPlayer = true) },
+            onPlayNext = { viewModel.videoController.enqueueVideoNext(target) },
+            onToggleWatchLater = { viewModel.videoController.toggleWatchLater(target) },
+            onToggleSave = { viewModel.videoController.toggleSaveVideo(target) },
+            onAddToPlaylist = { videoPlaylistPickerTarget = target },
+            onOpenChannel = target.channelUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                { viewModel.videoController.openChannelProfile(url, target.channelName) }
+            },
+            onShare = { shareVideoLink(context, target) },
+            onOpenOfficialApp = { openOfficialExternalUrl(context, target.contentUrl) },
+            onNotInterested = { viewModel.videoController.markVideoNotInterested(target) },
+            onDontRecommendChannel = { viewModel.videoController.dontRecommendChannel(target) },
+            onHideVideo = { viewModel.videoController.hideVideoFromFeed(target) },
+            onDismiss = { videoOptionsTarget = null }
+        )
+    }
+
+    videoPlaylistPickerTarget?.let { target ->
+        VideoPlaylistPickerDialog(
+            video = target,
+            playlists = videoPlaylists,
+            colors = colors,
+            onSelectPlaylist = { playlist ->
+                viewModel.videoController.addVideoToPlaylist(playlist.id, playlist.name, target)
+            },
+            onCreatePlaylistWithVideo = { name ->
+                viewModel.videoController.createVideoPlaylist(name, target)
+            },
+            onDismiss = { videoPlaylistPickerTarget = null }
+        )
+    }
+
+    if (showVideoNotificationsSheet) {
+        VideoNotificationsPanel(
+            notifications = videoNotifications,
+            isSyncing = isSyncingVideoNotifications,
+            colors = colors,
+            onOpenVideo = { item -> viewModel.videoController.openNotificationItem(item) },
+            onOpenChannel = { item -> viewModel.videoController.openNotificationChannel(item) },
+            onMarkAsRead = { id -> viewModel.videoController.markVideoNotificationRead(id) },
+            onMarkAllRead = { viewModel.videoController.markAllVideoNotificationsRead() },
+            onDeleteNotification = { id -> viewModel.videoController.deleteVideoNotification(id) },
+            onClearAll = { viewModel.videoController.clearAllVideoNotifications() },
+            onCheckNow = { viewModel.videoController.syncFollowedChannelNotificationsNow(userInitiated = true) },
+            onDismiss = { showVideoNotificationsSheet = false }
         )
     }
 
@@ -912,7 +1157,8 @@ fun HomeScreen(
             onToggleReduceAnimations = { reduce -> viewModel.setReduceAnimations(reduce) },
             onOpenDynamicColors = onOpenDynamicColors,
             onOpenPlayerStyles = onOpenPlayerStyles,
-            onOpenSettings = onOpenSettings
+            onOpenSettings = onOpenSettings,
+            onOpenMusicAnalytics = onOpenMusicAnalytics
         )
     }
 }
@@ -1006,7 +1252,7 @@ private fun MadeForYouEditorialSection(
         }
 
         // Compact horizontal 2-per-column quick pick tiles (varied compact row layout)
-        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val motionState = LocalEffectiveMotionState.current
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
         val chunked = quickPicks.chunked(2)
@@ -1021,7 +1267,7 @@ private fun MadeForYouEditorialSection(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier
                         .width(248.dp)
-                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
+                        .carouselItemDepthEffect(listState, index, motionState)
                 ) {
                     pair.forEach { song ->
                         val isCurrent = currentSongId == song.id
@@ -1104,7 +1350,7 @@ private fun FavouriteAlbumsSection(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val motionState = LocalEffectiveMotionState.current
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
 
@@ -1138,7 +1384,7 @@ private fun FavouriteAlbumsSection(
                     onLongClick = repSong?.let { s -> { onAlbumLongClick(s) } },
                     modifier = Modifier
                         .width(156.dp)
-                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
+                        .carouselItemDepthEffect(listState, index, motionState)
                 )
             }
         }
@@ -1167,7 +1413,7 @@ private fun FavouriteArtistsSection(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val motionState = LocalEffectiveMotionState.current
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
 
@@ -1184,7 +1430,7 @@ private fun FavouriteArtistsSection(
                 Column(
                     modifier = Modifier
                         .width(96.dp)
-                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
+                        .carouselItemDepthEffect(listState, index, motionState)
                         .clip(RoundedCornerShape(16.dp))
                         .clickable { onArtistClick(artist) }
                         .padding(4.dp),
@@ -1364,7 +1610,7 @@ private fun MostPlayedArchSection(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        val motionState = ui.motion.LocalEffectiveMotionState.current
+        val motionState = LocalEffectiveMotionState.current
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         val snapFling = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(lazyListState = listState)
 
@@ -1394,7 +1640,7 @@ private fun MostPlayedArchSection(
                     onLongClick = { onSongLongClick(song) },
                     modifier = Modifier
                         .width(144.dp)
-                        .then(ui.motion.carouselItemDepthEffect(listState, index, motionState))
+                        .carouselItemDepthEffect(listState, index, motionState)
                 )
             }
         }

@@ -49,19 +49,24 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SpatialAudio
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Usb
+import data.artwork.ArtworkDisplayRole
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -128,6 +133,7 @@ import ui.motion.LocalEffectiveMotionState
 import ui.motion.LocalTrackTransitionDirection
 import ui.motion.SonoraTransitions
 import ui.motion.rememberMotionAwareHaptic
+import ui.library.OnlinePlaylistPickerDialog
 import ui.theme.HomeThemeMode
 import ui.theme.LocalDynamicColorPalette
 import ui.theme.LocalEditorialColors
@@ -150,6 +156,7 @@ fun PlayerScreen(
     onOpenEqualizer: (() -> Unit)? = null,
     onOpenAudioStudio: (() -> Unit)? = null,
     onOpenQueueScreen: (() -> Unit)? = null,
+    onOpenLyricsScreen: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
@@ -160,7 +167,8 @@ fun PlayerScreen(
     val homeThemeMode by viewModel.homeThemeMode.collectAsState()
     val dynamicColorsEnabled by viewModel.dynamicColorsEnabled.collectAsState()
 
-    val currentStyle by viewModel.playerStyle.collectAsState()
+    val currentPortraitStyle by viewModel.playerStyle.collectAsState()
+    val landscapePlayerStyle by viewModel.landscapePlayerStyle.collectAsState()
     val currentSeekbarStyle by viewModel.seekbarStyle.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
@@ -174,6 +182,17 @@ fun PlayerScreen(
     val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
     val isMeteredNetwork by viewModel.isMeteredNetwork.collectAsState()
     val isNetworkOnline by viewModel.isNetworkOnline.collectAsState()
+    val downloadedKeys by viewModel.downloadedSourceKeys.collectAsState()
+    val isCurrentDownloaded = remember(currentSong, downloadedKeys) {
+        currentSong?.let { viewModel.isSongDownloaded(it) } == true
+    }
+    val onlineSavedTracks by viewModel.onlineSavedTracks.collectAsState()
+    val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
+    val isCurrentSavedOnline = remember(currentSong, onlineSavedTracks) {
+        val id = currentSong?.id
+        id != null && onlineSavedTracks.any { it.id == id }
+    }
+    var showOnlinePlaylistPicker by remember { mutableStateOf(false) }
 
     val playerAppearance by viewModel.playerAppearance.collectAsState()
     val playerGestureConfig by viewModel.playerGestureConfig.collectAsState()
@@ -194,6 +213,10 @@ fun PlayerScreen(
     var showAudioEffectsModal by remember { mutableStateOf(false) }
     var showEqualizerModal by remember { mutableStateOf(false) }
     var showQualitySelectorSheet by remember { mutableStateOf(false) }
+    var showSongRadioSheet by remember { mutableStateOf(false) }
+    val songRadioSession by viewModel.songRadioSession.collectAsState()
+    val currentSongRecommendations by viewModel.currentSongRecommendations.collectAsState()
+    val isLoadingCurrentSongRecs by viewModel.isLoadingCurrentSongRecommendations.collectAsState()
 
     BackHandler(enabled = showCustomizationScreen) {
         showCustomizationScreen = false
@@ -220,6 +243,11 @@ fun PlayerScreen(
             if (onOpenQueueScreen != null) onOpenQueueScreen() else showQueueSheet = true
         }
     }
+    val openLyricsAction: () -> Unit = remember(onOpenLyricsScreen) {
+        {
+            if (onOpenLyricsScreen != null) onOpenLyricsScreen() else showLyricsSheet = true
+        }
+    }
 
     val renderState = remember(
         currentSong,
@@ -231,7 +259,10 @@ fun PlayerScreen(
         visualizerFrequencies,
         waveformSamples,
         isVisualizerActive,
-        visualizerStyle
+        visualizerStyle,
+        queue,
+        queueIndex,
+        currentTrackLyrics
     ) {
         PlayerRenderState(
             song = currentSong,
@@ -244,11 +275,14 @@ fun PlayerScreen(
             waveformSamples = waveformSamples,
             isVisualizerActive = isVisualizerActive,
             visualizerStyle = visualizerStyle,
-            isNowPlayingActive = true
+            isNowPlayingActive = true,
+            queue = queue,
+            queueIndex = queueIndex,
+            rawLyrics = currentTrackLyrics
         )
     }
 
-    val styleCallbacks = remember(openQueueAction, openAudioStudioAction, openEqualizerAction, currentSong) {
+    val styleCallbacks = remember(openQueueAction, openLyricsAction, openAudioStudioAction, openEqualizerAction, currentSong) {
         PlayerStyleCallbacks(
             onTogglePlayPause = { viewModel.togglePlayPause() },
             onPlayNext = { viewModel.playNext() },
@@ -257,7 +291,7 @@ fun PlayerScreen(
             onToggleShuffle = { viewModel.toggleShuffle() },
             onCycleRepeat = { viewModel.cycleRepeatMode() },
             onOpenQueue = openQueueAction,
-            onOpenLyrics = { showLyricsSheet = true },
+            onOpenLyrics = openLyricsAction,
             onOpenSleepTimer = { showSleepTimerDialog = true },
             onClose = onClose,
             onArtworkLongPress = { showStyleWheel = true },
@@ -285,7 +319,39 @@ fun PlayerScreen(
     val useThemeBrush = playerAppearance.backgroundStyle == PlayerBackgroundStyle.THEME_DEFAULT ||
         playerAppearance.backgroundStyle == PlayerBackgroundStyle.GRADIENT_GLOW
 
-    CompositionLocalProvider(LocalTrackTransitionDirection provides trackDirection) {
+    val nowPlayingDownloadAction = remember(currentSong, isCurrentDownloaded) {
+        currentSong?.let { song ->
+            NowPlayingDownloadAction(
+                isDownloaded = isCurrentDownloaded,
+                onDownloadClick = { viewModel.requestDownloadSong(song) }
+            )
+        }
+    }
+
+    val nowPlayingOnlineLibraryAction = remember(currentSong, isCurrentSavedOnline) {
+        currentSong?.takeIf { it.isOnline }?.let { song ->
+            NowPlayingOnlineLibraryAction(
+                isSaved = isCurrentSavedOnline,
+                onToggleSaveClick = { viewModel.toggleSaveOnlineTrack(song) },
+                onAddToOnlinePlaylistClick = { showOnlinePlaylistPicker = true }
+            )
+        }
+    }
+
+    val seekCapability = remember(playbackInfo.isSeekable, playbackInfo.isLiveStream) {
+        ui.player.seekbar.PlaybackSeekCapability(
+            isSeekable = playbackInfo.isSeekable,
+            isLiveStream = playbackInfo.isLiveStream
+        )
+    }
+
+    CompositionLocalProvider(
+        LocalTrackTransitionDirection provides trackDirection,
+        LocalNowPlayingDownloadAction provides nowPlayingDownloadAction,
+        LocalNowPlayingOnlineLibraryAction provides nowPlayingOnlineLibraryAction,
+        LocalNowPlayingStopAction provides { viewModel.stopPlayback() },
+        ui.player.seekbar.LocalPlaybackSeekCapability provides seekCapability
+    ) {
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -329,7 +395,8 @@ fun PlayerScreen(
                         .fillMaxSize()
                         .alpha(if (colors.isDark) 0.22f else 0.14f),
                     cornerRadius = 0.dp,
-                    isPlaying = playbackInfo.isPlaying
+                    isPlaying = playbackInfo.isPlaying,
+                    artworkRole = ArtworkDisplayRole.NOW_PLAYING
                 )
                 Box(
                     modifier = Modifier
@@ -348,9 +415,12 @@ fun PlayerScreen(
         }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.weight(1f)) {
+            androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                val isLandscapeContainer = maxWidth > maxHeight && maxWidth >= 560.dp
+                val activeStyle = if (isLandscapeContainer) landscapePlayerStyle else currentPortraitStyle
+
                 AnimatedContent(
-                    targetState = currentStyle,
+                    targetState = activeStyle,
                     transitionSpec = {
                         if (reduceAnimations) {
                             fadeIn(animationSpec = snap()) togetherWith fadeOut(animationSpec = snap())
@@ -361,275 +431,25 @@ fun PlayerScreen(
                     },
                     label = "playerStyleSwitch"
                 ) { targetStyle ->
-                    when (targetStyle) {
-                        PlayerStyle.CLASSIC -> ClassicPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onOpenAudioEffects = styleCallbacks.onOpenAudioEffects,
-                            onOpenEqualizer = styleCallbacks.onOpenEqualizer,
-                            onOpenOutputDevice = styleCallbacks.onOpenOutputDevice,
-                            onToggleFocusMode = styleCallbacks.onToggleFocusMode,
-                            isVisualizerActive = isVisualizerActive,
-                            onToggleVisualizer = styleCallbacks.onToggleVisualizer,
-                            frequencies = visualizerFrequencies,
-                            waveform = waveformSamples,
-                            visualizerStyle = visualizerStyle,
-                            onCycleVisualizerStyle = styleCallbacks.onCycleVisualizerStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            onOpenCustomization = styleCallbacks.onOpenCustomization,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.MINIMAL -> MinimalPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.MATERIAL_YOU -> MaterialYouPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.GLASS -> GlassPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.GESTURE -> GesturePlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            gesturesEnabled = playerGestureConfig.gesturesEnabled,
-                            swipeArtworkToSkip = playerGestureConfig.swipeArtworkEnabled,
-                            doubleTapToSeek = playerGestureConfig.doubleTapEnabled,
-                            swipeDownToCollapse = playerGestureConfig.swipeDownToMinimizeEnabled,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.EDITORIAL -> EditorialPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.CANVAS -> CanvasPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.BENTO -> BentoPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.POSTER -> PosterPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.POLAROID -> PolaroidPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.VINYL -> VinylPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.DIAL -> DialPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.MORPH -> MorphPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.STICKER -> StickerPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.WAVEFORM -> WaveformPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.SPECTRUM -> SpectrumPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.ORBIT -> OrbitPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                        PlayerStyle.HERO -> HeroPlayer(
-                            song = currentSong,
-                            playbackInfo = playbackInfo,
-                            onTogglePlayPause = styleCallbacks.onTogglePlayPause,
-                            onPlayNext = styleCallbacks.onPlayNext,
-                            onPlayPrevious = styleCallbacks.onPlayPrevious,
-                            onSeekTo = styleCallbacks.onSeekTo,
-                            onToggleShuffle = styleCallbacks.onToggleShuffle,
-                            onCycleRepeat = styleCallbacks.onCycleRepeat,
-                            onOpenQueue = styleCallbacks.onOpenQueue,
-                            onOpenLyrics = styleCallbacks.onOpenLyrics,
-                            onOpenSleepTimer = styleCallbacks.onOpenSleepTimer,
-                            onClose = styleCallbacks.onClose,
-                            onArtworkLongPress = styleCallbacks.onArtworkLongPress,
-                            seekbarStyle = currentSeekbarStyle,
-                            appearance = playerAppearance,
-                            gestureConfig = playerGestureConfig,
-                            gestureController = gestureController,
-                            liveWaveform = waveformSamples,
-                            onToggleFavorite = styleCallbacks.onToggleFavorite,
-                            onCyclePlayerStyle = styleCallbacks.onCyclePlayerStyle
-                        )
-                        PlayerStyle.NEON -> NeonPlayer(
-                            state = renderState,
-                            callbacks = styleCallbacks,
-                            gestureController = gestureController
-                        )
-                    }
+                    PlayerStyleRenderer(
+                        style = targetStyle,
+                        state = renderState,
+                        callbacks = styleCallbacks,
+                        gestureController = gestureController
+                    )
                 }
             }
 
             // Online Buffering & Playback Error Status Strip
-            if (currentSong?.isOnline == true && playbackInfo.isBuffering) {
+            val showLoadingStatus = currentSong?.isOnline == true &&
+                playbackInfo.isBuffering &&
+                playbackInfo.playbackStage != com.example.model.OnlinePlaybackStage.PLAYING &&
+                playbackInfo.playbackStage != com.example.model.OnlinePlaybackStage.FAILED &&
+                playbackInfo.playbackError.isNullOrBlank()
+            if (showLoadingStatus) {
+                val stageText = playbackInfo.statusMessage.ifBlank {
+                    playbackInfo.playbackStage.defaultMessage
+                }.ifBlank { "Buffering audio..." }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -653,7 +473,7 @@ fun PlayerScreen(
                                 color = colors.onAccentPill
                             )
                             Text(
-                                text = "Resolving & buffering ${currentSong?.providerName?.ifBlank { "online" }} stream...",
+                                text = stageText,
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -706,6 +526,23 @@ fun PlayerScreen(
                                     )
                                 }
                             }
+                            if (queue.size > 1) {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.clearPlaybackError()
+                                        viewModel.playNext(withCrossfade = false)
+                                    },
+                                    modifier = Modifier.testTag("player_skip_unavailable_button")
+                                ) {
+                                    Text(
+                                        text = "Skip Next",
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        color = colors.textSecondary
+                                    )
+                                }
+                            }
                             TextButton(
                                 onClick = { viewModel.retryCurrentPlayback() },
                                 modifier = Modifier.testTag("player_retry_button")
@@ -735,6 +572,9 @@ fun PlayerScreen(
                 connectedDevice = connectedAudioDevice,
                 playbackSpeed = playbackSpeed,
                 isOnlineTrack = currentSong?.isOnline == true,
+                isDownloaded = isCurrentDownloaded,
+                isRadioActive = songRadioSession.isActive,
+                onDownloadTrack = { currentSong?.let { viewModel.requestDownloadSong(it) } },
                 onOpenOutputDevice = { showOutputDeviceSheet = true },
                 onCycleSpeed = {
                     val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
@@ -742,6 +582,11 @@ fun PlayerScreen(
                     viewModel.setPlaybackSpeed(next)
                 },
                 onOpenStreamQuality = { showQualitySelectorSheet = true },
+                onOpenSongRadio = {
+                    viewModel.loadRecommendationsForCurrentSong(forceRefresh = false)
+                    showSongRadioSheet = true
+                },
+                onOpenLyrics = openLyricsAction,
                 onOpenEqualizer = openEqualizerAction,
                 onOpenAudioStudio = openAudioStudioAction,
                 onToggleFocusMode = { isArtworkFocusMode = true },
@@ -774,20 +619,38 @@ fun PlayerScreen(
         // Quick Style Switching Modal (Style Wheel)
         if (showStyleWheel) {
             PlayerStyleWheel(
-                currentStyle = currentStyle,
+                currentStyle = currentPortraitStyle,
                 onSelectStyle = { newStyle -> viewModel.setPlayerStyle(newStyle) },
                 onDismiss = { showStyleWheel = false },
                 song = currentSong
             )
         }
 
-        // Now Playing Customization Overlay
+        // Online Playlist Picker from Now Playing overflow menu
+        if (showOnlinePlaylistPicker) {
+            currentSong?.takeIf { it.isOnline }?.let { onlineSong ->
+                OnlinePlaylistPickerDialog(
+                    song = onlineSong,
+                    playlists = onlinePlaylists,
+                    colors = colors,
+                    onDismiss = { showOnlinePlaylistPicker = false },
+                    onSelectPlaylist = { target ->
+                        viewModel.addTrackToOnlinePlaylist(target.id, onlineSong, target.name)
+                    },
+                    onCreatePlaylistWithSong = { name ->
+                        viewModel.createOnlinePlaylist(name, initialTrack = onlineSong)
+                    }
+                )
+            }
+        }
+
+        // Now Playing Appearance & Style Hub Overlay
         AnimatedVisibility(
             visible = showCustomizationScreen,
             enter = SonoraTransitions.pushEnter(motionState),
             exit = SonoraTransitions.pushExit(motionState)
         ) {
-            PlayerCustomizationScreen(
+            PlayerAppearanceHubScreen(
                 viewModel = viewModel,
                 onBack = { showCustomizationScreen = false }
             )
@@ -914,6 +777,22 @@ fun PlayerScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                    if (qSong.isOnline) {
+                                        val qDownloaded = viewModel.isSongDownloaded(qSong)
+                                        IconButton(
+                                            onClick = { viewModel.requestDownloadSong(qSong) },
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .testTag("queue_sheet_download_${qSong.id}")
+                                        ) {
+                                            Icon(
+                                                imageVector = if (qDownloaded) Icons.Default.DownloadDone else Icons.Default.Download,
+                                                contentDescription = if (qDownloaded) "Downloaded Offline" else "Download Track",
+                                                tint = if (qDownloaded) colors.accentStrong else colors.textSecondary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
                                     IconButton(
                                         onClick = { viewModel.removeFromQueue(index) },
                                         modifier = Modifier.size(48.dp)
@@ -928,156 +807,17 @@ fun PlayerScreen(
             }
         }
 
-        // Synchronized Lyrics Modal Bottom Sheet
-        if (showLyricsSheet) {
-            val lyrics = currentTrackLyrics ?: currentSong?.lyrics
-            var fontSizeSp by remember { mutableFloatStateOf(16f) }
-            val parsedLines = remember(lyrics) { LyricsExtractor.parseLrcLines(lyrics) }
-            val activeLineIdx = remember(parsedLines, playbackInfo.currentPositionMs) {
-                LyricsExtractor.findActiveLineIndex(parsedLines, playbackInfo.currentPositionMs)
-            }
-            val lyricsListState = rememberLazyListState()
-
-            LaunchedEffect(activeLineIdx) {
-                if (activeLineIdx >= 0 && activeLineIdx < parsedLines.size) {
-                    if (reduceAnimations) {
-                        lyricsListState.scrollToItem((activeLineIdx - 2).coerceAtLeast(0))
-                    } else {
-                        lyricsListState.animateScrollToItem((activeLineIdx - 2).coerceAtLeast(0))
-                    }
-                }
-            }
-
-            ModalBottomSheet(
-                onDismissRequest = { showLyricsSheet = false },
-                containerColor = colors.surface,
-                contentColor = colors.textPrimary,
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "SYNCHRONIZED LYRICS",
-                                fontFamily = OutfitFontFamily,
-                                color = colors.accentStrong,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
-                            )
-                            Text(
-                                text = currentSong?.title ?: "",
-                                fontFamily = PlusJakartaFontFamily,
-                                color = colors.textSecondary,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(colors.surfaceElevated)
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "A-",
-                                fontFamily = PlusJakartaFontFamily,
-                                color = colors.textSecondary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clickable { fontSizeSp = (fontSizeSp - 2f).coerceAtLeast(12f) }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            )
-                            Text(
-                                text = "A+",
-                                fontFamily = PlusJakartaFontFamily,
-                                color = colors.accentStrong,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier
-                                    .clickable { fontSizeSp = (fontSizeSp + 2f).coerceAtMost(24f) }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            )
-                            IconButton(onClick = { showLyricsSheet = false }, modifier = Modifier.size(40.dp)) {
-                                Icon(Icons.Default.Close, contentDescription = "Close", tint = colors.textPrimary, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    if (lyrics.isNullOrBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "No synced lyrics found for this song.\nSupports standard .lrc file tags.",
-                                fontFamily = PlusJakartaFontFamily,
-                                color = colors.textMuted,
-                                textAlign = TextAlign.Center,
-                                fontSize = 14.sp
-                            )
-                        }
-                    } else {
-                        LazyColumn(
-                            state = lyricsListState,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(400.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            if (parsedLines.isNotEmpty()) {
-                                itemsIndexed(parsedLines) { index, line ->
-                                    val isCurrentLine = index == activeLineIdx
-                                    Text(
-                                        text = line.text,
-                                        fontFamily = if (isCurrentLine) OutfitFontFamily else PlusJakartaFontFamily,
-                                        color = if (isCurrentLine) colors.accentStrong else colors.textSecondary.copy(alpha = 0.7f),
-                                        fontSize = if (isCurrentLine) (fontSizeSp + 3f).sp else fontSizeSp.sp,
-                                        fontWeight = if (isCurrentLine) FontWeight.Bold else FontWeight.Normal,
-                                        lineHeight = (fontSizeSp * 1.4f).sp,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .then(
-                                                if (line.timestampMs >= 0L) {
-                                                    Modifier.clickable { viewModel.seekTo(line.timestampMs) }
-                                                } else {
-                                                    Modifier
-                                                }
-                                            )
-                                            .padding(vertical = 4.dp)
-                                    )
-                                }
-                            } else {
-                                item {
-                                    Text(
-                                        text = lyrics,
-                                        fontFamily = PlusJakartaFontFamily,
-                                        color = colors.textSecondary,
-                                        fontSize = fontSizeSp.sp,
-                                        lineHeight = (fontSizeSp * 1.5f).sp
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        // Full-Screen Synchronized Lyrics Fallback Overlay (when PlayerScreen is hosted standalone)
+        AnimatedVisibility(
+            visible = showLyricsSheet,
+            enter = SonoraTransitions.modalEnter(motionState),
+            exit = SonoraTransitions.modalExit(motionState)
+        ) {
+            ui.lyrics.FullScreenLyricsScreen(
+                viewModel = viewModel,
+                onBack = { showLyricsSheet = false },
+                onRequestImportLrc = {}
+            )
         }
 
         // Sleep Timer Dialog
@@ -1279,6 +1019,149 @@ fun PlayerScreen(
                 onDismiss = { showQualitySelectorSheet = false }
             )
         }
+
+        if (showSongRadioSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showSongRadioSheet = false },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                containerColor = colors.surface,
+                contentColor = colors.textPrimary,
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 24.dp)
+                        .testTag("song_radio_sheet"),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "SONG RADIO & SIMILAR TRACKS",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = colors.accentStrong
+                            )
+                            Text(
+                                text = currentSong?.let { "Based on ${it.title}" } ?: "Similar Recommendations",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                if (songRadioSession.isActive) {
+                                    viewModel.stopSongRadio()
+                                } else {
+                                    currentSong?.let { viewModel.startSongRadio(it, autoPlayFirstAdded = false) }
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (songRadioSession.isActive) colors.surfaceTinted else colors.accentStrong,
+                                contentColor = if (songRadioSession.isActive) colors.textPrimary else colors.onAccentStrong
+                            ),
+                            modifier = Modifier.testTag("song_radio_toggle_button")
+                        ) {
+                            Icon(Icons.Default.Radio, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (songRadioSession.isActive) "Stop Radio" else "Start Radio",
+                                fontFamily = PlusJakartaFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    if (isLoadingCurrentSongRecs) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = colors.accentStrong, strokeWidth = 2.5.dp)
+                        }
+                    } else if (currentSongRecommendations.isEmpty()) {
+                        Text(
+                            text = "Tap Start Radio or Refresh to discover continuous playable songs similar to the current track.",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 13.sp,
+                            color = colors.textSecondary
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            itemsIndexed(currentSongRecommendations, key = { idx, s -> "rec_${s.id}_$idx" }) { idx, recSong ->
+                                Surface(
+                                    onClick = {
+                                        viewModel.playSong(recSong, currentSongRecommendations, idx)
+                                        showSongRadioSheet = false
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = colors.surfaceTinted,
+                                    border = BorderStroke(0.75.dp, colors.cardBorder),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        ArtworkAlbumView(
+                                            song = recSong,
+                                            modifier = Modifier.size(44.dp),
+                                            cornerRadius = 10.dp
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = recSong.title,
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                color = colors.textPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${recSong.artist} • ${recSong.durationFormatted}",
+                                                fontFamily = PlusJakartaFontFamily,
+                                                fontSize = 12.sp,
+                                                color = colors.textSecondary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        TextButton(onClick = { viewModel.addToQueue(recSong) }) {
+                                            Text("Queue", color = colors.accentStrong, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     }
 }
 
@@ -1287,9 +1170,14 @@ private fun PlayerUtilityStrip(
     connectedDevice: String,
     playbackSpeed: Float,
     isOnlineTrack: Boolean,
+    isDownloaded: Boolean,
+    isRadioActive: Boolean,
+    onDownloadTrack: () -> Unit,
     onOpenOutputDevice: () -> Unit,
     onCycleSpeed: () -> Unit,
     onOpenStreamQuality: () -> Unit,
+    onOpenSongRadio: () -> Unit,
+    onOpenLyrics: () -> Unit,
     onOpenEqualizer: () -> Unit,
     onOpenAudioStudio: () -> Unit,
     onToggleFocusMode: () -> Unit,
@@ -1377,6 +1265,15 @@ private fun PlayerUtilityStrip(
                 }
 
                 IconButton(
+                    onClick = onOpenLyrics,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("player_utility_lyrics_button")
+                ) {
+                    Icon(Icons.Default.Lyrics, contentDescription = "Full-Screen Lyrics", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
+                }
+
+                IconButton(
                     onClick = onOpenEqualizer,
                     modifier = Modifier
                         .size(48.dp)
@@ -1396,6 +1293,19 @@ private fun PlayerUtilityStrip(
 
                 if (isOnlineTrack) {
                     IconButton(
+                        onClick = onDownloadTrack,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("player_download_button")
+                    ) {
+                        Icon(
+                            if (isDownloaded) Icons.Default.DownloadDone else Icons.Default.Download,
+                            contentDescription = if (isDownloaded) "Downloaded Offline" else "Download Track",
+                            tint = colors.accentStrong,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(
                         onClick = onOpenStreamQuality,
                         modifier = Modifier
                             .size(48.dp)
@@ -1403,6 +1313,20 @@ private fun PlayerUtilityStrip(
                     ) {
                         Icon(Icons.Default.HighQuality, contentDescription = "Stream Quality", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
                     }
+                }
+
+                IconButton(
+                    onClick = onOpenSongRadio,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("player_song_radio_button")
+                ) {
+                    Icon(
+                        Icons.Default.Radio,
+                        contentDescription = if (isRadioActive) "Song Radio Active" else "Start Song Radio",
+                        tint = if (isRadioActive) colors.accentStrong else colors.textPrimary,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
 
                 IconButton(

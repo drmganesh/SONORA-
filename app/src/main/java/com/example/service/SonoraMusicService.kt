@@ -6,20 +6,29 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.support.v4.media.session.MediaSessionCompat
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.audio.SonoraAudioEngine
+import com.example.data.SonoraDatabase
 import com.example.model.RepeatMode
 import com.example.model.Song
+import data.analytics.PlaybackSessionSnapshotEntity
+import data.preferences.PlaybackLifecyclePreferences
+import domain.player.PlaybackAudioFocusController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
 class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
@@ -53,20 +62,37 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     val mediaSession: MediaSessionCompat?
         get() = if (::notificationManager.isInitialized) notificationManager.mediaSession else null
 
+    val focusController: PlaybackAudioFocusController = PlaybackAudioFocusController()
+
     private val serviceJob = Job()
     private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
     private var autonomousController: playback.UnifiedPlaybackController? = null
     private var connectivityMonitor: data.online.NetworkConnectivityMonitor? = null
+    private var lifecyclePrefs: PlaybackLifecyclePreferences? = null
 
     private var audioManager: AudioManager? = null
+    private var audioDeviceCallback: AudioDeviceCallback? = null
     private var isNoisyReceiverRegistered = false
     private var focusRequestObj: Any? = null
     private var hasAudioFocus = false
-    private var resumeOnAudioFocusGain = false
     @Volatile
     private var audioFocusEnabled = true
     @Volatile
     private var headsetAutoPlayPause = true
+    @Volatile
+    var backgroundPlaybackEnabled: Boolean = true
+        private set
+    @Volatile
+    var resumeAfterPhoneCallEnabled: Boolean = true
+        private set
+    @Volatile
+    var stopPlaybackOnTaskRemovedEnabled: Boolean = true
+        private set
+
+    @Volatile
+    var lastSavedTransientPositionMs: Long = 0L
+        private set
+
     @Volatile
     var currentSongSnapshot: Song? = null
         private set
@@ -88,12 +114,14 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     var playbackCallback: ServicePlaybackCallback? = null
         private set
 
-    // Headphone unplug listener
+    // Headphone unplug / Bluetooth becoming noisy listener
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && headsetAutoPlayPause) {
-                resumeOnAudioFocusGain = false
-                handleRemotePause()
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                val action = focusController.onAudioBecomingNoisy(headsetAutoPlayPause)
+                if (action is PlaybackAudioFocusController.Action.PauseForBecomingNoisy) {
+                    handleRemotePause(userInitiated = true)
+                }
             }
         }
     }
@@ -106,6 +134,9 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         fun onRemoteShuffle()
         fun onRemoteRepeat()
         fun onRemoteSeek(positionMs: Long)
+        fun onRemoteStop() {}
+        fun onTransientFocusPause(positionMs: Long) {}
+        fun onTaskRemovedStop(positionMs: Long, wasPlaying: Boolean) {}
     }
 
     fun setPlaybackCallback(callback: ServicePlaybackCallback?) {
@@ -123,6 +154,24 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         if (!focusEnabled) {
             abandonAudioFocus()
         }
+    }
+
+    fun updateLifecycleSettings(
+        backgroundPlayback: Boolean,
+        resumeAfterPhoneCall: Boolean,
+        stopOnTaskRemoved: Boolean
+    ) {
+        backgroundPlaybackEnabled = backgroundPlayback
+        resumeAfterPhoneCallEnabled = resumeAfterPhoneCall
+        stopPlaybackOnTaskRemovedEnabled = stopOnTaskRemoved
+    }
+
+    fun notifyUserStartedPlayback() {
+        focusController.onUserStartedOrResumedPlayback()
+    }
+
+    fun notifyUserManualPause() {
+        focusController.onUserManualPause()
     }
 
     fun requestAudioFocusIfNeeded(): Boolean {
@@ -165,7 +214,6 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     fun abandonAudioFocus() {
-        resumeOnAudioFocusGain = false
         hasAudioFocus = false
         if (::audioEngine.isInitialized) {
             audioEngine.setFocusDuckScale(1.0f)
@@ -192,6 +240,24 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         notificationManager = SonoraNotificationManager(this, serviceScope)
 
+        lifecyclePrefs = PlaybackLifecyclePreferences(applicationContext).also { prefs ->
+            serviceScope.launch {
+                prefs.backgroundSettingsFlow
+                    .catch { e -> Log.w(TAG, "Background settings stream error: ${e.message}") }
+                    .collect { settings ->
+                        backgroundPlaybackEnabled = settings.backgroundPlaybackEnabled
+                        resumeAfterPhoneCallEnabled = settings.resumeAfterPhoneCall
+                    }
+            }
+            serviceScope.launch {
+                prefs.sessionSettingsFlow
+                    .catch { e -> Log.w(TAG, "Session settings stream error: ${e.message}") }
+                    .collect { settings ->
+                        stopPlaybackOnTaskRemovedEnabled = settings.stopPlaybackOnTaskRemoved
+                    }
+            }
+        }
+
         val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
         try {
             ContextCompat.registerReceiver(
@@ -204,6 +270,39 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         } catch (e: Exception) {
             Log.e(TAG, "Failed registering noisy audio receiver", e)
         }
+
+        registerBluetoothAndHeadsetRouteCallback()
+    }
+
+    private fun registerBluetoothAndHeadsetRouteCallback() {
+        val am = audioManager ?: return
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                if (!headsetAutoPlayPause || removedDevices.isNullOrEmpty()) return
+                val disconnectedExternalOutput = removedDevices.any { dev ->
+                    dev.isSink && (
+                        dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                            dev.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                            dev.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                            dev.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                            dev.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                            dev.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                        )
+                }
+                if (disconnectedExternalOutput && ::audioEngine.isInitialized && audioEngine.isPlaying) {
+                    val action = focusController.onAudioBecomingNoisy(headsetAutoPlayPause)
+                    if (action is PlaybackAudioFocusController.Action.PauseForBecomingNoisy) {
+                        handleRemotePause(userInitiated = true)
+                    }
+                }
+            }
+        }
+        try {
+            am.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+            audioDeviceCallback = callback
+        } catch (e: Throwable) {
+            Log.w(TAG, "AudioDeviceCallback registration skipped: ${e.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -215,7 +314,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
         when (intent?.action) {
             ACTION_PLAY -> handleRemotePlay()
-            ACTION_PAUSE -> handleRemotePause()
+            ACTION_PAUSE -> handleRemotePause(userInitiated = true)
             ACTION_NEXT -> handleRemoteNext()
             ACTION_PREV -> handleRemotePrev()
             ACTION_SHUFFLE -> handleRemoteShuffle()
@@ -224,16 +323,13 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                 val pos = intent.getLongExtra(EXTRA_SEEK_POSITION, -1L)
                 if (pos >= 0) handleRemoteSeek(pos)
             }
-            ACTION_STOP -> {
-                handleRemotePause()
-                notificationManager.clearNotification()
-                stopSelf()
-            }
+            ACTION_STOP -> handleExplicitStop()
         }
         return START_NOT_STICKY
     }
 
     fun handleRemotePlay() {
+        focusController.onUserStartedOrResumedPlayback()
         playbackCallback?.let {
             it.onRemotePlay()
             return
@@ -256,7 +352,10 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         }
     }
 
-    fun handleRemotePause() {
+    fun handleRemotePause(userInitiated: Boolean = true) {
+        if (userInitiated) {
+            focusController.onUserManualPause()
+        }
         playbackCallback?.let {
             it.onRemotePause()
             return
@@ -272,6 +371,162 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             repeatMode = currentRepeatModeSnapshot,
             deviceName = currentDeviceNameSnapshot
         )
+    }
+
+    /**
+     * Pauses playback during an incoming/outgoing phone call or temporary audio focus loss
+     * WITHOUT abandoning the AudioFocusRequest, so Android delivers AUDIOFOCUS_GAIN when the call ends.
+     */
+    private fun pauseForTransientFocusLoss() {
+        val exactPos = if (::audioEngine.isInitialized) {
+            audioEngine.setFocusDuckScale(1.0f)
+            val pos = audioEngine.currentPosition
+            if (audioEngine.isPlaying) {
+                audioEngine.pause()
+            }
+            pos
+        } else {
+            lastSavedTransientPositionMs
+        }
+        lastSavedTransientPositionMs = exactPos
+        hasAudioFocus = false
+
+        val cb = playbackCallback
+        if (cb != null) {
+            cb.onTransientFocusPause(exactPos)
+        } else {
+            persistFallbackSessionSnapshot(
+                positionMs = exactPos,
+                wasPlaying = true,
+                explicitlyStopped = false
+            )
+            updateForegroundNotification(
+                song = currentSongSnapshot,
+                isPlaying = false,
+                isShuffle = currentIsShuffleSnapshot,
+                repeatMode = currentRepeatModeSnapshot,
+                deviceName = currentDeviceNameSnapshot
+            )
+        }
+    }
+
+    /**
+     * Explicit Stop Playback action (from notification Stop button, MediaSession.onStop(), or Now Playing menu).
+     * Stops playback, marks session explicitly stopped, clears notification & MediaSession, preserves queue,
+     * and stops the foreground service cleanly.
+     */
+    fun handleExplicitStop() {
+        focusController.onUserExplicitStop()
+        val exactPos = if (::audioEngine.isInitialized) {
+            val pos = audioEngine.currentPosition
+            if (audioEngine.isPlaying) {
+                audioEngine.pause()
+            }
+            pos
+        } else {
+            0L
+        }
+        abandonAudioFocus()
+        val cb = playbackCallback
+        if (cb != null) {
+            cb.onRemoteStop()
+        } else {
+            persistFallbackSessionSnapshot(
+                positionMs = exactPos,
+                wasPlaying = false,
+                explicitlyStopped = true
+            )
+        }
+        if (::notificationManager.isInitialized) {
+            notificationManager.clearNotification(deactivateSession = true)
+        }
+        stopSelf()
+    }
+
+    /**
+     * Triggered by Android ONLY when the user explicitly removes SONORA from Recents / App Switcher.
+     * Never triggered by pressing Home, locking the screen, or switching to another app.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val wasPlaying = ::audioEngine.isInitialized && audioEngine.isPlaying
+        val exactPos = if (::audioEngine.isInitialized) audioEngine.currentPosition else 0L
+
+        if (!stopPlaybackOnTaskRemovedEnabled) {
+            // Persist current position safely while letting background music continue if configured off.
+            persistFallbackSessionSnapshot(
+                positionMs = exactPos,
+                wasPlaying = wasPlaying,
+                explicitlyStopped = false
+            )
+            super.onTaskRemoved(rootIntent)
+            return
+        }
+
+        // 1. Save current playback session & queue pointer BEFORE stopping playback.
+        val cb = playbackCallback
+        if (cb != null) {
+            cb.onTaskRemovedStop(exactPos, wasPlaying)
+        } else {
+            persistFallbackSessionSnapshot(
+                positionMs = exactPos,
+                wasPlaying = wasPlaying,
+                explicitlyStopped = false
+            )
+        }
+
+        // 2. Stop playback, abandon audio focus, clear notification + MediaSession, and stop service.
+        focusController.onUserExplicitStop()
+        if (::audioEngine.isInitialized) {
+            if (audioEngine.isPlaying) {
+                audioEngine.pause()
+            }
+            audioEngine.stopPlayback()
+        }
+        abandonAudioFocus()
+        if (::notificationManager.isInitialized) {
+            notificationManager.clearNotification(deactivateSession = true)
+        }
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun persistFallbackSessionSnapshot(
+        positionMs: Long,
+        wasPlaying: Boolean,
+        explicitlyStopped: Boolean
+    ) {
+        val song = currentSongSnapshot ?: return
+        val speed = if (::audioEngine.isInitialized) audioEngine.playbackSpeed else 1.0f
+        val idx = currentQueueIndexSnapshot
+        val repeatName = currentRepeatModeSnapshot.name
+        val shuffle = currentIsShuffleSnapshot
+        serviceScope.launch(Dispatchers.IO) {
+            runCatching {
+                val dao = SonoraDatabase.getDatabase(applicationContext).dao()
+                val existing = dao.getPlaybackSessionSnapshot()
+                dao.upsertPlaybackSessionSnapshot(
+                    PlaybackSessionSnapshotEntity(
+                        id = 1,
+                        lastTrackId = song.id,
+                        isOnline = song.isOnline,
+                        positionMs = positionMs.coerceAtLeast(0L),
+                        queueIndex = idx,
+                        repeatMode = repeatName,
+                        isShuffle = shuffle,
+                        playbackSpeed = speed,
+                        volume = existing?.volume ?: 1.0f,
+                        contextType = existing?.contextType ?: "QUEUE",
+                        contextLabel = existing?.contextLabel ?: "",
+                        lastPlayerStyle = existing?.lastPlayerStyle ?: "",
+                        wasPlayingWhenSaved = wasPlaying,
+                        explicitlyStopped = explicitlyStopped,
+                        savedAtMs = System.currentTimeMillis()
+                    )
+                )
+            }.onFailure { e ->
+                Log.w(TAG, "Fallback session snapshot persistence skipped: ${e.message}")
+            }
+        }
     }
 
     fun handleRemoteNext() {
@@ -369,7 +624,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         val monitor = connectivityMonitor ?: data.online.NetworkConnectivityMonitor(applicationContext).also {
             connectivityMonitor = it
         }
-        val dao = com.example.data.SonoraDatabase.getDatabase(applicationContext).dao()
+        val dao = SonoraDatabase.getDatabase(applicationContext).dao()
         val repo = data.online.OnlineMusicRepository(dao = dao, connectivityMonitor = monitor)
         return playback.UnifiedPlaybackController(audioEngine, repo).also {
             autonomousController = it
@@ -379,6 +634,7 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     private fun playSongAutonomously(song: Song) {
         if (!::audioEngine.isInitialized) return
         if (!requestAudioFocusIfNeeded()) return
+        focusController.onUserStartedOrResumedPlayback()
         currentSongSnapshot = song
         updateForegroundNotification(
             song = song,
@@ -455,29 +711,44 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     override fun onAudioFocusChange(focusChange: Int) {
         if (!audioFocusEnabled) return
-        when (focusChange) {
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                hasAudioFocus = false
-                resumeOnAudioFocusGain = false
-                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
-                handleRemotePause()
+        val currentlyPlaying = ::audioEngine.isInitialized && audioEngine.isPlaying
+        when (val action = focusController.onAudioFocusChange(
+            focusChange = focusChange,
+            isCurrentlyPlaying = currentlyPlaying,
+            resumeAfterPhoneCallEnabled = resumeAfterPhoneCallEnabled
+        )) {
+            is PlaybackAudioFocusController.Action.PauseForTransientLoss -> {
+                pauseForTransientFocusLoss()
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                resumeOnAudioFocusGain = ::audioEngine.isInitialized && audioEngine.isPlaying
-                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
-                handleRemotePause()
-            }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(0.25f)
-            }
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                hasAudioFocus = true
-                if (::audioEngine.isInitialized) audioEngine.setFocusDuckScale(1.0f)
-                if (resumeOnAudioFocusGain) {
-                    resumeOnAudioFocusGain = false
-                    handleRemotePlay()
+            is PlaybackAudioFocusController.Action.DuckVolume -> {
+                if (::audioEngine.isInitialized) {
+                    audioEngine.setFocusDuckScale(action.targetVolume)
                 }
             }
+            is PlaybackAudioFocusController.Action.RestoreVolumeOnly -> {
+                hasAudioFocus = true
+                if (::audioEngine.isInitialized) {
+                    audioEngine.setFocusDuckScale(action.targetVolume)
+                }
+            }
+            is PlaybackAudioFocusController.Action.ResumeAfterFocusGain -> {
+                hasAudioFocus = true
+                if (::audioEngine.isInitialized) {
+                    audioEngine.setFocusDuckScale(action.targetVolume)
+                }
+                handleRemotePlay()
+            }
+            is PlaybackAudioFocusController.Action.PauseForPermanentLoss -> {
+                hasAudioFocus = false
+                if (::audioEngine.isInitialized) {
+                    audioEngine.setFocusDuckScale(1.0f)
+                }
+                handleRemotePause(userInitiated = false)
+            }
+            is PlaybackAudioFocusController.Action.PauseForBecomingNoisy -> {
+                handleRemotePause(userInitiated = true)
+            }
+            PlaybackAudioFocusController.Action.None -> Unit
         }
     }
 
@@ -486,6 +757,12 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     override fun onDestroy() {
         super.onDestroy()
         abandonAudioFocus()
+        audioDeviceCallback?.let { cb ->
+            try {
+                audioManager?.unregisterAudioDeviceCallback(cb)
+            } catch (_: Throwable) {}
+            audioDeviceCallback = null
+        }
         if (isNoisyReceiverRegistered) {
             try {
                 unregisterReceiver(noisyReceiver)

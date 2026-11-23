@@ -1,12 +1,31 @@
 <resources>
     <string name="app_name">SONORA</string>
     <string name="about_app_description">Premium Music Player</string>
-    <string name="about_developer_eyebrow">DEVELOPER</string>
+    <string name="about_developer_eyebrow">DEVELOPED BY</string>
     <string name="about_developer_name">🩺 Dr. M. GANESWAR</string>
     <string name="about_developer_handle">@drmganeswar</string>
     <string name="about_developer_qualification">(BAMS Final Year)</string>
     <string name="about_developer_portrait_desc">Developer portrait of Dr. M. GANESWAR</string>
     <string name="about_logo_desc">SONORA application logo</string>
-    <string name="splash_brand_tagline">Premium Music Experience</string>
+    <string name="splash_brand_tagline">A Music Experience Beyond Listening</string>
     <string name="splash_logo_content_desc">SONORA official emblem</string>
+    <string name="developer_credit_label">Developed by</string>
+    <string name="developer_credit_name">Dr. M. GANESWAR</string>
+    <string name="developer_credit_qualification">BAMS Final Year</string>
+    <string name="about_developer_footer">Developed by Dr. M. GANESWAR • BAMS Final Year</string>
+    <string name="mini_player_action_minimize">Minimize to circular player</string>
+    <string name="mini_player_action_dismiss">Dismiss mini player</string>
+    <string name="mini_player_action_expand">Expand mini player</string>
+    <string name="mini_player_action_open_now_playing">Open Now Playing</string>
+    <string name="mini_player_action_next">Next track</string>
+    <string name="mini_player_action_previous">Previous track</string>
+    <string name="mini_player_restore_desc">Restore mini player</string>
+    <string name="video_notifications_title">All Notifications</string>
+    <string name="video_notifications_bell_desc">Online video notifications</string>
+    <string name="video_notifications_empty_title">You\'re all caught up</string>
+    <string name="video_notifications_empty_subtitle">New uploads from SONORA followed channels with notifications enabled appear here after periodic checks.</string>
+    <string name="video_notifications_periodic_note">Updated via periodic checks for followed channels</string>
+    <string name="video_notifications_mark_all_read">Mark all read</string>
+    <string name="video_notifications_clear_all">Clear all</string>
+    <string name="video_notifications_check_now">Check for new uploads</string>
 </resources>

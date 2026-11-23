@@ -35,7 +35,8 @@ fun WaveformSeekbar(
     accentColor: Color = SonoraDustyRose,
     inactiveColor: Color = SonoraCharcoalBorder,
     liveWaveform: FloatArray? = null,
-    heightScale: Float = 1f
+    heightScale: Float = 1f,
+    onSeekCancelled: () -> Unit = {}
 ) {
     val staticProfile = remember {
         floatArrayOf(
@@ -52,32 +53,14 @@ fun WaveformSeekbar(
         modifier = modifier
             .fillMaxWidth()
             .height((36f * heightScale.coerceIn(0.8f, 1.4f)).dp)
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectTapGestures(
-                    onPress = { offset ->
-                        val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                        onSeekConfirmed(newProgress)
-                    }
-                )
-            }
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                    },
-                    onDragEnd = { onSeekConfirmed(progress) },
-                    onDragCancel = { onSeekConfirmed(progress) },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        val newProgress = (change.position.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                    }
-                )
-            }
+            .scrubSeekGestures(
+                enabled = enabled,
+                progress = progress,
+                onScrubStart = onSeekProgress,
+                onScrubUpdate = onSeekProgress,
+                onScrubEnd = onSeekConfirmed,
+                onScrubCancel = onSeekCancelled
+            )
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
             val totalBars = staticProfile.size

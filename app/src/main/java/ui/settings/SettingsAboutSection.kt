@@ -212,12 +212,13 @@ fun SettingsAboutContent(
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
-            text = "Developed by Dr. M. GANESWAR",
+            text = stringResource(id = R.string.about_developer_footer),
             fontFamily = PlusJakartaFontFamily,
             fontWeight = FontWeight.Medium,
             fontSize = 11.sp,
             color = colors.textMuted,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            modifier = Modifier.testTag("about_developer_credit")
         )
     }
 }

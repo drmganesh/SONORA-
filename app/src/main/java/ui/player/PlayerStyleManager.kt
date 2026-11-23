@@ -2,14 +2,20 @@ package ui.player
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.example.model.AnimationIntensity
 import com.example.model.ArtworkAnimationOption
 import com.example.model.PlaybackInfo
 import com.example.model.PlayerAppearanceConfig
 import com.example.model.PlayerGestureConfig
+import com.example.model.PlayerTypographyOption
 import com.example.model.Song
 import com.example.model.VisualizerStyle
+import com.example.ui.theme.OutfitFontFamily
+import com.example.ui.theme.PlusJakartaFontFamily
 import ui.player.seekbar.SeekbarStyle
 import ui.theme.DynamicColorPalette
 import ui.theme.EditorialColors
@@ -50,7 +56,10 @@ data class PlayerRenderState(
     val waveformSamples: FloatArray,
     val isVisualizerActive: Boolean,
     val visualizerStyle: VisualizerStyle,
-    val isNowPlayingActive: Boolean = true
+    val isNowPlayingActive: Boolean = true,
+    val queue: List<Song> = emptyList(),
+    val queueIndex: Int = 0,
+    val rawLyrics: String? = null
 )
 
 object PlayerStyleManager {
@@ -60,7 +69,37 @@ object PlayerStyleManager {
         colors: EditorialColors,
         palette: DynamicColorPalette
     ): Color {
-        return if (appearance.useDynamicAlbumAccent) colors.accentStrong else palette.primary
+        if (!appearance.useDynamicAlbumAccent) return colors.accentStrong
+        val strength = appearance.dynamicColorIntensity.coerceIn(0f, 1f)
+        return lerp(colors.accentStrong, palette.primary, strength)
+    }
+
+    fun resolveTitleFontFamily(option: PlayerTypographyOption): FontFamily {
+        return when (option) {
+            PlayerTypographyOption.MODERN_SANS -> OutfitFontFamily
+            PlayerTypographyOption.EDITORIAL_SERIF -> FontFamily.Serif
+            PlayerTypographyOption.MONO_STUDIO -> FontFamily.Monospace
+            PlayerTypographyOption.BOLD_DISPLAY -> OutfitFontFamily
+        }
+    }
+
+    fun resolveBodyFontFamily(option: PlayerTypographyOption): FontFamily {
+        return when (option) {
+            PlayerTypographyOption.MODERN_SANS -> PlusJakartaFontFamily
+            PlayerTypographyOption.EDITORIAL_SERIF -> FontFamily.Serif
+            PlayerTypographyOption.MONO_STUDIO -> FontFamily.Monospace
+            PlayerTypographyOption.BOLD_DISPLAY -> PlusJakartaFontFamily
+        }
+    }
+
+    fun shouldRunAmbientAnimation(
+        state: PlayerRenderState,
+        reduceAnimations: Boolean
+    ): Boolean {
+        return state.isNowPlayingActive &&
+            state.playbackInfo.isPlaying &&
+            !reduceAnimations &&
+            state.appearance.animationIntensity != AnimationIntensity.OFF
     }
 
     fun resolveCornerRadius(

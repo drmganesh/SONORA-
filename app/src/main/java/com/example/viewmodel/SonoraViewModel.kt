@@ -33,6 +33,7 @@ import domain.color.DynamicThemeGenerator
 import ui.theme.DynamicColorPalette
 import com.example.util.AlbumArtHelper
 import kotlinx.coroutines.withContext
+import com.example.model.OnlinePlaybackStage
 import com.example.model.PlaybackInfo
 import com.example.model.Playlist
 import com.example.model.RepeatMode
@@ -107,8 +108,23 @@ sealed interface OnlineSearchUiState {
 sealed interface OnlineCollectionUiState {
     data object Idle : OnlineCollectionUiState
     data class Loading(val title: String) : OnlineCollectionUiState
-    data class Success(val details: OnlineCollectionDetails) : OnlineCollectionUiState
+    data class Success(
+        val details: OnlineCollectionDetails,
+        val sourceItem: OnlineTrack? = null
+    ) : OnlineCollectionUiState
     data class Error(val message: String, val item: OnlineTrack) : OnlineCollectionUiState
+}
+
+sealed interface DownloadFlowUiState {
+    data object Idle : DownloadFlowUiState
+    data class AskFolderLocation(
+        val pendingTrack: OnlineTrack?,
+        val suggestedInitialUri: android.net.Uri? = null,
+        val reasonMessage: String? = null
+    ) : DownloadFlowUiState
+    data class QualitySelector(
+        val data: domain.download.DownloadQualitySheetData
+    ) : DownloadFlowUiState
 }
 
 class SonoraViewModel(application: Application) : AndroidViewModel(application) {
@@ -124,6 +140,67 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val scanner = LocalMusicScanner(application, dao)
     private val connectivityMonitor = NetworkConnectivityMonitor(application)
     val onlineRepository = OnlineMusicRepository(dao, connectivityMonitor)
+    val lyricsPreferences = data.preferences.LyricsPreferences(application)
+    val lyricsRepository = data.lyrics.LyricsRepository(application, dao)
+    val videoAccountPreferences = data.preferences.VideoAccountPreferences(application)
+    val experiencePreferences = data.preferences.ExperiencePreferences(application)
+    val videoExperienceSettings: StateFlow<data.preferences.VideoExperienceSettings> =
+        experiencePreferences.videoExperienceFlow.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            data.preferences.VideoExperienceSettings()
+        )
+    val musicExperienceSettings: StateFlow<data.preferences.MusicExperienceSettings> =
+        experiencePreferences.musicExperienceFlow.stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            data.preferences.MusicExperienceSettings()
+        )
+    val musicQueueRepository = data.queue.MusicQueueRepository(dao)
+    val onlineVideoRepository = data.video.OnlineVideoRepository(
+        dao = dao,
+        dataSource = data.video.OnlineVideoDataSource(connectivityMonitor)
+    )
+    val videoController: viewmodel.OnlineVideoController by lazy {
+        viewmodel.OnlineVideoController(
+            context = application,
+            scope = viewModelScope,
+            repository = onlineVideoRepository,
+            accountPreferences = videoAccountPreferences,
+            getCountryCode = { _onlineContentCountry.value },
+            getLanguageCode = { _onlineContentLanguage.value },
+            onPauseMusicForVideo = { pausePlayback() },
+            onActiveVideoArtworkChanged = { _ ->
+                if (_homeMusicMode.value == HomeMusicMode.ONLINE_VIDEO) {
+                    updateDynamicThemeForCurrentMode()
+                }
+            },
+            onPlayChannelAudioInBackground = { videos ->
+                val tracks = videos.map { video ->
+                    OnlineTrack(
+                        stableId = OnlineTrackMapper.computeStableId("youtube", video.contentUrl),
+                        serviceId = 0,
+                        providerKey = "youtube",
+                        providerName = "YouTube",
+                        contentUrl = video.contentUrl,
+                        title = video.title,
+                        artist = video.channelName,
+                        artistUrl = video.channelUrl,
+                        durationMs = video.durationSeconds * 1000L,
+                        artworkUrl = video.thumbnailUrl,
+                        viewCount = video.viewCount ?: -1L,
+                        isLive = video.isLive
+                    )
+                }
+                if (tracks.isNotEmpty()) {
+                    playOnlineTrack(tracks.first(), tracks)
+                }
+            },
+            experiencePreferences = experiencePreferences,
+            isMeteredNetwork = { connectivityMonitor.isMeteredConnection.value },
+            dao = dao
+        )
+    }
 
     private var musicService: SonoraMusicService? = null
     private var unifiedPlaybackController: UnifiedPlaybackController? = null
@@ -145,8 +222,92 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _queue = MutableStateFlow<List<Song>>(emptyList())
     val queue: StateFlow<List<Song>> = _queue.asStateFlow()
 
+    private val _queuedItems = MutableStateFlow<List<data.queue.QueuedMusicItem>>(emptyList())
+    val queuedItems: StateFlow<List<data.queue.QueuedMusicItem>> = _queuedItems.asStateFlow()
+
     private val _queueIndex = MutableStateFlow(preferences.lastQueueIndex)
     val queueIndex: StateFlow<Int> = _queueIndex.asStateFlow()
+
+    private val _miniPlayerDisplayState = MutableStateFlow(domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER)
+    val miniPlayerDisplayState: StateFlow<domain.player.MiniPlayerDisplayState> = _miniPlayerDisplayState.asStateFlow()
+
+    val isMusicMiniPlayerDismissed: StateFlow<Boolean> = _miniPlayerDisplayState
+        .map { it == domain.player.MiniPlayerDisplayState.DISMISSED }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val isMusicMiniPlayerCollapsedToCircle: StateFlow<Boolean> = _miniPlayerDisplayState
+        .map { it == domain.player.MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val playbackLifecyclePreferences = data.preferences.PlaybackLifecyclePreferences(application)
+    val backgroundPlaybackSettings: StateFlow<data.preferences.BackgroundPlaybackSettings> =
+        playbackLifecyclePreferences.backgroundSettingsFlow
+            .stateIn(viewModelScope, SharingStarted.Eagerly, data.preferences.BackgroundPlaybackSettings())
+    val sessionManagementSettings: StateFlow<data.preferences.SessionManagementSettings> =
+        playbackLifecyclePreferences.sessionSettingsFlow
+            .stateIn(viewModelScope, SharingStarted.Eagerly, data.preferences.SessionManagementSettings())
+
+    val listeningAnalyticsRepository = data.analytics.ListeningAnalyticsRepository(dao)
+    private val listeningTimeTracker = domain.analytics.ListeningTimeTracker()
+
+    private val _analyticsTimeRange = MutableStateFlow(domain.analytics.AnalyticsTimeRange.LAST_30_DAYS)
+    val analyticsTimeRange: StateFlow<domain.analytics.AnalyticsTimeRange> = _analyticsTimeRange.asStateFlow()
+
+    val listeningAnalyticsDashboard: StateFlow<domain.analytics.ListeningAnalyticsDashboardState> =
+        combine(listeningAnalyticsRepository.allEventsFlow, _analyticsTimeRange) { events, range ->
+            domain.analytics.ListeningAnalyticsCalculator.calculate(events, range)
+        }.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            domain.analytics.ListeningAnalyticsDashboardState()
+        )
+
+    private val _sessionRestoreNotice = MutableStateFlow<String?>(null)
+    val sessionRestoreNotice: StateFlow<String?> = _sessionRestoreNotice.asStateFlow()
+
+    private var activePlaybackContextType: String = "QUEUE"
+    private var activePlaybackContextLabel: String = ""
+
+    // --- Advanced Music Discovery & Current-Song Radio State ---
+    private val _selectedMoodActivity = MutableStateFlow(data.online.MusicMoodActivity.FOCUS)
+    val selectedMoodActivity: StateFlow<data.online.MusicMoodActivity> = _selectedMoodActivity.asStateFlow()
+
+    private val _moodDiscoveryTracks = MutableStateFlow<List<OnlineTrack>>(emptyList())
+    val moodDiscoveryTracks: StateFlow<List<OnlineTrack>> = _moodDiscoveryTracks.asStateFlow()
+
+    private val _isLoadingMoodDiscovery = MutableStateFlow(false)
+    val isLoadingMoodDiscovery: StateFlow<Boolean> = _isLoadingMoodDiscovery.asStateFlow()
+
+    private val _selectedIndiaCategory = MutableStateFlow(data.online.IndiaMusicCategory.TRENDING_INDIA)
+    val selectedIndiaCategory: StateFlow<data.online.IndiaMusicCategory> = _selectedIndiaCategory.asStateFlow()
+
+    private val _indiaDiscoveryTracks = MutableStateFlow<List<OnlineTrack>>(emptyList())
+    val indiaDiscoveryTracks: StateFlow<List<OnlineTrack>> = _indiaDiscoveryTracks.asStateFlow()
+
+    private val _isLoadingIndiaDiscovery = MutableStateFlow(false)
+    val isLoadingIndiaDiscovery: StateFlow<Boolean> = _isLoadingIndiaDiscovery.asStateFlow()
+
+    private val _currentSongRecommendations = MutableStateFlow<List<Song>>(emptyList())
+    val currentSongRecommendations: StateFlow<List<Song>> = _currentSongRecommendations.asStateFlow()
+
+    private val _isLoadingCurrentSongRecommendations = MutableStateFlow(false)
+    val isLoadingCurrentSongRecommendations: StateFlow<Boolean> = _isLoadingCurrentSongRecommendations.asStateFlow()
+
+    private val _songRadioSession = MutableStateFlow(data.online.SongRadioSession())
+    val songRadioSession: StateFlow<data.online.SongRadioSession> = _songRadioSession.asStateFlow()
+
+    private val _pendingVideoDownload =
+        MutableStateFlow<Pair<domain.video.OnlineVideoItem, domain.video.ResolvedVideoDetails>?>(null)
+    val pendingVideoDownload: StateFlow<Pair<domain.video.OnlineVideoItem, domain.video.ResolvedVideoDetails>?> =
+        _pendingVideoDownload.asStateFlow()
+
+    private var pendingVideoDownloadAfterFolderPick: Pair<domain.video.OnlineVideoItem, domain.video.ResolvedVideoDetails>? = null
+    private var queuePersistJob: Job? = null
+    private var moodDiscoveryJob: Job? = null
+    private var indiaDiscoveryJob: Job? = null
+    private var currentSongRecsJob: Job? = null
+    private var radioTopUpJob: Job? = null
+    private var lastQueuePositionPersistMs: Long = 0L
 
     private val _playbackInfo = MutableStateFlow(
         PlaybackInfo(
@@ -197,6 +358,91 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     private val onlineRegionPrefs = data.preferences.OnlineRegionPreferences(application)
     private val homeModePrefs = data.preferences.HomeModePreferences(application)
+    private val libraryModePrefs = data.preferences.LibraryModePreferences(application)
+    private val ambientEffectsPrefs = data.preferences.AmbientEffectsPreferences(application)
+
+    val snowfallSettings: StateFlow<data.preferences.SnowfallSettings> =
+        ambientEffectsPrefs.snowfallSettingsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = data.preferences.SnowfallSettings.DEFAULT
+        )
+
+    fun updateSnowfallSettings(transform: (data.preferences.SnowfallSettings) -> data.preferences.SnowfallSettings) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ambientEffectsPrefs.updateSettings(transform)
+        }
+    }
+
+    fun resetSnowfallSettings() {
+        viewModelScope.launch(Dispatchers.IO) {
+            ambientEffectsPrefs.resetToDefaults()
+        }
+    }
+
+    // --- Advanced Cache Management (Media3 SimpleCache + DataStore) ---
+    val cacheManager: data.cache.SonoraMediaCacheManager =
+        data.cache.SonoraMediaCacheManager.getInstance(application)
+
+    val cacheSettings: StateFlow<data.cache.CacheSettings> = cacheManager.settings
+    val cacheStorageSnapshot: StateFlow<data.cache.CacheStorageSnapshot> = cacheManager.storageSnapshot
+
+    fun setCacheMusicEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.setCacheMusicEnabled(enabled)
+        }
+    }
+
+    fun setCacheVideosEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.setCacheVideosEnabled(enabled)
+        }
+    }
+
+    fun setPreloadUpcomingEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.setPreloadUpcomingEnabled(enabled)
+            if (!enabled) {
+                cacheManager.cancelBackgroundPreloadsForForegroundPlayback()
+            }
+        }
+    }
+
+    fun setMusicCacheLimitBytes(limitBytes: Long, clearExistingWhenZero: Boolean = true) {
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.setMusicCacheLimitBytes(limitBytes, clearExistingWhenZero)
+        }
+    }
+
+    fun clearMusicCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.clearMusicCache()
+        }
+    }
+
+    fun clearVideoCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.clearVideoAndShortsCache()
+        }
+    }
+
+    fun refreshCacheStorageSnapshot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheManager.refreshStorageSnapshot()
+        }
+    }
+
+    // Dedicated Library Repositories (Offline / Online / Downloads)
+    val offlineLibraryRepository = data.library.OfflineLibraryRepository(
+        context = application,
+        scanner = scanner,
+        dao = dao,
+        folderFilterPreferences = folderFilterPreferences
+    )
+    val onlineLibraryRepository = data.library.OnlineLibraryRepository(
+        dao = dao,
+        onlineMusicRepository = onlineRepository
+    )
 
     @Volatile
     var hasCompletedLaunchAnimation: Boolean = false
@@ -205,6 +451,23 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private var userUpdatedHomeMode = false
     private val _homeMusicMode = MutableStateFlow(homeModePrefs.getInitialHomeMusicMode())
     val homeMusicMode: StateFlow<HomeMusicMode> = _homeMusicMode.asStateFlow()
+
+    @Volatile
+    private var userUpdatedLibraryMode = false
+    private val _librarySectionMode = MutableStateFlow(libraryModePrefs.getInitialLibrarySectionMode())
+    val librarySectionMode: StateFlow<domain.library.LibrarySectionMode> = _librarySectionMode.asStateFlow()
+
+    private val _onlineLibrarySearchQuery = MutableStateFlow("")
+    val onlineLibrarySearchQuery: StateFlow<String> = _onlineLibrarySearchQuery.asStateFlow()
+
+    private val _onlineLibrarySortOption = MutableStateFlow(domain.library.OnlineLibrarySortOption.RECENTLY_SAVED)
+    val onlineLibrarySortOption: StateFlow<domain.library.OnlineLibrarySortOption> = _onlineLibrarySortOption.asStateFlow()
+
+    private val _onlineLibraryProviderFilter = MutableStateFlow<String?>(null)
+    val onlineLibraryProviderFilter: StateFlow<String?> = _onlineLibraryProviderFilter.asStateFlow()
+
+    private val _libraryFeedbackMessage = MutableStateFlow<String?>(null)
+    val libraryFeedbackMessage: StateFlow<String?> = _libraryFeedbackMessage.asStateFlow()
 
     private val _onlineContentCountry = MutableStateFlow(onlineRegionPrefs.getInitialCountryCode())
     val onlineContentCountry: StateFlow<String> = _onlineContentCountry.asStateFlow()
@@ -221,17 +484,145 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentResolvedStream = MutableStateFlow<ResolvedOnlineStreamResult?>(null)
     val currentResolvedStream: StateFlow<ResolvedOnlineStreamResult?> = _currentResolvedStream.asStateFlow()
 
-    val onlineSavedTracks: StateFlow<List<Song>> = onlineRepository.savedOnlineTracksFlow
+    val onlineSavedTracks: StateFlow<List<Song>> = onlineLibraryRepository.savedTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val recentlyPlayedOnlineTracks: StateFlow<List<Song>> = onlineRepository.recentlyPlayedOnlineTracksFlow
+    val onlineFavoriteTracks: StateFlow<List<Song>> = onlineLibraryRepository.favoriteTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recentlyPlayedOnlineTracks: StateFlow<List<Song>> = onlineLibraryRepository.recentlyPlayedTracksFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val onlineListeningHistory: StateFlow<List<Song>> = onlineLibraryRepository.listeningHistoryFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val savedOnlineAlbums: StateFlow<List<domain.library.SavedOnlineAlbum>> = onlineLibraryRepository.savedAlbumsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val followedOnlineArtists: StateFlow<List<domain.library.FollowedOnlineArtist>> = onlineLibraryRepository.followedArtistsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val onlinePlaylists: StateFlow<List<domain.library.OnlinePlaylist>> = onlineLibraryRepository.onlinePlaylistsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val savedOnlineAlbumIds: StateFlow<Set<Long>> = savedOnlineAlbums
+        .map { list -> list.map { it.stableId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    val followedOnlineArtistIds: StateFlow<Set<Long>> = followedOnlineArtists
+        .map { list -> list.map { it.stableId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    val savedOnlinePlaylistUrls: StateFlow<Set<String>> = onlinePlaylists
+        .map { list -> list.mapNotNull { it.externalContentUrl?.takeIf { u -> u.isNotBlank() } }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     val allOnlineTracks: StateFlow<List<Song>> = onlineRepository.allOnlineTracksFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val onlineSearchHistory: StateFlow<List<String>> = onlineRepository.searchHistoryFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // --- Music Download Manager State (SAF + WorkManager + Room + DataStore) ---
+    val downloadCoordinator = data.download.DownloadManagerCoordinator.getInstance(application)
+    val downloadRepository = data.library.DownloadRepository(downloadCoordinator, dao)
+
+    val downloadTasks: StateFlow<List<domain.download.DownloadTask>> =
+        downloadRepository.downloadTasksFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeDownloadTasksCount: StateFlow<Int> =
+        downloadRepository.activeDownloadTasksFlow
+            .map { it.size }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val downloadedTracks: StateFlow<List<domain.download.DownloadedTrack>> =
+        downloadRepository.downloadedTracksFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val downloadedMusicTracks: StateFlow<List<domain.download.DownloadedTrack>> =
+        downloadCoordinator.downloadedMusicFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val downloadedVideos: StateFlow<List<domain.download.DownloadedTrack>> =
+        downloadCoordinator.downloadedVideosFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val downloadedSongs: StateFlow<List<Song>> =
+        downloadCoordinator.downloadedMusicFlow
+            .map { list -> list.filter { !it.isMissingFile }.map { it.toSong() } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val madeForYouCards: StateFlow<List<data.online.PersonalizedMusicMixCard>> =
+        combine(
+            recentlyPlayedOnlineTracks,
+            onlineFavoriteTracks,
+            _onlineContentCountry,
+            _discoverMusicLanguage
+        ) { recent, favs, country, lang ->
+            data.online.MusicDiscoveryAndRadioEngine.buildMadeForYouCards(
+                recentSongs = recent,
+                favoriteSongs = favs,
+                countryCode = country,
+                discoverLanguage = lang
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val basedOnListeningCards: StateFlow<List<data.online.PersonalizedMusicMixCard>> =
+        combine(
+            recentlyPlayedOnlineTracks,
+            onlineFavoriteTracks,
+            _onlineContentCountry
+        ) { recent, favs, country ->
+            data.online.MusicDiscoveryAndRadioEngine.buildBasedOnListeningCards(
+                recentSongs = recent,
+                favoriteSongs = favs,
+                countryCode = country
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val downloadedSourceKeys: StateFlow<Set<String>> =
+        downloadCoordinator.downloadedTracksFlow
+            .map { list -> list.filter { !it.isMissingFile }.map { it.sourceKey }.toSet() }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+
+    val activeDownloadStateBySourceKey: StateFlow<Map<String, domain.download.DownloadState>> =
+        downloadCoordinator.allTasksFlow
+            .map { tasks ->
+                tasks.filter { !it.state.isTerminal || it.state == domain.download.DownloadState.COMPLETED }
+                    .associate { it.sourceKey to it.state }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val downloadStorageSummary: StateFlow<domain.download.DownloadStorageSummary> =
+        downloadCoordinator.storageSummaryFlow
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5000),
+                domain.download.DownloadStorageSummary()
+            )
+
+    val downloadLocationConfig: StateFlow<data.preferences.DownloadLocationConfig> =
+        downloadCoordinator.preferences.locationConfigFlow
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5000),
+                data.preferences.DownloadLocationConfig()
+            )
+
+    private val _downloadFlowState = MutableStateFlow<DownloadFlowUiState>(DownloadFlowUiState.Idle)
+    val downloadFlowState: StateFlow<DownloadFlowUiState> = _downloadFlowState.asStateFlow()
+
+    private val _downloadFeedbackMessage = MutableStateFlow<String?>(null)
+    val downloadFeedbackMessage: StateFlow<String?> = _downloadFeedbackMessage.asStateFlow()
+
+    private val _downloadSortOption = MutableStateFlow(domain.download.DownloadSortOption.RECENTLY_DOWNLOADED)
+    val downloadSortOption: StateFlow<domain.download.DownloadSortOption> = _downloadSortOption.asStateFlow()
+
+    private val _downloadSearchQuery = MutableStateFlow("")
+    val downloadSearchQuery: StateFlow<String> = _downloadSearchQuery.asStateFlow()
+
+    private var downloadFormatResolveJob: Job? = null
 
     private val _onlineRecommendationProfile = MutableStateFlow(
         OnlineRecommendationEngine.buildDailyRecommendationProfile(
@@ -412,13 +803,22 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _matchNextSongEnabled = MutableStateFlow(preferences.matchNextSongEnabled)
     val matchNextSongEnabled: StateFlow<Boolean> = _matchNextSongEnabled.asStateFlow()
 
-    // Player Style System (18+ Styles)
+    // Player Style System (30 Curated Styles + 10 Preserved Legacy Styles, 20 Mini-Player Styles)
     private val playerStylePrefs = PlayerStylePreferences(application)
     private val _playerStyle = MutableStateFlow(preferences.playerStyle)
     val playerStyle: StateFlow<PlayerStyle> = _playerStyle.asStateFlow()
 
+    private val _landscapePlayerStyle = MutableStateFlow(preferences.landscapePlayerStyle)
+    val landscapePlayerStyle: StateFlow<PlayerStyle> = _landscapePlayerStyle.asStateFlow()
+
     private val _miniPlayerStyle = MutableStateFlow(preferences.miniPlayerStyle)
     val miniPlayerStyle: StateFlow<com.example.model.MiniPlayerStyle> = _miniPlayerStyle.asStateFlow()
+
+    private val _favoritePlayerStyles = MutableStateFlow(preferences.favoritePlayerStyleIds)
+    val favoritePlayerStyles: StateFlow<Set<String>> = _favoritePlayerStyles.asStateFlow()
+
+    private val _favoriteMiniPlayerStyles = MutableStateFlow(preferences.favoriteMiniPlayerStyleIds)
+    val favoriteMiniPlayerStyles: StateFlow<Set<String>> = _favoriteMiniPlayerStyles.asStateFlow()
 
     private val _lockScreenStyle = MutableStateFlow(preferences.lockScreenStyle)
     val lockScreenStyle: StateFlow<com.example.model.LockScreenStyle> = _lockScreenStyle.asStateFlow()
@@ -435,6 +835,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             playerStylePrefs.setPlayerStyle(style)
         }
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = _playbackInfo.value.isPlaying,
+            explicitlyStopped = false
+        )
+    }
+
+    fun setLandscapePlayerStyle(style: PlayerStyle) {
+        _landscapePlayerStyle.value = style
+        preferences.landscapePlayerStyle = style
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setLandscapePlayerStyle(style)
+        }
     }
 
     fun cyclePlayerStyle() {
@@ -448,6 +860,28 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         preferences.miniPlayerStyle = style
         viewModelScope.launch(Dispatchers.IO) {
             playerStylePrefs.setMiniPlayerStyle(style)
+        }
+    }
+
+    fun toggleFavoritePlayerStyle(style: PlayerStyle) {
+        val updated = _favoritePlayerStyles.value.toMutableSet().apply {
+            if (!add(style.id)) remove(style.id)
+        }.toSet()
+        _favoritePlayerStyles.value = updated
+        preferences.favoritePlayerStyleIds = updated
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setFavoritePlayerStyles(updated)
+        }
+    }
+
+    fun toggleFavoriteMiniPlayerStyle(style: com.example.model.MiniPlayerStyle) {
+        val updated = _favoriteMiniPlayerStyles.value.toMutableSet().apply {
+            if (!add(style.id)) remove(style.id)
+        }.toSet()
+        _favoriteMiniPlayerStyles.value = updated
+        preferences.favoriteMiniPlayerStyleIds = updated
+        viewModelScope.launch(Dispatchers.IO) {
+            playerStylePrefs.setFavoriteMiniPlayerStyles(updated)
         }
     }
 
@@ -476,6 +910,15 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             playerStylePrefs.setAppearanceConfig(def)
         }
+    }
+
+    fun resetAllPlayerCustomizationToDefault() {
+        setPlayerStyle(PlayerStyle.DEFAULT)
+        setLandscapePlayerStyle(PlayerStyle.DEFAULT_LANDSCAPE)
+        setMiniPlayerStyle(com.example.model.MiniPlayerStyle.DEFAULT)
+        resetPlayerAppearanceToDefault()
+        setSeekbarStyle(ui.player.seekbar.SeekbarStyle.DEFAULT)
+        setVisualizerStyle(com.example.model.VisualizerStyle.SPECTRUM_BARS)
     }
 
     fun updatePlayerGestureConfig(transform: (com.example.model.PlayerGestureConfig) -> com.example.model.PlayerGestureConfig) {
@@ -707,6 +1150,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             if (!hasLoadedSection && !anyJobRunning && _selectedOnlineProvider.value != null) {
                 refreshOnlineDiscovery(forceRefresh = false)
             }
+        } else if (mode == HomeMusicMode.ONLINE_VIDEO) {
+            videoController.ensureHomeDiscoveryLoaded()
         }
         updateDynamicThemeForCurrentMode()
     }
@@ -758,8 +1203,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             val syncedHomeLevel = when (updated.intensity) {
                 domain.motion.MotionIntensity.OFF -> ui.home.animations.HomeAnimationLevel.OFF
                 domain.motion.MotionIntensity.SUBTLE -> ui.home.animations.HomeAnimationLevel.SUBTLE
-                domain.motion.MotionIntensity.BALANCED -> ui.home.animations.HomeAnimationLevel.MEDIUM
-                domain.motion.MotionIntensity.EXPRESSIVE -> ui.home.animations.HomeAnimationLevel.HIGH
+                domain.motion.MotionIntensity.BALANCED -> ui.home.animations.HomeAnimationLevel.BALANCED
+                domain.motion.MotionIntensity.EXPRESSIVE -> ui.home.animations.HomeAnimationLevel.EXPRESSIVE
             }
             setHomeAnimationLevel(syncedHomeLevel)
         }
@@ -917,6 +1362,34 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         } ?: candidates.firstOrNull { !it.artworkUrl.isNullOrBlank() }
                         chosen?.let { OnlineTrackMapper.toUnifiedSong(it) }
                     }
+            }
+            HomeMusicMode.ONLINE_VIDEO -> {
+                val activeVideo = videoController.playerState.value.activeVideo
+                    ?: videoController.videoHistory.value.firstOrNull()
+                    ?: videoController.homeSections.value.values
+                        .filterIsInstance<domain.video.VideoSectionState.Success>()
+                        .flatMap { it.items }
+                        .firstOrNull { !it.thumbnailUrl.isNullOrBlank() }
+                activeVideo?.let { v ->
+                    Song(
+                        id = v.stableId,
+                        title = v.title,
+                        artist = v.channelName,
+                        album = v.providerName,
+                        albumId = v.stableId,
+                        durationMs = v.durationMs,
+                        uri = android.net.Uri.EMPTY,
+                        dataPath = v.contentUrl,
+                        mimeType = "video/mp4",
+                        sizeBytes = 0L,
+                        isOnline = true,
+                        sourceType = "ONLINE_VIDEO",
+                        providerKey = v.providerKey,
+                        providerName = v.providerName,
+                        contentUrl = v.contentUrl,
+                        artworkUrl = v.thumbnailUrl
+                    )
+                }
             }
         }
     }
@@ -1158,9 +1631,43 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _connectedAudioDeviceName = MutableStateFlow("Phone Speaker")
     val connectedAudioDeviceName: StateFlow<String> = _connectedAudioDeviceName.asStateFlow()
 
-    // Dynamic Lyrics State (Extracted from embedded ID3/FLAC or sidecar .lrc/.txt files)
+    // Dynamic Synchronized Lyrics State (Embedded, Local LRC/ELRC, Online LRCLIB, Imported, Edited)
     private val _currentTrackLyrics = MutableStateFlow<String?>(null)
     val currentTrackLyrics: StateFlow<String?> = _currentTrackLyrics.asStateFlow()
+
+    private val _lyricsLoadState = MutableStateFlow<domain.lyrics.LyricsLoadState>(domain.lyrics.LyricsLoadState.Idle)
+    val lyricsLoadState: StateFlow<domain.lyrics.LyricsLoadState> = _lyricsLoadState.asStateFlow()
+
+    val lyricsAppearance: StateFlow<domain.lyrics.LyricsAppearanceConfig> =
+        lyricsPreferences.appearanceFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = domain.lyrics.LyricsAppearanceConfig.DEFAULT
+        )
+
+    private val _lyricsTimingState = MutableStateFlow(domain.lyrics.LyricsTimingState())
+    val lyricsTimingState: StateFlow<domain.lyrics.LyricsTimingState> = _lyricsTimingState.asStateFlow()
+
+    private val _lyricsAvailableSources = MutableStateFlow<List<domain.lyrics.LyricsSourceOption>>(emptyList())
+    val lyricsAvailableSources: StateFlow<List<domain.lyrics.LyricsSourceOption>> = _lyricsAvailableSources.asStateFlow()
+
+    private val _lyricsSearchResults = MutableStateFlow<List<domain.lyrics.LyricsSearchCandidate>>(emptyList())
+    val lyricsSearchResults: StateFlow<List<domain.lyrics.LyricsSearchCandidate>> = _lyricsSearchResults.asStateFlow()
+
+    private val _isSearchingLyrics = MutableStateFlow(false)
+    val isSearchingLyrics: StateFlow<Boolean> = _isSearchingLyrics.asStateFlow()
+
+    private val _lyricsFeedbackMessage = MutableStateFlow<String?>(null)
+    val lyricsFeedbackMessage: StateFlow<String?> = _lyricsFeedbackMessage.asStateFlow()
+
+    private val _lyricsPositionMs = MutableStateFlow(0L)
+    val lyricsPositionMs: StateFlow<Long> = _lyricsPositionMs.asStateFlow()
+
+    private var isFullScreenLyricsOpen: Boolean = false
+    private var lyricsLoadJob: Job? = null
+    private var lyricsSearchJob: Job? = null
+    private var lyricsPositionJob: Job? = null
+    private var activeLyricsRequestToken: Long = 0L
 
     private var progressTrackingJob: Job? = null
     private var sleepTimerJob: Job? = null
@@ -1176,6 +1683,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         override fun onRemoteShuffle() = toggleShuffle()
         override fun onRemoteRepeat() = cycleRepeatMode()
         override fun onRemoteSeek(positionMs: Long) = seekTo(positionMs)
+        override fun onRemoteStop() = handleRemoteStopFromService()
+        override fun onTransientFocusPause(positionMs: Long) = handleTransientFocusPauseFromService(positionMs)
+        override fun onTaskRemovedStop(positionMs: Long, wasPlaying: Boolean) = handleTaskRemovedFromService(positionMs, wasPlaying)
     }
 
     private val serviceConnection = object : ServiceConnection {
@@ -1195,6 +1705,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             isBound = true
 
             connectedService.updateAudioPolicySettings(_audioFocusEnabled.value, _headsetAutoPlayPause.value)
+            val bgSettings = backgroundPlaybackSettings.value
+            val sessSettings = sessionManagementSettings.value
+            connectedService.updateLifecycleSettings(
+                backgroundPlayback = bgSettings.backgroundPlaybackEnabled,
+                resumeAfterPhoneCall = bgSettings.resumeAfterPhoneCall,
+                stopOnTaskRemoved = sessSettings.stopPlaybackOnTaskRemoved
+            )
             connectedService.setPlaybackCallback(servicePlaybackCallback)
             if (_queue.value.isNotEmpty()) {
                 connectedService.updateQueueSnapshot(_queue.value, _queueIndex.value)
@@ -1205,9 +1722,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             connectedService.currentSongSnapshot?.let { activeSvcSong ->
                 if (_currentSong.value?.id != activeSvcSong.id || (connectedService.audioEngine.isPrepared || connectedService.audioEngine.isPlaying)) {
                     _currentSong.value = activeSvcSong
-                    viewModelScope.launch(Dispatchers.IO) {
-                        _currentTrackLyrics.value = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), activeSvcSong)
-                    }
+                    loadLyricsForTrack(activeSvcSong)
                 }
             }
 
@@ -1233,25 +1748,56 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (eng.isPrepared || eng.isPlaying) {
                     val activeSong = connectedService.currentSongSnapshot ?: _currentSong.value
+                    val engStage = eng.playbackStage.value
                     _playbackInfo.value = _playbackInfo.value.copy(
                         isPlaying = eng.isPlaying,
-                        isBuffering = eng.isBuffering.value,
+                        isBuffering = eng.isBuffering.value && engStage != OnlinePlaybackStage.PLAYING,
+                        playbackStage = engStage,
+                        statusMessage = eng.statusMessage.value.ifBlank { engStage.defaultMessage },
                         bufferedPositionMs = eng.bufferedPositionMs,
                         currentPositionMs = eng.currentPosition,
                         durationMs = eng.duration.coerceAtLeast(activeSong?.durationMs ?: 0L),
                         playbackSpeed = _playbackSpeed.value
                     )
+                    _lyricsPositionMs.value = eng.currentPosition
                     if (eng.isPlaying) {
                         startProgressTracker()
+                        scheduleNextTrackPreload()
                     }
                 }
 
                 collectorScope.launch {
                     eng.isBuffering.collect { buffering ->
-                        _playbackInfo.value = _playbackInfo.value.copy(
-                            isBuffering = buffering,
-                            bufferedPositionMs = eng.bufferedPositionMs
-                        )
+                        val cur = _currentSong.value
+                        val resolvingNow = cur != null && unifiedPlaybackController?.isCurrentlyResolving(cur) == true
+                        if (!resolvingNow) {
+                            val stage = eng.playbackStage.value
+                            val activeLoading = buffering &&
+                                stage != OnlinePlaybackStage.PLAYING &&
+                                stage != OnlinePlaybackStage.FAILED
+                            _playbackInfo.value = _playbackInfo.value.copy(
+                                isBuffering = activeLoading,
+                                bufferedPositionMs = eng.bufferedPositionMs
+                            )
+                        }
+                    }
+                }
+                collectorScope.launch {
+                    eng.playbackStage.collect { stage ->
+                        val cur = _currentSong.value ?: return@collect
+                        val resolvingNow = unifiedPlaybackController?.isCurrentlyResolving(cur) == true
+                        if (!resolvingNow && cur.isOnline) {
+                            val activeLoading = stage == OnlinePlaybackStage.RESOLVING_STREAM ||
+                                stage == OnlinePlaybackStage.PREPARING_PLAYER ||
+                                stage == OnlinePlaybackStage.BUFFERING_AUDIO
+                            val msg = eng.statusMessage.value.ifBlank { stage.defaultMessage }
+                            _playbackInfo.value = _playbackInfo.value.copy(
+                                playbackStage = stage,
+                                statusMessage = msg,
+                                isBuffering = activeLoading,
+                                bufferedPositionMs = eng.bufferedPositionMs
+                            )
+                        }
                     }
                 }
                 unifiedPlaybackController?.let { controller ->
@@ -1473,6 +2019,23 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         loadLocalSongs()
         observePlaylists()
         observeFolderFiltering()
+        restorePersistedUnlimitedQueue()
+        viewModelScope.launch {
+            experiencePreferences.musicExperienceFlow
+                .catch { e -> Log.w(TAG, "Music experience DataStore error", e) }
+                .collect { settings ->
+                    val prevMode = data.artwork.AlbumArtworkQualityManager.currentQualityMode
+                    data.artwork.AlbumArtworkQualityManager.currentQualityMode = settings.albumArtworkQualityMode
+                    if (prevMode != settings.albumArtworkQualityMode) {
+                        AlbumArtHelper.clearOnlineArtworkCache()
+                    }
+                }
+        }
+        viewModelScope.launch {
+            connectivityMonitor.isMeteredConnection.collect { metered ->
+                data.artwork.AlbumArtworkQualityManager.isMeteredOrMobileNetwork = metered
+            }
+        }
         viewModelScope.launch {
             homeAnimationPrefs.settingsFlow
                 .catch { e -> Log.w(TAG, "Home animation DataStore stream error", e) }
@@ -1496,6 +2059,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 .collect { savedMode ->
                     if (!userUpdatedHomeMode && _homeMusicMode.value != savedMode) {
                         _homeMusicMode.value = savedMode
+                    }
+                }
+        }
+        viewModelScope.launch {
+            libraryModePrefs.librarySectionModeFlow
+                .catch { e -> Log.w(TAG, "Library mode DataStore stream error", e) }
+                .take(1)
+                .collect { savedMode ->
+                    if (!userUpdatedLibraryMode && _librarySectionMode.value != savedMode) {
+                        _librarySectionMode.value = savedMode
                     }
                 }
         }
@@ -1543,6 +2116,40 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 }
         }
         observeOnlineRecommendationProfile()
+        viewModelScope.launch {
+            runCatching {
+                val persisted = playbackLifecyclePreferences.miniPlayerDisplayStateFlow.first()
+                if (_miniPlayerDisplayState.value == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER &&
+                    persisted != domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER
+                ) {
+                    _miniPlayerDisplayState.value = persisted
+                }
+            }
+        }
+        viewModelScope.launch {
+            combine(backgroundPlaybackSettings, sessionManagementSettings) { bg, sess -> bg to sess }
+                .collect { (bg, sess) ->
+                    musicService?.updateLifecycleSettings(
+                        backgroundPlayback = bg.backgroundPlaybackEnabled,
+                        resumeAfterPhoneCall = bg.resumeAfterPhoneCall,
+                        stopOnTaskRemoved = sess.stopPlaybackOnTaskRemoved
+                    )
+                    val reconciled = domain.player.MiniPlayerGestureController.onCircularModeSettingChanged(
+                        currentState = _miniPlayerDisplayState.value,
+                        circularEnabled = bg.circularMiniPlayerEnabled
+                    )
+                    if (reconciled != _miniPlayerDisplayState.value) {
+                        updateMiniPlayerDisplayState(reconciled)
+                    }
+                }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                downloadCoordinator.reconcileInterruptedTasks(autoResume = true)
+            }.onFailure { e ->
+                Log.w(TAG, "Download reconciliation skipped: ${e.message}")
+            }
+        }
     }
 
     private fun observeFolderFiltering() {
@@ -1596,11 +2203,17 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     } catch (_: Throwable) {
                         emptyList()
                     }
-                    val combinedPool = filteredInitial + savedOnline
+                    val savedDownloads = try {
+                        downloadCoordinator.downloadedTracksFlow.first().map { it.toSong() }
+                    } catch (_: Throwable) {
+                        emptyList()
+                    }
+                    val combinedPool = filteredInitial + savedDownloads + savedOnline
                     if (combinedPool.isNotEmpty()) {
                         val byId = combinedPool.associateBy { it.id }
                         val savedIds = preferences.lastQueueSongIds
-                        val restoredQueue = savedIds.mapNotNull { byId[it] }.ifEmpty { filteredInitial.ifEmpty { savedOnline } }
+                        val restoredQueue = savedIds.mapNotNull { byId[it] }
+                            .ifEmpty { filteredInitial.ifEmpty { savedDownloads.ifEmpty { savedOnline } } }
                         if (restoredQueue.isNotEmpty()) {
                             val lastId = preferences.lastPlayedSongId
                             val savedIdx = preferences.lastQueueIndex
@@ -1615,11 +2228,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                             _queue.value = restoredQueue
                             _queueIndex.value = targetIndex
                             _currentSong.value = targetSong
-                            _currentTrackLyrics.value = if (targetSong.isOnline) {
-                                targetSong.lyrics
-                            } else {
-                                com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), targetSong)
-                            }
+                            loadLyricsForTrack(targetSong)
                         }
                     }
                 }
@@ -1685,30 +2294,39 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         return data.scanner.FolderScannerHelper.extractDistinctFoldersFromSongs(_rawScannedSongs.value)
     }
 
+    private val _playlistSongsMap = MutableStateFlow<Map<Long, List<Song>>>(emptyMap())
+    val playlistSongsMap: StateFlow<Map<Long, List<Song>>> = _playlistSongsMap.asStateFlow()
+
     private fun observePlaylists() {
         viewModelScope.launch {
             combine(
                 dao.getAllPlaylistsFlow(),
                 dao.getAllPlaylistSongCrossRefsFlow(),
                 _allSongs,
-                onlineRepository.allOnlineTracksFlow
-            ) { entities, crossRefs, localSongs, onlineSongs ->
-                val activeIds = (localSongs + onlineSongs).map { it.id }.toSet()
-                val grouped = crossRefs.filter { it.songId in activeIds }.groupBy { it.playlistId }
-                entities.map { entity ->
-                    val refs = grouped[entity.id].orEmpty()
+                onlineRepository.allOnlineTracksFlow,
+                downloadedSongs
+            ) { entities, crossRefs, localSongs, onlineSongs, offlineDownloads ->
+                val byId = (localSongs + onlineSongs + offlineDownloads).associateBy { it.id }
+                val grouped = crossRefs.filter { it.songId in byId }.groupBy { it.playlistId }
+                val songsMap = mutableMapOf<Long, List<Song>>()
+                val enriched = entities.map { entity ->
+                    val refs = grouped[entity.id].orEmpty().sortedBy { it.orderIndex }
+                    val resolvedSongs = refs.mapNotNull { byId[it.songId] }
+                    songsMap[entity.id] = resolvedSongs
                     Playlist(
                         id = entity.id,
                         name = entity.name,
-                        songCount = refs.size,
+                        songCount = resolvedSongs.size,
                         createdAt = entity.createdAt,
                         coverArtUri = entity.coverArtUri
                     )
                 }
+                enriched to songsMap.toMap()
             }.catch { e ->
                 Log.e(TAG, "Playlist observation failed", e)
-            }.collect { enriched ->
+            }.collect { (enriched, songsMap) ->
                 _playlists.value = enriched
+                _playlistSongsMap.value = songsMap
             }
         }
     }
@@ -1820,9 +2438,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         return combine(
             dao.getPlaylistSongsFlow(playlistId),
             _allSongs,
-            onlineRepository.allOnlineTracksFlow
-        ) { refs, localSongs, onlineSongs ->
-            val byId = (localSongs + onlineSongs).associateBy { it.id }
+            onlineRepository.allOnlineTracksFlow,
+            downloadedSongs
+        ) { refs, localSongs, onlineSongs, offlineDownloads ->
+            val byId = (localSongs + onlineSongs + offlineDownloads).associateBy { it.id }
             refs.mapNotNull { byId[it.songId] }
         }
     }
@@ -1837,7 +2456,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         resumePositionMs: Long = 0L,
         transitionDirection: Int = 0
     ) {
+        videoController.pauseForAudioHandoff()
         _trackTransitionDirection.value = transitionDirection
+        crossfadeToken++
         isCrossfadingNext = false
         val persistedOnlineById = allOnlineTracks.value.associateBy { it.id }
         val hydratedSong = if (song.isOnline) {
@@ -1867,12 +2488,38 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         _queue.value = q
+        syncQueuedItemsFromQueue(q)
         _queueIndex.value = idx
         _currentSong.value = hydratedSong
+        updateMiniPlayerDisplayState(domain.player.MiniPlayerGestureController.onNewPlaybackSessionStarted())
+        if (_songRadioSession.value.isActive) {
+            activePlaybackContextType = "RADIO"
+            activePlaybackContextLabel = _songRadioSession.value.seedLabel
+        }
+        persistUnlimitedQueueAsync()
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = true,
+            explicitlyStopped = false,
+            overridePositionMs = resumePositionMs.coerceAtLeast(0L)
+        )
+        if (_songRadioSession.value.isActive) {
+            _songRadioSession.update { it.copy(playedSongIds = it.playedSongIds + hydratedSong.id) }
+            maybeTopUpSongRadioQueue()
+        }
+        if (musicExperienceSettings.value.musicRecommendationsEnabled) {
+            loadRecommendationsForCurrentSong(forceRefresh = false)
+        }
+        val initialStage = if (hydratedSong.isOnline) {
+            OnlinePlaybackStage.RESOLVING_STREAM
+        } else {
+            OnlinePlaybackStage.IDLE
+        }
         _playbackInfo.value = _playbackInfo.value.copy(
             playbackError = null,
             playbackErrorKind = null,
             isBuffering = hydratedSong.isOnline,
+            playbackStage = initialStage,
+            statusMessage = initialStage.defaultMessage,
             currentPositionMs = resumePositionMs.coerceAtLeast(0L)
         )
 
@@ -1884,15 +2531,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         // Find and pre-match the best next track for smooth automix
         findNextMatchedSong(hydratedSong, q, idx)
 
-        // Extract embedded or sidecar lyrics for local tracks
-        if (hydratedSong.isOnline) {
-            _currentTrackLyrics.value = hydratedSong.lyrics
-        } else {
-            viewModelScope.launch(Dispatchers.IO) {
-                val lyrics = com.example.util.LyricsExtractor.getOrExtractLyrics(getApplication(), hydratedSong)
-                _currentTrackLyrics.value = lyrics
-            }
-        }
+        // Load synchronized lyrics asynchronously and cancel any obsolete request
+        _lyricsPositionMs.value = resumePositionMs.coerceAtLeast(0L)
+        loadLyricsForTrack(hydratedSong)
 
         val engine = musicService?.audioEngine
         val controller = unifiedPlaybackController
@@ -1913,7 +2554,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         ensureServiceStarted()
         musicService?.updateQueueSnapshot(q, idx)
         if (musicService?.requestAudioFocusIfNeeded() == false) {
-            _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false, isBuffering = false)
+            _playbackInfo.value = _playbackInfo.value.copy(
+                isPlaying = false,
+                isBuffering = false,
+                playbackStage = OnlinePlaybackStage.IDLE,
+                statusMessage = ""
+            )
             return
         }
         syncNotification(hydratedSong, true)
@@ -1927,8 +2573,20 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _playbackInfo.value = _playbackInfo.value.copy(
                     isPlaying = false,
                     isBuffering = true,
+                    playbackStage = OnlinePlaybackStage.RESOLVING_STREAM,
+                    statusMessage = OnlinePlaybackStage.RESOLVING_STREAM.defaultMessage,
                     playbackError = null,
                     playbackErrorKind = null
+                )
+            },
+            onStageChanged = { stage, msg ->
+                val activeLoading = stage == OnlinePlaybackStage.RESOLVING_STREAM ||
+                    stage == OnlinePlaybackStage.PREPARING_PLAYER ||
+                    stage == OnlinePlaybackStage.BUFFERING_AUDIO
+                _playbackInfo.value = _playbackInfo.value.copy(
+                    playbackStage = stage,
+                    statusMessage = msg,
+                    isBuffering = activeLoading
                 )
             },
             onPrepared = { updatedSong, _, durMs ->
@@ -1938,14 +2596,24 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _playbackInfo.value = _playbackInfo.value.copy(
                     isPlaying = true,
                     isBuffering = false,
+                    playbackStage = OnlinePlaybackStage.PLAYING,
+                    statusMessage = OnlinePlaybackStage.PLAYING.defaultMessage,
                     bufferedPositionMs = engine.bufferedPositionMs,
                     durationMs = durMs.coerceAtLeast(updatedSong.durationMs),
                     playbackError = null,
                     playbackErrorKind = null
                 )
+                musicService?.notifyUserStartedPlayback()
+                recordListeningEventAsync(listeningTimeTracker.onTrackStarted(updatedSong))
                 startProgressTracker()
                 syncNotification(updatedSong, true)
                 incrementPlayCount(updatedSong)
+                scheduleNextTrackPreload()
+                persistPlaybackSessionSnapshotAsync(
+                    wasPlaying = true,
+                    explicitlyStopped = false,
+                    overridePositionMs = engine.currentPosition
+                )
 
                 // If crossfade is enabled, smoothly fade in
                 if (_crossfadeSeconds.value > 0) {
@@ -1960,11 +2628,69 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _playbackInfo.value = _playbackInfo.value.copy(
                     isPlaying = false,
                     isBuffering = false,
+                    playbackStage = OnlinePlaybackStage.FAILED,
+                    statusMessage = errMsg,
                     playbackError = errMsg,
                     playbackErrorKind = errKind
                 )
                 _dspDiagnosticMessage.value = errMsg
                 syncNotification(_currentSong.value, false)
+            },
+            onAutoTransitionToNext = { promotedResolved ->
+                val curQueue = _queue.value
+                val curIdx = _queueIndex.value
+                val nextTarget = computeNextPlayableSong(curQueue, curIdx, _playbackInfo.value.repeatMode)
+                if (nextTarget != null &&
+                    nextTarget.contentUrl.ifBlank { nextTarget.uri.toString() } == promotedResolved.contentUrl
+                ) {
+                    val newIdx = curQueue.indexOfFirst { it.id == nextTarget.id }.coerceAtLeast(0)
+                    val enrichedNext = nextTarget.copy(
+                        title = promotedResolved.title.ifBlank { nextTarget.title },
+                        artist = promotedResolved.artist.ifBlank { nextTarget.artist },
+                        durationMs = if (promotedResolved.durationMs > 0L) promotedResolved.durationMs else nextTarget.durationMs,
+                        artworkUrl = promotedResolved.artworkUrl ?: nextTarget.artworkUrl,
+                        uploaderUrl = promotedResolved.artistUrl ?: nextTarget.uploaderUrl,
+                        mimeType = promotedResolved.selectedStream.mimeType,
+                        bitrateKbps = promotedResolved.selectedStream.averageBitrateKbps,
+                        streamCodec = promotedResolved.selectedStream.codec,
+                        streamQualityLabel = promotedResolved.selectedStream.qualityLabel,
+                        isBitrateKnown = promotedResolved.selectedStream.averageBitrateKbps > 0,
+                        isSampleRateKnown = false
+                    )
+                    crossfadeToken++
+                    isCrossfadingNext = false
+                    _trackTransitionDirection.value = 1
+                    _queueIndex.value = newIdx
+                    _currentSong.value = enrichedNext
+                    _queue.value = curQueue.map { if (it.id == enrichedNext.id) enrichedNext else it }
+                    preferences.lastPlayedSongId = enrichedNext.id
+                    preferences.lastQueueIndex = newIdx
+                    findNextMatchedSong(enrichedNext, _queue.value, newIdx)
+                    musicService?.updateQueueSnapshot(_queue.value, newIdx)
+                    _playbackInfo.value = _playbackInfo.value.copy(
+                        isPlaying = true,
+                        isBuffering = engine.isBuffering.value && engine.playbackStage.value != OnlinePlaybackStage.PLAYING,
+                        playbackStage = engine.playbackStage.value,
+                        statusMessage = engine.statusMessage.value.ifBlank { OnlinePlaybackStage.PLAYING.defaultMessage },
+                        bufferedPositionMs = engine.bufferedPositionMs,
+                        currentPositionMs = 0L,
+                        durationMs = engine.duration.coerceAtLeast(enrichedNext.durationMs),
+                        playbackError = null,
+                        playbackErrorKind = null
+                    )
+                    _lyricsPositionMs.value = 0L
+                    loadLyricsForTrack(enrichedNext)
+                    recordListeningEventAsync(listeningTimeTracker.onTrackStarted(enrichedNext))
+                    startProgressTracker()
+                    syncNotification(enrichedNext, true)
+                    incrementPlayCount(enrichedNext)
+                    scheduleNextTrackPreload()
+                    persistPlaybackSessionSnapshotAsync(
+                        wasPlaying = true,
+                        explicitlyStopped = false,
+                        overridePositionMs = 0L
+                    )
+                }
             }
         )
     }
@@ -2013,14 +2739,29 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 return
             }
             if (engine.isPrepared) {
+                videoController.pauseForAudioHandoff()
                 ensureServiceStarted()
                 if (musicService?.requestAudioFocusIfNeeded() == false) return
+                musicService?.notifyUserStartedPlayback()
                 engine.play()
-                _playbackInfo.value = _playbackInfo.value.copy(isPlaying = true)
+                val resumedPos = engine.currentPosition
+                _playbackInfo.value = _playbackInfo.value.copy(isPlaying = true, currentPositionMs = resumedPos)
+                _lyricsPositionMs.value = resumedPos
+                recordListeningEventAsync(listeningTimeTracker.onPlaybackResumed(cur))
                 startProgressTracker()
+                if (isFullScreenLyricsOpen) startHighPrecisionLyricsTracker()
                 syncNotification(cur, true)
+                persistPlaybackSessionSnapshotAsync(
+                    wasPlaying = true,
+                    explicitlyStopped = false,
+                    overridePositionMs = resumedPos
+                )
             } else {
-                playSong(cur)
+                val restoredPos = _playbackInfo.value.currentPositionMs.coerceAtLeast(0L)
+                if (cur.isOnline) {
+                    onlineRepository.invalidateStreamCache(cur.contentUrl.ifBlank { cur.uri.toString() })
+                }
+                playSong(cur, _queue.value, _queueIndex.value, resumePositionMs = restoredPos)
             }
         } else if (_allSongs.value.isNotEmpty()) {
             playSong(_allSongs.value.first())
@@ -2033,9 +2774,124 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         if (engine != null && engine.isPlaying) {
             engine.pause()
         }
+        val pausedPos = engine?.currentPosition ?: _playbackInfo.value.currentPositionMs
+        musicService?.notifyUserManualPause()
         musicService?.abandonAudioFocus()
-        _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false)
+        recordListeningEventAsync(listeningTimeTracker.onPlaybackPausedOrStopped())
+        _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false, currentPositionMs = pausedPos)
+        _lyricsPositionMs.value = pausedPos
+        lyricsPositionJob?.cancel()
+        persistCurrentQueuePositionNow(pausedPos)
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = false,
+            explicitlyStopped = false,
+            overridePositionMs = pausedPos
+        )
         syncNotification(_currentSong.value, false)
+    }
+
+    /**
+     * Explicit Stop Playback action (from Now Playing player menu).
+     * Stops playback, marks session explicitly stopped so Auto Resume will not restart it,
+     * removes notification & deactivates MediaSession, and preserves the queue intact.
+     */
+    fun stopPlayback() {
+        isCrossfadingNext = false
+        val engine = musicService?.audioEngine
+        val stoppedPos = engine?.currentPosition ?: _playbackInfo.value.currentPositionMs
+        recordListeningEventAsync(listeningTimeTracker.onPlaybackPausedOrStopped())
+        _playbackInfo.value = _playbackInfo.value.copy(
+            isPlaying = false,
+            isBuffering = false,
+            currentPositionMs = stoppedPos
+        )
+        _lyricsPositionMs.value = stoppedPos
+        lyricsPositionJob?.cancel()
+        progressTrackingJob?.cancel()
+        persistCurrentQueuePositionNow(stoppedPos)
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = false,
+            explicitlyStopped = true,
+            overridePositionMs = stoppedPos
+        )
+        musicService?.handleExplicitStop()
+    }
+
+    private fun handleRemoteStopFromService() {
+        isCrossfadingNext = false
+        val stoppedPos = musicService?.audioEngine?.currentPosition ?: _playbackInfo.value.currentPositionMs
+        recordListeningEventAsync(listeningTimeTracker.onPlaybackPausedOrStopped())
+        _playbackInfo.value = _playbackInfo.value.copy(
+            isPlaying = false,
+            isBuffering = false,
+            currentPositionMs = stoppedPos
+        )
+        _lyricsPositionMs.value = stoppedPos
+        lyricsPositionJob?.cancel()
+        progressTrackingJob?.cancel()
+        persistCurrentQueuePositionNow(stoppedPos)
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = false,
+            explicitlyStopped = true,
+            overridePositionMs = stoppedPos
+        )
+    }
+
+    private fun handleTransientFocusPauseFromService(positionMs: Long) {
+        isCrossfadingNext = false
+        recordListeningEventAsync(listeningTimeTracker.onPlaybackPausedOrStopped())
+        _playbackInfo.value = _playbackInfo.value.copy(
+            isPlaying = false,
+            currentPositionMs = positionMs
+        )
+        _lyricsPositionMs.value = positionMs
+        lyricsPositionJob?.cancel()
+        persistCurrentQueuePositionNow(positionMs)
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = true,
+            explicitlyStopped = false,
+            overridePositionMs = positionMs
+        )
+        syncNotification(_currentSong.value, false)
+    }
+
+    private fun handleTaskRemovedFromService(positionMs: Long, wasPlaying: Boolean) {
+        isCrossfadingNext = false
+        recordListeningEventAsync(listeningTimeTracker.onPlaybackPausedOrStopped())
+        _playbackInfo.value = _playbackInfo.value.copy(
+            isPlaying = false,
+            isBuffering = false,
+            currentPositionMs = positionMs
+        )
+        _lyricsPositionMs.value = positionMs
+        lyricsPositionJob?.cancel()
+        progressTrackingJob?.cancel()
+        persistCurrentQueuePositionNow(positionMs)
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = wasPlaying,
+            explicitlyStopped = false,
+            overridePositionMs = positionMs
+        )
+    }
+
+    /**
+     * Called from MainActivity.onStop(). Persists exact playback position & listening progress.
+     * Keeps foreground music playing uninterrupted when [BackgroundPlaybackSettings.backgroundPlaybackEnabled] is On.
+     */
+    fun onAppBackgrounded(isChangingConfigurations: Boolean) {
+        if (isChangingConfigurations) return
+        val currentlyPlaying = _playbackInfo.value.isPlaying
+        val currentPos = musicService?.audioEngine?.currentPosition ?: _playbackInfo.value.currentPositionMs
+        recordListeningEventAsync(listeningTimeTracker.checkpointIfPlaying(minElapsedMs = 1_000L))
+        persistCurrentQueuePositionNow(currentPos)
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = currentlyPlaying,
+            explicitlyStopped = false,
+            overridePositionMs = currentPos
+        )
+        if (!backgroundPlaybackSettings.value.backgroundPlaybackEnabled && currentlyPlaying) {
+            pausePlayback()
+        }
     }
 
     fun togglePlayPause() {
@@ -2086,10 +2942,67 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private var isCrossfadingNext = false
+    private var crossfadeToken = 0L
+
+    private fun computeNextPlayableSong(
+        q: List<Song> = _queue.value,
+        curIdx: Int = _queueIndex.value,
+        repeatMode: RepeatMode = _playbackInfo.value.repeatMode
+    ): Song? {
+        if (q.isEmpty()) return null
+        if (repeatMode == RepeatMode.ONE) return null
+        val matched = _nextMatchedSong.value
+        val curId = _currentSong.value?.id
+        if (_automixEnabled.value &&
+            _matchNextSongEnabled.value &&
+            matched != null &&
+            matched.id != curId &&
+            q.any { it.id == matched.id }
+        ) {
+            return matched
+        }
+        val nextIdx = curIdx + 1
+        return when {
+            nextIdx < q.size -> q[nextIdx]
+            repeatMode == RepeatMode.ALL -> q[0]
+            else -> null
+        }
+    }
+
+    private fun scheduleNextTrackPreload() {
+        val controller = unifiedPlaybackController ?: return
+        val nextSong = computeNextPlayableSong()
+        if (nextSong == null || !nextSong.isOnline) {
+            controller.clearPreloadedNextTrack()
+            return
+        }
+        val preloadEnabled = cacheSettings.value.preloadUpcomingEnabled
+        val crossfadeEnabled = _crossfadeSeconds.value > 0
+        // "Crossfade may still prepare the next song when enabled."
+        if (!preloadEnabled && !crossfadeEnabled) {
+            controller.clearPreloadedNextTrack()
+            return
+        }
+        val stageInPlayer = preloadEnabled && !crossfadeEnabled && _playbackInfo.value.repeatMode != RepeatMode.ONE
+        controller.preloadNextTrack(
+            song = nextSong,
+            qualityPreference = _onlineQualityPreference.value,
+            stageIntoPlayer = stageInPlayer,
+            preloadAudioWindow = preloadEnabled
+        )
+    }
 
     fun playNext(withCrossfade: Boolean = true) {
         val q = _queue.value
         if (q.isEmpty()) return
+
+        // If Song Radio is active and the user skipped early (< 35% of track), adapt radio weights
+        val currentPlaying = _currentSong.value
+        val curDur = _playbackInfo.value.durationMs
+        val curPos = _playbackInfo.value.currentPositionMs
+        if (_songRadioSession.value.isActive && currentPlaying != null && curDur > 10_000L && curPos < (curDur * 0.35f).toLong()) {
+            _songRadioSession.update { data.online.MusicDiscoveryAndRadioEngine.recordRadioSkip(it, currentPlaying) }
+        }
 
         val matched = _nextMatchedSong.value
         val targetSong = if (_automixEnabled.value && _matchNextSongEnabled.value && matched != null && q.any { it.id == matched.id }) {
@@ -2100,6 +3013,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 if (_playbackInfo.value.repeatMode == RepeatMode.ALL) {
                     nextIdx = 0
                 } else {
+                    crossfadeToken++
                     isCrossfadingNext = false
                     return
                 }
@@ -2111,17 +3025,22 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         val fadeSec = _crossfadeSeconds.value
 
         if (withCrossfade && fadeSec > 0 && musicService?.audioEngine?.isPlaying == true && !isCrossfadingNext) {
+            val myFadeToken = ++crossfadeToken
             isCrossfadingNext = true
             musicService?.audioEngine?.crossfadeOut(fadeSec * 1000L) {
+                if (myFadeToken != crossfadeToken) return@crossfadeOut
                 isCrossfadingNext = false
                 playSong(targetSong, q, targetIdx, transitionDirection = 1)
             }
         } else {
+            crossfadeToken++
+            isCrossfadingNext = false
             playSong(targetSong, q, targetIdx, transitionDirection = 1)
         }
     }
 
     fun playPrevious() {
+        crossfadeToken++
         isCrossfadingNext = false
         val engine = musicService?.audioEngine
         if (engine != null && engine.currentPosition > 3000) {
@@ -2138,14 +3057,19 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun seekTo(positionMs: Long) {
-        musicService?.audioEngine?.seekTo(positionMs)
-        _playbackInfo.value = _playbackInfo.value.copy(currentPositionMs = positionMs)
+        val currentInfo = _playbackInfo.value
+        if (!currentInfo.canUserSeek) return
+        val maxDur = currentInfo.durationMs.coerceAtLeast(0L)
+        val safePos = if (maxDur > 0L) positionMs.coerceIn(0L, maxDur) else positionMs.coerceAtLeast(0L)
+        musicService?.audioEngine?.seekTo(safePos)
+        _playbackInfo.value = currentInfo.copy(currentPositionMs = safePos)
+        _lyricsPositionMs.value = safePos
         musicService?.notificationManager?.updatePlaybackState(
-            isPlaying = _playbackInfo.value.isPlaying,
-            positionMs = positionMs,
-            durationMs = _playbackInfo.value.durationMs,
-            isShuffle = _playbackInfo.value.shuffleMode == ShuffleMode.ON,
-            repeatMode = _playbackInfo.value.repeatMode
+            isPlaying = currentInfo.isPlaying,
+            positionMs = safePos,
+            durationMs = currentInfo.durationMs,
+            isShuffle = currentInfo.shuffleMode == ShuffleMode.ON,
+            repeatMode = currentInfo.repeatMode
         )
     }
 
@@ -2168,8 +3092,15 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             _queue.value = restored
             _queueIndex.value = restored.indexOfFirst { it.id == _currentSong.value?.id }.coerceAtLeast(0)
         }
+        _currentSong.value?.let { findNextMatchedSong(it, _queue.value, _queueIndex.value) }
         musicService?.updateQueueSnapshot(_queue.value, _queueIndex.value)
         syncNotification()
+        scheduleNextTrackPreload()
+        persistUnlimitedQueueAsync()
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = _playbackInfo.value.isPlaying,
+            explicitlyStopped = false
+        )
     }
 
     fun cycleRepeatMode() {
@@ -2181,6 +3112,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _playbackInfo.value = _playbackInfo.value.copy(repeatMode = newMode)
         preferences.repeatMode = newMode
         syncNotification()
+        scheduleNextTrackPreload()
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = _playbackInfo.value.isPlaying,
+            explicitlyStopped = false
+        )
     }
 
     fun syncNotification(song: Song? = _currentSong.value, isPlaying: Boolean = _playbackInfo.value.isPlaying) {
@@ -2198,14 +3134,23 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun handleTrackCompletion() {
+        val completedSong = _currentSong.value
+        if (_songRadioSession.value.isActive && completedSong != null) {
+            _songRadioSession.update {
+                data.online.MusicDiscoveryAndRadioEngine.recordRadioCompletion(it, completedSong)
+            }
+            maybeTopUpSongRadioQueue()
+        }
         when (_playbackInfo.value.repeatMode) {
             RepeatMode.ONE -> {
-                _currentSong.value?.let { playSong(it) }
+                completedSong?.let { playSong(it) }
             }
             RepeatMode.ALL -> playNext()
             RepeatMode.OFF -> {
                 if (_queueIndex.value < _queue.value.size - 1) {
                     playNext()
+                } else if (musicExperienceSettings.value.autoSongRadioEnabled && completedSong != null) {
+                    startSongRadio(completedSong, autoPlayFirstAdded = true)
                 } else {
                     _playbackInfo.value = _playbackInfo.value.copy(isPlaying = false, currentPositionMs = 0)
                     syncNotification(_currentSong.value, false)
@@ -2225,18 +3170,36 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 if (engine != null && engine.isPlaying) {
                     val pos = engine.currentPosition
                     val dur = engine.duration.coerceAtLeast(_currentSong.value?.durationMs ?: 0L)
+                    val isLive = engine.isCurrentTrackLive
+                    val isSeekable = engine.isCurrentTrackSeekable && !isLive && dur > 0L
                     _playbackInfo.value = _playbackInfo.value.copy(
                         currentPositionMs = pos,
                         durationMs = dur,
                         isBuffering = engine.isBuffering.value,
-                        bufferedPositionMs = engine.bufferedPositionMs
+                        bufferedPositionMs = engine.bufferedPositionMs,
+                        isSeekable = isSeekable,
+                        isLiveStream = isLive
                     )
+                    if (!isFullScreenLyricsOpen) {
+                        _lyricsPositionMs.value = pos
+                    }
 
-                    // Accumulate analytics listening time
+                    // Accumulate analytics listening time (strictly while actively playing, never while paused)
                     secondsCounter++
                     if (secondsCounter >= 4) { // every 1 second (4 * 250ms)
                         secondsCounter = 0
                         recordListeningSecond()
+                        recordListeningEventAsync(listeningTimeTracker.checkpointIfPlaying(minElapsedMs = 10_000L))
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastQueuePositionPersistMs >= 8_000L) {
+                            lastQueuePositionPersistMs = nowMs
+                            persistCurrentQueuePositionNow(pos)
+                            persistPlaybackSessionSnapshotAsync(
+                                wasPlaying = true,
+                                explicitlyStopped = false,
+                                overridePositionMs = pos
+                            )
+                        }
                     }
 
                     // Automix crossfade trigger: when remaining duration reaches crossfade window
@@ -2282,6 +3245,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             if (_currentSong.value?.id == song.id) {
                 _currentSong.value = _currentSong.value?.copy(isFavorite = newFav)
             }
+            if (newFav && _songRadioSession.value.isActive) {
+                _songRadioSession.update {
+                    data.online.MusicDiscoveryAndRadioEngine.recordRadioLike(it, song)
+                }
+            }
         }
     }
 
@@ -2299,34 +3267,67 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- Queue Management ---
+    // --- Unlimited Room-Backed Queue Management ---
 
     fun reorderQueue(fromIndex: Int, toIndex: Int) {
         if (fromIndex !in _queue.value.indices || toIndex !in _queue.value.indices) return
+        val items = _queuedItems.value.toMutableList()
         val list = _queue.value.toMutableList()
+        val activeItemId = items.getOrNull(_queueIndex.value)?.queueItemId
         val item = list.removeAt(fromIndex)
         list.add(toIndex, item)
+        if (fromIndex in items.indices && toIndex in 0..items.size) {
+            val wrapped = items.removeAt(fromIndex)
+            items.add(toIndex.coerceIn(0, items.size), wrapped)
+            _queuedItems.value = items
+        } else {
+            syncQueuedItemsFromQueue(list)
+        }
         _queue.value = list
         val cur = _currentSong.value
-        _queueIndex.value = list.indexOfFirst { it.id == cur?.id }.coerceAtLeast(0)
-        musicService?.updateQueueSnapshot(list, _queueIndex.value)
+        val newIdx = activeItemId?.let { id -> _queuedItems.value.indexOfFirst { it.queueItemId == id } }
+            ?.takeIf { it >= 0 }
+            ?: list.indexOfFirst { it.id == cur?.id }.coerceAtLeast(0)
+        _queueIndex.value = newIdx
+        cur?.let { findNextMatchedSong(it, list, newIdx) }
+        musicService?.updateQueueSnapshot(list, newIdx)
+        persistUnlimitedQueueAsync()
+        scheduleNextTrackPreload()
     }
 
     fun removeFromQueue(index: Int) {
         if (index !in _queue.value.indices) return
+        val items = _queuedItems.value.toMutableList()
         val list = _queue.value.toMutableList()
+        val activeItemId = items.getOrNull(_queueIndex.value)?.queueItemId
         list.removeAt(index)
+        if (index in items.indices) {
+            items.removeAt(index)
+            _queuedItems.value = items
+        } else {
+            syncQueuedItemsFromQueue(list)
+        }
         _queue.value = list
         val cur = _currentSong.value
-        _queueIndex.value = list.indexOfFirst { it.id == cur?.id }.coerceAtLeast(0)
+        val newIdx = activeItemId?.let { id -> _queuedItems.value.indexOfFirst { it.queueItemId == id } }
+            ?.takeIf { it >= 0 }
+            ?: list.indexOfFirst { it.id == cur?.id }.coerceAtLeast(0)
+        _queueIndex.value = newIdx.coerceAtMost((list.size - 1).coerceAtLeast(0))
+        cur?.let { findNextMatchedSong(it, list, _queueIndex.value) }
         musicService?.updateQueueSnapshot(list, _queueIndex.value)
+        persistUnlimitedQueueAsync()
+        scheduleNextTrackPreload()
     }
 
     fun clearQueue() {
         val cur = _currentSong.value
-        _queue.value = if (cur != null) listOf(cur) else emptyList()
+        val newList = if (cur != null) listOf(cur) else emptyList()
+        _queue.value = newList
+        _queuedItems.value = musicQueueRepository.wrapSongs(newList)
         _queueIndex.value = 0
         musicService?.updateQueueSnapshot(_queue.value, 0)
+        persistUnlimitedQueueAsync()
+        unifiedPlaybackController?.clearPreloadedNextTrack()
     }
 
     fun saveQueueAsPlaylist(name: String) {
@@ -2343,26 +3344,717 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun addToQueue(song: Song) {
-        _queue.value = _queue.value + song
-        musicService?.updateQueueSnapshot(_queue.value, _queueIndex.value)
+        addAllToQueue(listOf(song))
+    }
+
+    fun addAllToQueue(songs: List<Song>) {
+        if (songs.isEmpty()) return
+        val wrapped = musicQueueRepository.wrapSongs(songs)
+        val updatedItems = _queuedItems.value + wrapped
+        val updatedList = _queue.value + songs
+        _queuedItems.value = updatedItems
+        _queue.value = updatedList
+        _currentSong.value?.let { findNextMatchedSong(it, updatedList, _queueIndex.value) }
+        musicService?.updateQueueSnapshot(updatedList, _queueIndex.value)
+        persistUnlimitedQueueAsync()
+        scheduleNextTrackPreload()
     }
 
     fun playNextInQueue(song: Song) {
+        playAllNextInQueue(listOf(song))
+    }
+
+    fun playAllNextInQueue(songs: List<Song>) {
+        if (songs.isEmpty()) return
         val q = _queue.value.toMutableList()
-        val insertPos = (_queueIndex.value + 1).coerceAtMost(q.size)
-        q.add(insertPos, song)
+        val items = _queuedItems.value.toMutableList()
+        val insertPos = (_queueIndex.value + 1).coerceIn(0, q.size)
+        val wrapped = musicQueueRepository.wrapSongs(songs)
+        q.addAll(insertPos, songs)
+        items.addAll(insertPos.coerceAtMost(items.size), wrapped)
         _queue.value = q
+        _queuedItems.value = items
+        _currentSong.value?.let { findNextMatchedSong(it, q, _queueIndex.value) }
         musicService?.updateQueueSnapshot(q, _queueIndex.value)
+        persistUnlimitedQueueAsync()
+        scheduleNextTrackPreload()
+    }
+
+    fun replaceQueue(songs: List<Song>, startIndex: Int = 0) {
+        if (songs.isEmpty()) return
+        val safeIdx = startIndex.coerceIn(0, songs.lastIndex)
+        playSong(songs[safeIdx], songs, safeIdx)
     }
 
     fun shuffleRemainingQueue() {
         val q = _queue.value
+        val items = _queuedItems.value
         if (q.size <= 2) return
         val curIdx = _queueIndex.value.coerceIn(0, q.lastIndex)
-        val playedAndCurrent = q.subList(0, curIdx + 1)
-        val upNextShuffled = q.subList(curIdx + 1, q.size).shuffled()
-        _queue.value = playedAndCurrent + upNextShuffled
+        if (items.size == q.size) {
+            val playedAndCurrent = items.subList(0, curIdx + 1)
+            val upNextShuffled = items.subList(curIdx + 1, items.size).shuffled()
+            val merged = playedAndCurrent + upNextShuffled
+            _queuedItems.value = merged
+            _queue.value = merged.map { it.song }
+        } else {
+            val playedAndCurrent = q.subList(0, curIdx + 1)
+            val upNextShuffled = q.subList(curIdx + 1, q.size).shuffled()
+            _queue.value = playedAndCurrent + upNextShuffled
+            syncQueuedItemsFromQueue(_queue.value)
+        }
+        _currentSong.value?.let { findNextMatchedSong(it, _queue.value, _queueIndex.value) }
         musicService?.updateQueueSnapshot(_queue.value, _queueIndex.value)
+        persistUnlimitedQueueAsync()
+        scheduleNextTrackPreload()
+    }
+
+    private fun syncQueuedItemsFromQueue(songs: List<Song>) {
+        val current = _queuedItems.value
+        if (current.size == songs.size && current.indices.all { current[it].song.id == songs[it].id }) {
+            _queuedItems.value = current.mapIndexed { i, item -> item.copy(song = songs[i]) }
+        } else {
+            _queuedItems.value = musicQueueRepository.wrapSongs(songs)
+        }
+    }
+
+    private fun restorePersistedUnlimitedQueue() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                musicQueueRepository.initializeIdGenerator()
+                val sessionSettings = playbackLifecyclePreferences.sessionSettingsFlow.first()
+                val bgSettings = playbackLifecyclePreferences.backgroundSettingsFlow.first()
+                if (!sessionSettings.restorePreviousQueue) return@runCatching
+
+                val restored = musicQueueRepository.restoreQueue()
+                val snapshot = listeningAnalyticsRepository.getPlaybackSession()
+                if (restored.items.isNotEmpty() && _queue.value.isEmpty() && _currentSong.value == null) {
+                    val songs = restored.items.map { it.song }
+                    val safeIdx = (snapshot?.queueIndex ?: restored.currentIndex).coerceIn(0, songs.lastIndex)
+                    val targetSong = songs[safeIdx]
+                    val restoredPositionMs = if (sessionSettings.restorePlaybackPosition) {
+                        (snapshot?.positionMs ?: restored.playbackPositionMs).coerceAtLeast(0L)
+                    } else {
+                        0L
+                    }
+                    val restoredRepeat = snapshot?.repeatMode?.let { stored ->
+                        RepeatMode.entries.firstOrNull { it.name.equals(stored, ignoreCase = true) }
+                    } ?: _playbackInfo.value.repeatMode
+                    val restoredShuffle = if (snapshot != null) {
+                        if (snapshot.isShuffle) ShuffleMode.ON else ShuffleMode.OFF
+                    } else {
+                        _playbackInfo.value.shuffleMode
+                    }
+                    val restoredSpeed = (snapshot?.playbackSpeed ?: _playbackSpeed.value).coerceIn(0.5f, 2.0f)
+
+                    if (snapshot != null && snapshot.lastPlayerStyle.isNotBlank()) {
+                        com.example.model.PlayerStyle.entries
+                            .firstOrNull { it.name.equals(snapshot.lastPlayerStyle, ignoreCase = true) }
+                            ?.let { restoredStyle -> _playerStyle.value = restoredStyle }
+                    }
+                    if (snapshot != null && snapshot.contextType.isNotBlank()) {
+                        activePlaybackContextType = snapshot.contextType
+                        activePlaybackContextLabel = snapshot.contextLabel
+                    }
+
+                    _queuedItems.value = restored.items
+                    _queue.value = songs
+                    _queueIndex.value = safeIdx
+                    _currentSong.value = targetSong
+                    _playbackSpeed.value = restoredSpeed
+                    _playbackInfo.value = _playbackInfo.value.copy(
+                        isPlaying = false,
+                        currentPositionMs = restoredPositionMs,
+                        durationMs = targetSong.durationMs,
+                        repeatMode = restoredRepeat,
+                        shuffleMode = restoredShuffle,
+                        playbackSpeed = restoredSpeed
+                    )
+                    _lyricsPositionMs.value = restoredPositionMs
+
+                    val shouldAutoResume = bgSettings.autoResumeOnAppLaunch &&
+                        snapshot != null &&
+                        !snapshot.explicitlyStopped &&
+                        snapshot.wasPlayingWhenSaved
+
+                    if (shouldAutoResume) {
+                        val isTrackAvailable = isRestoredTrackAvailable(targetSong)
+                        if (!isTrackAvailable) {
+                            _sessionRestoreNotice.value = "\"${targetSong.title}\" is no longer available. Your queue was preserved."
+                        } else {
+                            if (targetSong.isOnline) {
+                                // Expired online stream URLs are invalidated so a fresh stream resolves cleanly.
+                                onlineRepository.invalidateStreamCache(targetSong.contentUrl.ifBlank { targetSong.uri.toString() })
+                            }
+                            withContext(Dispatchers.Main) {
+                                playSong(
+                                    song = targetSong,
+                                    newQueue = songs,
+                                    startIndex = safeIdx,
+                                    resumePositionMs = restoredPositionMs
+                                )
+                            }
+                        }
+                    }
+                }
+            }.onFailure { e ->
+                Log.w(TAG, "Unable to restore persisted music session", e)
+            }
+        }
+    }
+
+    private fun isRestoredTrackAvailable(song: Song): Boolean {
+        if (song.isOnline) {
+            return song.contentUrl.isNotBlank() || song.uri.toString().isNotBlank()
+        }
+        val path = song.dataPath
+        if (path.isNotBlank()) {
+            val file = java.io.File(path)
+            if (file.exists() && file.length() > 0L) return true
+        }
+        if (song.uri != android.net.Uri.EMPTY) {
+            val canOpen = runCatching {
+                getApplication<Application>().contentResolver.openAssetFileDescriptor(song.uri, "r")?.use { true } ?: false
+            }.getOrDefault(false)
+            if (canOpen) return true
+        }
+        return false
+    }
+
+    fun dismissSessionRestoreNotice() {
+        _sessionRestoreNotice.value = null
+    }
+
+    private fun recordListeningEventAsync(event: data.analytics.ListeningEventEntity?) {
+        if (event == null || event.listenedMs < 1_000L) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                listeningAnalyticsRepository.recordEvent(event)
+            }.onFailure { e ->
+                Log.w(TAG, "Failed recording listening analytics event: ${e.message}")
+            }
+        }
+    }
+
+    fun setAnalyticsTimeRange(range: domain.analytics.AnalyticsTimeRange) {
+        _analyticsTimeRange.value = range
+    }
+
+    fun clearListeningHistory() {
+        listeningTimeTracker.reset()
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                listeningAnalyticsRepository.clearListeningHistory()
+            }.onFailure { e ->
+                Log.w(TAG, "Failed clearing listening history: ${e.message}")
+            }
+        }
+    }
+
+    private fun persistPlaybackSessionSnapshotAsync(
+        wasPlaying: Boolean,
+        explicitlyStopped: Boolean,
+        overridePositionMs: Long? = null
+    ) {
+        val song = _currentSong.value ?: return
+        val info = _playbackInfo.value
+        val snapshot = data.analytics.PlaybackSessionSnapshotEntity(
+            id = 1,
+            lastTrackId = song.id,
+            isOnline = song.isOnline,
+            positionMs = (overridePositionMs ?: info.currentPositionMs).coerceAtLeast(0L),
+            queueIndex = _queueIndex.value.coerceAtLeast(0),
+            repeatMode = info.repeatMode.name,
+            isShuffle = info.shuffleMode == ShuffleMode.ON,
+            playbackSpeed = _playbackSpeed.value,
+            volume = 1.0f,
+            contextType = activePlaybackContextType,
+            contextLabel = activePlaybackContextLabel,
+            lastPlayerStyle = _playerStyle.value.name,
+            wasPlayingWhenSaved = wasPlaying,
+            explicitlyStopped = explicitlyStopped,
+            savedAtMs = System.currentTimeMillis()
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                listeningAnalyticsRepository.savePlaybackSession(snapshot)
+            }.onFailure { e ->
+                Log.w(TAG, "Failed saving playback session snapshot: ${e.message}")
+            }
+        }
+    }
+
+    private fun persistUnlimitedQueueAsync() {
+        if (!musicExperienceSettings.value.unlimitedQueueEnabled) return
+        val snapshotItems = _queuedItems.value
+        val snapshotIdx = _queueIndex.value
+        val snapshotPos = _playbackInfo.value.currentPositionMs
+        queuePersistJob?.cancel()
+        queuePersistJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(250L)
+            runCatching {
+                musicQueueRepository.persistQueue(
+                    items = snapshotItems,
+                    currentIndex = snapshotIdx,
+                    playbackPositionMs = snapshotPos
+                )
+            }.onFailure { e -> Log.w(TAG, "Failed to persist unlimited queue", e) }
+        }
+    }
+
+    private fun persistCurrentQueuePositionNow(positionMs: Long) {
+        val items = _queuedItems.value
+        val idx = _queueIndex.value
+        val activeId = items.getOrNull(idx)?.queueItemId ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                musicQueueRepository.persistPlaybackPosition(activeId, idx, positionMs)
+            }
+        }
+    }
+
+    // --- Universal Two-Stage Mini-Player Gestures (Single Visual State; Playback Always Continues) ---
+
+    private fun updateMiniPlayerDisplayState(next: domain.player.MiniPlayerDisplayState) {
+        if (_miniPlayerDisplayState.value == next) return
+        _miniPlayerDisplayState.value = next
+        viewModelScope.launch {
+            runCatching { playbackLifecyclePreferences.setMiniPlayerDisplayState(next) }
+        }
+    }
+
+    /**
+     * Universal downward swipe handler shared across ALL 20 mini-player styles and the floating circle:
+     * Stage 1: EXPANDED_MINI_PLAYER -> CIRCULAR_MINI_PLAYER (or DISMISSED if circular disabled)
+     * Stage 2: CIRCULAR_MINI_PLAYER -> DISMISSED
+     * Playback, queue, position, and SonoraMusicService continue completely uninterrupted.
+     */
+    fun onMiniPlayerSwipeDown() {
+        val next = domain.player.MiniPlayerGestureController.onSwipeDown(
+            currentState = _miniPlayerDisplayState.value,
+            circularMiniPlayerEnabled = backgroundPlaybackSettings.value.circularMiniPlayerEnabled,
+            swipeDownDismissEnabled = musicExperienceSettings.value.swipeDownDismissMiniPlayerEnabled
+        )
+        updateMiniPlayerDisplayState(next)
+    }
+
+    fun collapseOrDismissMusicMiniPlayer() {
+        onMiniPlayerSwipeDown()
+    }
+
+    fun expandCircularMiniPlayer() {
+        val next = domain.player.MiniPlayerGestureController.onTapCircularPlayer(_miniPlayerDisplayState.value)
+        updateMiniPlayerDisplayState(next)
+    }
+
+    fun dismissMusicMiniPlayer() {
+        if (!musicExperienceSettings.value.swipeDownDismissMiniPlayerEnabled) return
+        updateMiniPlayerDisplayState(domain.player.MiniPlayerDisplayState.DISMISSED)
+    }
+
+    fun restoreMusicMiniPlayer() {
+        updateMiniPlayerDisplayState(domain.player.MiniPlayerGestureController.onRestoreMiniPlayer())
+    }
+
+    // --- Background Playback, Circular Mini Player & Session Management Settings ---
+
+    fun setBackgroundPlaybackEnabled(enabled: Boolean) {
+        viewModelScope.launch { playbackLifecyclePreferences.setBackgroundPlaybackEnabled(enabled) }
+    }
+
+    fun setResumeAfterPhoneCall(enabled: Boolean) {
+        viewModelScope.launch { playbackLifecyclePreferences.setResumeAfterPhoneCall(enabled) }
+    }
+
+    fun setAutoResumeOnAppLaunch(enabled: Boolean) {
+        viewModelScope.launch { playbackLifecyclePreferences.setAutoResumeOnAppLaunch(enabled) }
+    }
+
+    fun setCircularMiniPlayerEnabled(enabled: Boolean) {
+        viewModelScope.launch { playbackLifecyclePreferences.setCircularMiniPlayerEnabled(enabled) }
+    }
+
+    fun setCircularFloatingSide(side: data.preferences.CircularFloatingSide) {
+        viewModelScope.launch { playbackLifecyclePreferences.setCircularFloatingSide(side) }
+    }
+
+    fun setCircularAnimationIntensity(intensity: data.preferences.CircularAnimationIntensity) {
+        viewModelScope.launch { playbackLifecyclePreferences.setCircularAnimationIntensity(intensity) }
+    }
+
+    fun updateCircularMiniPlayerPosition(
+        side: data.preferences.CircularFloatingSide,
+        verticalBias: Float
+    ) {
+        viewModelScope.launch { playbackLifecyclePreferences.setCircularPosition(side, verticalBias) }
+    }
+
+    fun setRestorePreviousQueue(enabled: Boolean) {
+        viewModelScope.launch { playbackLifecyclePreferences.setRestorePreviousQueue(enabled) }
+    }
+
+    fun setRestorePlaybackPosition(enabled: Boolean) {
+        viewModelScope.launch { playbackLifecyclePreferences.setRestorePlaybackPosition(enabled) }
+    }
+
+    fun setStopPlaybackOnTaskRemoved(enabled: Boolean) {
+        viewModelScope.launch { playbackLifecyclePreferences.setStopPlaybackOnTaskRemoved(enabled) }
+    }
+
+    // --- Experience Settings Setters (Part 7) ---
+
+    fun setAutoPipEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setAutoPipEnabled(enabled) }
+    }
+
+    fun setInAppSwipeMiniPlayerEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setInAppSwipeMiniPlayerEnabled(enabled) }
+    }
+
+    fun setPinchToZoomEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setPinchToZoomEnabled(enabled) }
+    }
+
+    fun setAutoVideoQualityEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setAutoVideoQualityEnabled(enabled) }
+    }
+
+    fun setPreferHighestQualityOnWifi(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setPreferHighestQualityOnWifi(enabled) }
+    }
+
+    fun setMobileDataSaverEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setMobileDataSaverEnabled(enabled) }
+    }
+
+    fun setAllowHighQualityOnMobileData(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setAllowHighQualityOnMobileData(enabled) }
+    }
+
+    fun setPreferredWifiQualityHeight(heightPx: Int) {
+        viewModelScope.launch { experiencePreferences.setPreferredWifiQualityHeight(heightPx) }
+    }
+
+    fun setMusicRecommendationsEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setMusicRecommendationsEnabled(enabled) }
+    }
+
+    fun setAutomaticSongRadioEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setAutoSongRadioEnabled(enabled) }
+    }
+
+    fun setUnlimitedQueueEnabled(enabled: Boolean) {
+        viewModelScope.launch { experiencePreferences.setUnlimitedQueueEnabled(enabled) }
+    }
+
+    fun setSwipeDownDismissMiniPlayerEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            experiencePreferences.setSwipeDownDismissMiniPlayerEnabled(enabled)
+            if (!enabled && _miniPlayerDisplayState.value == domain.player.MiniPlayerDisplayState.DISMISSED) {
+                updateMiniPlayerDisplayState(domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER)
+            }
+        }
+    }
+
+    fun setAlbumArtworkQualityMode(mode: data.preferences.AlbumArtworkQualityMode) {
+        viewModelScope.launch {
+            experiencePreferences.setAlbumArtworkQualityMode(mode)
+            data.artwork.AlbumArtworkQualityManager.currentQualityMode = mode
+            AlbumArtHelper.clearOnlineArtworkCache()
+        }
+    }
+
+    // --- Advanced Music Discovery (Moods, India Regional, Mixes) & Continuous Song Radio ---
+
+    fun loadMoodDiscovery(mood: data.online.MusicMoodActivity) {
+        _selectedMoodActivity.value = mood
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        val country = _onlineContentCountry.value
+        val discoverLang = _discoverMusicLanguage.value
+        moodDiscoveryJob?.cancel()
+        moodDiscoveryJob = viewModelScope.launch {
+            _isLoadingMoodDiscovery.value = true
+            val langPrefix = if (discoverLang != DiscoverMusicLanguage.ALL) {
+                "${discoverLang.label} "
+            } else {
+                ""
+            }
+            when (
+                val res = onlineRepository.searchRegionRecommendations(
+                    query = "$langPrefix${mood.querySuffix}",
+                    provider = provider,
+                    filter = OnlineSearchFilter.SONGS,
+                    countryCode = country,
+                    discoverLanguage = discoverLang
+                )
+            ) {
+                is OnlineResult.Success -> _moodDiscoveryTracks.value = res.value.take(20)
+                is OnlineResult.Error -> _moodDiscoveryTracks.value = emptyList()
+            }
+            _isLoadingMoodDiscovery.value = false
+        }
+    }
+
+    fun loadIndiaMusicCategory(category: data.online.IndiaMusicCategory) {
+        _selectedIndiaCategory.value = category
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        indiaDiscoveryJob?.cancel()
+        indiaDiscoveryJob = viewModelScope.launch {
+            _isLoadingIndiaDiscovery.value = true
+            when (
+                val res = onlineRepository.searchRegionRecommendations(
+                    query = category.query,
+                    provider = provider,
+                    filter = OnlineSearchFilter.SONGS,
+                    countryCode = domain.online.RegionMusicEligibilityFilter.REGION_INDIA,
+                    discoverLanguage = _discoverMusicLanguage.value
+                )
+            ) {
+                is OnlineResult.Success -> _indiaDiscoveryTracks.value = res.value.take(20)
+                is OnlineResult.Error -> _indiaDiscoveryTracks.value = emptyList()
+            }
+            _isLoadingIndiaDiscovery.value = false
+        }
+    }
+
+    fun ensureAdvancedMusicDiscoveryLoaded() {
+        if (_moodDiscoveryTracks.value.isEmpty() && !_isLoadingMoodDiscovery.value) {
+            loadMoodDiscovery(_selectedMoodActivity.value)
+        }
+        if (domain.online.RegionMusicEligibilityFilter.isIndiaRegion(_onlineContentCountry.value) &&
+            _indiaDiscoveryTracks.value.isEmpty() &&
+            !_isLoadingIndiaDiscovery.value
+        ) {
+            loadIndiaMusicCategory(_selectedIndiaCategory.value)
+        }
+    }
+
+    fun playPersonalizedMixCard(card: data.online.PersonalizedMusicMixCard) {
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull()
+        val country = _onlineContentCountry.value
+        val eligiblePreviews = domain.online.RegionMusicEligibilityFilter.filterSongsForRegion(
+            songs = card.previewSongs,
+            countryCode = country
+        )
+        if (provider == null) {
+            if (eligiblePreviews.isNotEmpty()) {
+                playCollection(eligiblePreviews, shuffle = false)
+            }
+            return
+        }
+        viewModelScope.launch {
+            when (
+                val res = onlineRepository.searchRegionRecommendations(
+                    query = card.query,
+                    provider = provider,
+                    filter = OnlineSearchFilter.SONGS,
+                    countryCode = country,
+                    discoverLanguage = _discoverMusicLanguage.value
+                )
+            ) {
+                is OnlineResult.Success -> {
+                    val tracks = res.value
+                    if (tracks.isNotEmpty()) {
+                        val songs = tracks.map { OnlineTrackMapper.toUnifiedSong(it) }
+                        if (card.id == "sonora_personalized_radio") {
+                            _songRadioSession.value = data.online.SongRadioSession(
+                                isActive = true,
+                                seedSong = songs.first(),
+                                playedSongIds = setOf(songs.first().id),
+                                currentQueryHint = card.query
+                            )
+                        }
+                        playSong(songs.first(), songs, 0)
+                    } else if (eligiblePreviews.isNotEmpty()) {
+                        playCollection(eligiblePreviews, shuffle = false)
+                    } else {
+                        _libraryFeedbackMessage.value =
+                            domain.online.RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
+                                sectionTitle = card.title,
+                                countryCode = country,
+                                providerName = provider.displayName
+                            )
+                    }
+                }
+                is OnlineResult.Error -> {
+                    if (eligiblePreviews.isNotEmpty()) {
+                        playCollection(eligiblePreviews, shuffle = false)
+                    } else {
+                        _libraryFeedbackMessage.value = res.message
+                    }
+                }
+            }
+        }
+    }
+
+    fun loadRecommendationsForCurrentSong(forceRefresh: Boolean = false) {
+        val seed = _currentSong.value ?: return
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        val country = _onlineContentCountry.value
+        if (!forceRefresh && _currentSongRecommendations.value.isNotEmpty() && _songRadioSession.value.seedSong?.id == seed.id) {
+            return
+        }
+        currentSongRecsJob?.cancel()
+        currentSongRecsJob = viewModelScope.launch {
+            _isLoadingCurrentSongRecommendations.value = true
+            val query = data.online.MusicDiscoveryAndRadioEngine.buildRelatedSongsQuery(
+                seedSong = seed,
+                session = _songRadioSession.value,
+                countryCode = country,
+                discoverLanguage = _discoverMusicLanguage.value
+            )
+            when (
+                val res = onlineRepository.searchRegionRecommendations(
+                    query = query,
+                    provider = provider,
+                    filter = OnlineSearchFilter.SONGS,
+                    countryCode = country,
+                    discoverLanguage = _discoverMusicLanguage.value
+                )
+            ) {
+                is OnlineResult.Success -> {
+                    val candidateSongs = res.value.map { OnlineTrackMapper.toUnifiedSong(it) }
+                    val ranked = data.online.MusicDiscoveryAndRadioEngine.rankRadioCandidates(
+                        candidates = candidateSongs,
+                        seedSong = seed,
+                        session = _songRadioSession.value,
+                        existingQueueIds = setOf(seed.id),
+                        limit = 15,
+                        countryCode = country
+                    )
+                    _currentSongRecommendations.value = ranked
+                }
+                is OnlineResult.Error -> {
+                    // Fallback to region-eligible local library similar artist/genre tracks if offline (never backfill foreign tracks in India mode)
+                    val localFallback = domain.online.RegionMusicEligibilityFilter.filterSongsForRegion(
+                        songs = _allSongs.value.filter {
+                            it.id != seed.id && (
+                                it.artist.equals(seed.artist, ignoreCase = true) ||
+                                    (seed.genre.isNotBlank() && it.genre.equals(seed.genre, ignoreCase = true))
+                                )
+                        },
+                        countryCode = country
+                    ).take(12)
+                    _currentSongRecommendations.value = localFallback
+                }
+            }
+            _isLoadingCurrentSongRecommendations.value = false
+        }
+    }
+
+    fun startSongRadio(seedSong: Song, autoPlayFirstAdded: Boolean = false) {
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull()
+        val country = _onlineContentCountry.value
+        val existingPlayed = _songRadioSession.value.playedSongIds + seedSong.id
+        val query = data.online.MusicDiscoveryAndRadioEngine.buildRelatedSongsQuery(
+            seedSong = seedSong,
+            session = _songRadioSession.value.copy(isActive = true, seedSong = seedSong),
+            countryCode = country,
+            discoverLanguage = _discoverMusicLanguage.value
+        )
+        _songRadioSession.value = data.online.SongRadioSession(
+            isActive = true,
+            seedSong = seedSong,
+            playedSongIds = existingPlayed,
+            currentQueryHint = query
+        )
+        _libraryFeedbackMessage.value = "Started SONORA Radio for \"${seedSong.title}\""
+
+        if (provider == null) return
+        radioTopUpJob?.cancel()
+        radioTopUpJob = viewModelScope.launch {
+            when (
+                val res = onlineRepository.searchRegionRecommendations(
+                    query = query,
+                    provider = provider,
+                    filter = OnlineSearchFilter.SONGS,
+                    countryCode = country,
+                    discoverLanguage = _discoverMusicLanguage.value
+                )
+            ) {
+                is OnlineResult.Success -> {
+                    val candidateSongs = res.value.map { OnlineTrackMapper.toUnifiedSong(it) }
+                    val ranked = data.online.MusicDiscoveryAndRadioEngine.rankRadioCandidates(
+                        candidates = candidateSongs,
+                        seedSong = seedSong,
+                        session = _songRadioSession.value,
+                        existingQueueIds = _queue.value.map { it.id }.toSet(),
+                        limit = 15,
+                        countryCode = country
+                    )
+                    _currentSongRecommendations.value = ranked
+                    if (ranked.isNotEmpty()) {
+                        if (autoPlayFirstAdded) {
+                            addAllToQueue(ranked)
+                            playNext(withCrossfade = false)
+                        } else if (_currentSong.value?.id == seedSong.id) {
+                            addAllToQueue(ranked)
+                        } else {
+                            playSong(seedSong, listOf(seedSong) + ranked, 0)
+                        }
+                    } else {
+                        _libraryFeedbackMessage.value =
+                            domain.online.RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
+                                sectionTitle = "song radio recommendations",
+                                countryCode = country,
+                                providerName = provider.displayName
+                            )
+                    }
+                }
+                is OnlineResult.Error -> {
+                    _libraryFeedbackMessage.value = res.message
+                }
+            }
+        }
+    }
+
+    fun stopSongRadio() {
+        radioTopUpJob?.cancel()
+        _songRadioSession.value = data.online.SongRadioSession(isActive = false)
+        _libraryFeedbackMessage.value = "Stopped Song Radio"
+    }
+
+    private fun maybeTopUpSongRadioQueue() {
+        val session = _songRadioSession.value
+        if (!session.isActive) return
+        val remaining = _queue.value.size - 1 - _queueIndex.value
+        if (remaining > 3 || radioTopUpJob?.isActive == true) return
+        val seed = _currentSong.value ?: session.seedSong ?: return
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        val country = _onlineContentCountry.value
+        radioTopUpJob = viewModelScope.launch {
+            val query = data.online.MusicDiscoveryAndRadioEngine.buildRelatedSongsQuery(
+                seedSong = seed,
+                session = session,
+                countryCode = country,
+                discoverLanguage = _discoverMusicLanguage.value
+            )
+            when (
+                val res = onlineRepository.searchRegionRecommendations(
+                    query = query,
+                    provider = provider,
+                    filter = OnlineSearchFilter.SONGS,
+                    countryCode = country,
+                    discoverLanguage = _discoverMusicLanguage.value
+                )
+            ) {
+                is OnlineResult.Success -> {
+                    val candidateSongs = res.value.map { OnlineTrackMapper.toUnifiedSong(it) }
+                    val nextBatch = data.online.MusicDiscoveryAndRadioEngine.rankRadioCandidates(
+                        candidates = candidateSongs,
+                        seedSong = seed,
+                        session = _songRadioSession.value,
+                        existingQueueIds = _queue.value.map { it.id }.toSet(),
+                        limit = 10,
+                        countryCode = country
+                    )
+                    if (nextBatch.isNotEmpty()) {
+                        addAllToQueue(nextBatch)
+                    }
+                }
+                is OnlineResult.Error -> Unit
+            }
+        }
     }
 
     // --- Audio Effects & Spatial Controls ---
@@ -2471,6 +4163,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         preferences.playbackSpeed = clamped
         _playbackInfo.value = _playbackInfo.value.copy(playbackSpeed = clamped)
         musicService?.audioEngine?.setPlaybackSpeed(clamped)
+        persistPlaybackSessionSnapshotAsync(
+            wasPlaying = _playbackInfo.value.isPlaying,
+            explicitlyStopped = false
+        )
     }
 
     fun setVisualizerStyle(style: VisualizerStyle) {
@@ -2810,7 +4506,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
         onlineSuggestionJob = viewModelScope.launch {
             delay(300L)
-            val suggestions = onlineRepository.getSearchSuggestions(trimmed, provider)
+            val suggestions = onlineRepository.getSearchSuggestions(
+                query = trimmed,
+                provider = provider,
+                countryCode = _onlineContentCountry.value
+            )
             _onlineSearchSuggestions.value = suggestions
         }
     }
@@ -2983,8 +4683,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             current.toMutableMap().apply { put(section, latest.copy(isLoadingMore = true)) }
         }
 
+        val activeCountry = _onlineContentCountry.value
         discoverLoadMoreJobs[section] = viewModelScope.launch {
-            when (val res = onlineRepository.loadMoreDiscoverSection(section, provider, token)) {
+            when (val res = onlineRepository.loadMoreDiscoverSection(section, provider, token, activeCountry)) {
                 is OnlineResult.Success -> {
                     if (generation != discoverGeneration || _selectedOnlineProvider.value?.key != provider.key) {
                         return@launch
@@ -3025,7 +4726,28 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _onlineContentCountry.value = clean
                 NewPipeInitializer.updateLocalization(_onlineContentLanguage.value, clean)
                 onlineRepository.clearDiscoverCache()
+                // Clear cached recommendation lists so switching regions never leaves stale foreign tracks
+                moodDiscoveryJob?.cancel()
+                indiaDiscoveryJob?.cancel()
+                currentSongRecsJob?.cancel()
+                radioTopUpJob?.cancel()
+                _moodDiscoveryTracks.value = emptyList()
+                _currentSongRecommendations.value = emptyList()
+                _onlineSearchSuggestions.value = emptyList()
+                if (_songRadioSession.value.isActive) {
+                    _songRadioSession.value = data.online.SongRadioSession(isActive = false)
+                }
                 refreshOnlineDiscovery(forceRefresh = true)
+                if (musicExperienceSettings.value.musicRecommendationsEnabled) {
+                    loadMoodDiscovery(_selectedMoodActivity.value)
+                    if (domain.online.RegionMusicEligibilityFilter.isIndiaRegion(clean)) {
+                        loadIndiaMusicCategory(_selectedIndiaCategory.value)
+                    }
+                }
+                if (_currentSong.value != null) {
+                    loadRecommendationsForCurrentSong(forceRefresh = true)
+                }
+                videoController.onRegionOrLanguageChanged()
                 val q = _onlineSearchQuery.value.trim()
                 if (q.isNotBlank()) executeOnlineSearch(q, forceRefresh = true)
             }
@@ -3040,6 +4762,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 NewPipeInitializer.updateLocalization(clean, _onlineContentCountry.value)
                 onlineRepository.clearDiscoverCache()
                 refreshOnlineDiscovery(forceRefresh = true)
+                videoController.onRegionOrLanguageChanged()
                 val q = _onlineSearchQuery.value.trim()
                 if (q.isNotBlank()) executeOnlineSearch(q, forceRefresh = true)
             }
@@ -3052,7 +4775,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             onlineRegionPrefs.setDiscoverLanguage(language)
         }
+        _moodDiscoveryTracks.value = emptyList()
         refreshOnlineDiscovery(forceRefresh = true)
+        if (musicExperienceSettings.value.musicRecommendationsEnabled) {
+            loadMoodDiscovery(_selectedMoodActivity.value)
+        }
     }
 
     private fun launchDiscoverSection(
@@ -3092,7 +4819,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             _onlineCollectionState.value = OnlineCollectionUiState.Loading(item.title)
             when (val res = onlineRepository.fetchCollectionDetails(item)) {
                 is OnlineResult.Success -> {
-                    _onlineCollectionState.value = OnlineCollectionUiState.Success(res.value)
+                    _onlineCollectionState.value = OnlineCollectionUiState.Success(
+                        details = res.value,
+                        sourceItem = item
+                    )
                 }
                 is OnlineResult.Error -> {
                     _onlineCollectionState.value = OnlineCollectionUiState.Error(res.message, item)
@@ -3134,14 +4864,256 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleSaveOnlineTrack(song: Song) {
-        if (!song.isOnline) return
         viewModelScope.launch {
-            onlineRepository.toggleSaveOnlineTrack(song)
+            onlineLibraryRepository.toggleSaveTrack(song)
+                .onSuccess { saved ->
+                    _libraryFeedbackMessage.value = if (saved) {
+                        "Saved \"${song.title}\" to Online Library."
+                    } else {
+                        "Removed \"${song.title}\" from Online Library."
+                    }
+                }
+                .onFailure { err ->
+                    _libraryFeedbackMessage.value = err.message ?: "Unable to save this track."
+                }
         }
     }
 
     fun toggleSaveOnlineTrack(track: OnlineTrack) {
         toggleSaveOnlineTrack(OnlineTrackMapper.toUnifiedSong(track))
+    }
+
+    fun removeSavedOnlineTrack(stableId: Long, title: String = "") {
+        viewModelScope.launch {
+            onlineLibraryRepository.removeSavedTrack(stableId)
+            if (title.isNotBlank()) {
+                _libraryFeedbackMessage.value = "Removed \"$title\" from Saved Online Songs."
+            }
+        }
+    }
+
+    fun setLibrarySectionMode(mode: domain.library.LibrarySectionMode) {
+        userUpdatedLibraryMode = true
+        _librarySectionMode.value = mode
+        libraryModePrefs.setCachedLibrarySectionMode(mode)
+        viewModelScope.launch(Dispatchers.IO) {
+            libraryModePrefs.setLibrarySectionMode(mode)
+        }
+    }
+
+    fun setOnlineLibrarySearchQuery(query: String) {
+        _onlineLibrarySearchQuery.value = query
+    }
+
+    fun setOnlineLibrarySortOption(option: domain.library.OnlineLibrarySortOption) {
+        _onlineLibrarySortOption.value = option
+    }
+
+    fun setOnlineLibraryProviderFilter(providerKey: String?) {
+        _onlineLibraryProviderFilter.value = providerKey
+    }
+
+    fun clearLibraryFeedback() {
+        _libraryFeedbackMessage.value = null
+    }
+
+    fun toggleSaveOnlineAlbum(item: OnlineTrack, details: OnlineCollectionDetails? = null) {
+        viewModelScope.launch {
+            onlineLibraryRepository.toggleSaveAlbum(item, details)
+                .onSuccess { saved ->
+                    val name = details?.title?.takeIf { it.isNotBlank() } ?: item.title
+                    _libraryFeedbackMessage.value = if (saved) {
+                        "Saved album \"$name\" to Online Library."
+                    } else {
+                        "Removed album \"$name\" from Online Library."
+                    }
+                }
+                .onFailure { err ->
+                    _libraryFeedbackMessage.value = err.message ?: "This provider does not allow saving this album."
+                }
+        }
+    }
+
+    fun removeSavedOnlineAlbum(stableId: Long, title: String = "") {
+        viewModelScope.launch {
+            onlineLibraryRepository.removeSavedAlbum(stableId)
+            if (title.isNotBlank()) {
+                _libraryFeedbackMessage.value = "Removed album \"$title\" from Online Library."
+            }
+        }
+    }
+
+    fun toggleFollowOnlineArtist(item: OnlineTrack, details: OnlineCollectionDetails? = null) {
+        viewModelScope.launch {
+            onlineLibraryRepository.toggleFollowArtist(item, details)
+                .onSuccess { followed ->
+                    val name = if (item.kind == OnlineItemKind.ARTIST) {
+                        details?.title?.takeIf { it.isNotBlank() } ?: item.title
+                    } else {
+                        item.artist.ifBlank { item.title }
+                    }
+                    _libraryFeedbackMessage.value = if (followed) {
+                        "Following $name in Online Library."
+                    } else {
+                        "Unfollowed $name."
+                    }
+                }
+                .onFailure { err ->
+                    _libraryFeedbackMessage.value = err.message ?: "This provider does not expose an artist channel to follow."
+                }
+        }
+    }
+
+    fun unfollowOnlineArtist(stableId: Long, name: String = "") {
+        viewModelScope.launch {
+            onlineLibraryRepository.unfollowArtist(stableId)
+            if (name.isNotBlank()) {
+                _libraryFeedbackMessage.value = "Unfollowed $name."
+            }
+        }
+    }
+
+    fun createOnlinePlaylist(name: String, initialTrack: Song? = null) {
+        viewModelScope.launch {
+            onlineLibraryRepository.createOnlinePlaylist(name)
+                .onSuccess { newId ->
+                    if (initialTrack != null) {
+                        onlineLibraryRepository.addTrackToOnlinePlaylist(newId, initialTrack)
+                    }
+                    _libraryFeedbackMessage.value = "Created online playlist \"${name.trim()}\"."
+                }
+                .onFailure { err ->
+                    _libraryFeedbackMessage.value = err.message ?: "Could not create online playlist."
+                }
+        }
+    }
+
+    fun renameOnlinePlaylist(playlistId: Long, newName: String) {
+        viewModelScope.launch {
+            onlineLibraryRepository.renameOnlinePlaylist(playlistId, newName)
+        }
+    }
+
+    fun deleteOnlinePlaylist(playlistId: Long, name: String = "") {
+        viewModelScope.launch {
+            onlineLibraryRepository.deleteOnlinePlaylist(playlistId)
+            if (name.isNotBlank()) {
+                _libraryFeedbackMessage.value = "Deleted online playlist \"$name\"."
+            }
+        }
+    }
+
+    fun addTrackToOnlinePlaylist(playlistId: Long, song: Song, playlistName: String = "") {
+        viewModelScope.launch {
+            onlineLibraryRepository.addTrackToOnlinePlaylist(playlistId, song)
+                .onSuccess {
+                    val suffix = if (playlistName.isNotBlank()) " to \"$playlistName\"" else ""
+                    _libraryFeedbackMessage.value = "Added \"${song.title}\"$suffix."
+                }
+                .onFailure { err ->
+                    _libraryFeedbackMessage.value = err.message ?: "Could not add track to online playlist."
+                }
+        }
+    }
+
+    fun removeTrackFromOnlinePlaylist(playlistId: Long, trackStableId: Long) {
+        viewModelScope.launch {
+            onlineLibraryRepository.removeTrackFromOnlinePlaylist(playlistId, trackStableId)
+        }
+    }
+
+    fun toggleSaveExternalOnlinePlaylist(item: OnlineTrack, details: OnlineCollectionDetails? = null) {
+        viewModelScope.launch {
+            onlineLibraryRepository.toggleSaveExternalPlaylist(item, details)
+                .onSuccess { saved ->
+                    val name = details?.title?.takeIf { it.isNotBlank() } ?: item.title
+                    _libraryFeedbackMessage.value = if (saved) {
+                        "Saved playlist \"$name\" to Online Library."
+                    } else {
+                        "Removed playlist \"$name\" from Online Library."
+                    }
+                }
+                .onFailure { err ->
+                    _libraryFeedbackMessage.value = err.message ?: "Unable to save this playlist."
+                }
+        }
+    }
+
+    fun clearOnlineListeningHistory() {
+        viewModelScope.launch {
+            onlineLibraryRepository.clearListeningHistory()
+            _libraryFeedbackMessage.value = "Cleared online listening history (saved items preserved)."
+        }
+    }
+
+    fun isOnlineAlbumSaved(item: OnlineTrack): Boolean {
+        val canonicalUrl = item.contentUrl.trim()
+        if (canonicalUrl.isBlank()) return false
+        val id = OnlineTrackMapper.computeStableId(item.providerKey.ifBlank { "online" }, canonicalUrl)
+        return id in savedOnlineAlbumIds.value
+    }
+
+    fun isOnlineArtistFollowed(item: OnlineTrack): Boolean {
+        val url = if (item.kind == OnlineItemKind.ARTIST) item.contentUrl else item.artistUrl.orEmpty()
+        if (url.isBlank()) return false
+        val id = OnlineTrackMapper.computeStableId(item.providerKey.ifBlank { "online" }, url.trim())
+        return id in followedOnlineArtistIds.value
+    }
+
+    fun isExternalOnlinePlaylistSaved(contentUrl: String): Boolean {
+        return contentUrl.trim() in savedOnlinePlaylistUrls.value
+    }
+
+    fun deleteLocalSongs(
+        songs: List<Song>,
+        onRequiresSystemConfirmation: (android.content.IntentSender, List<Long>) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            val downloaded = songs.filter { it.sourceType == "DOWNLOADED" }
+            val localDevice = songs.filter { !it.isOnline && it.sourceType != "DOWNLOADED" }
+
+            if (downloaded.isNotEmpty()) {
+                downloadRepository.deleteDownloadedTracks(downloaded.map { it.id })
+            }
+
+            if (localDevice.isNotEmpty()) {
+                when (val result = offlineLibraryRepository.deleteLocalAudioTracks(localDevice)) {
+                    is domain.library.LocalSongDeleteResult.Deleted -> {
+                        val total = result.deletedCount + downloaded.size
+                        _libraryFeedbackMessage.value = if (total == 1) {
+                            "Removed 1 track from device."
+                        } else {
+                            "Removed $total tracks from device."
+                        }
+                        loadLocalSongs()
+                    }
+                    is domain.library.LocalSongDeleteResult.RequiresSystemConfirmation -> {
+                        onRequiresSystemConfirmation(result.intentSender, result.pendingSongIds)
+                    }
+                    is domain.library.LocalSongDeleteResult.Failed -> {
+                        _libraryFeedbackMessage.value = result.message
+                    }
+                }
+            } else if (downloaded.isNotEmpty()) {
+                _libraryFeedbackMessage.value = if (downloaded.size == 1) {
+                    "Deleted 1 downloaded track."
+                } else {
+                    "Deleted ${downloaded.size} downloaded tracks."
+                }
+            }
+        }
+    }
+
+    fun onSystemLocalDeleteConfirmed(deletedSongIds: List<Long>) {
+        viewModelScope.launch {
+            offlineLibraryRepository.cleanupDeletedSongReferences(deletedSongIds)
+            _libraryFeedbackMessage.value = if (deletedSongIds.size == 1) {
+                "Deleted 1 local track."
+            } else {
+                "Deleted ${deletedSongIds.size} local tracks."
+            }
+            loadLocalSongs()
+        }
     }
 
     fun addOnlineTrackToPlaylist(playlistId: Long, song: Song) {
@@ -3183,8 +5155,699 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    // --- Music Download Manager & Downloaded Music Library Actions ---
+
+    fun canonicalSourceKeyForTrack(track: OnlineTrack): String {
+        return downloadCoordinator.storageHelper.computeCanonicalSourceKey(track.providerKey, track.contentUrl)
+    }
+
+    fun canonicalSourceKeyForSong(song: Song): String? {
+        if (song.contentUrl.isBlank()) return null
+        return downloadCoordinator.storageHelper.computeCanonicalSourceKey(
+            song.providerKey.ifBlank { OnlineMusicProvider.KEY_YOUTUBE_MUSIC },
+            song.contentUrl
+        )
+    }
+
+    fun isTrackDownloaded(track: OnlineTrack): Boolean {
+        return canonicalSourceKeyForTrack(track) in downloadedSourceKeys.value
+    }
+
+    fun isSongDownloaded(song: Song): Boolean {
+        if (song.sourceType == "DOWNLOADED") return true
+        val key = canonicalSourceKeyForSong(song) ?: return false
+        return key in downloadedSourceKeys.value
+    }
+
+    fun requestDownloadSong(song: Song) {
+        if (song.sourceType == "DOWNLOADED") {
+            _downloadFeedbackMessage.value = "\"${song.title}\" is already in Library → Downloads."
+            return
+        }
+        if (!song.isOnline) {
+            _downloadFeedbackMessage.value = "\"${song.title}\" is already a local audio file on your device."
+            return
+        }
+        requestDownloadTrack(OnlineTrackMapper.toOnlineTrack(song))
+    }
+
+    fun requestDownloadTrack(track: OnlineTrack) {
+        viewModelScope.launch {
+            when (val check = downloadCoordinator.checkDownloadability(track)) {
+                is domain.download.DownloadabilityResult.AlreadyDownloaded -> {
+                    _downloadFeedbackMessage.value = "\"${check.trackTitle}\" is already saved in Downloaded Music."
+                    return@launch
+                }
+                is domain.download.DownloadabilityResult.AlreadyInQueue -> {
+                    _downloadFeedbackMessage.value = "\"${check.trackTitle}\" is already in Download Manager (${check.state.displayLabel})."
+                    return@launch
+                }
+                is domain.download.DownloadabilityResult.Unsupported -> {
+                    _downloadFeedbackMessage.value = check.reason
+                    return@launch
+                }
+                is domain.download.DownloadabilityResult.Downloadable -> Unit
+            }
+
+            val config = downloadCoordinator.preferences.getLocationConfig()
+            val hasAccess = downloadCoordinator.hasAccessibleDownloadFolder()
+            if (!config.isConfigured || !hasAccess) {
+                val reason = if (config.isConfigured && !hasAccess) {
+                    "Permission to \"${config.folderLabel.ifBlank { "previous folder" }}\" expired. Please reselect a download folder."
+                } else {
+                    null
+                }
+                _downloadFlowState.value = DownloadFlowUiState.AskFolderLocation(
+                    pendingTrack = track,
+                    suggestedInitialUri = downloadCoordinator.storageHelper.buildSuggestedInitialTreeUri(),
+                    reasonMessage = reason
+                )
+            } else {
+                openDownloadQualitySelector(track, config.folderLabel)
+            }
+        }
+    }
+
+    fun onDownloadFolderSelected(uri: android.net.Uri?) {
+        val currentState = _downloadFlowState.value
+        val pendingTrack = (currentState as? DownloadFlowUiState.AskFolderLocation)?.pendingTrack
+        val pendingVideo = pendingVideoDownloadAfterFolderPick
+        pendingVideoDownloadAfterFolderPick = null
+        if (uri == null) {
+            _downloadFlowState.value = DownloadFlowUiState.Idle
+            return
+        }
+        viewModelScope.launch {
+            val savedConfig = downloadCoordinator.persistSelectedFolder(uri)
+            when {
+                pendingTrack != null -> openDownloadQualitySelector(pendingTrack, savedConfig.folderLabel)
+                pendingVideo != null -> {
+                    _downloadFlowState.value = DownloadFlowUiState.Idle
+                    _pendingVideoDownload.value = pendingVideo
+                }
+                else -> {
+                    _downloadFlowState.value = DownloadFlowUiState.Idle
+                    _downloadFeedbackMessage.value = "Download folder updated to ${savedConfig.folderLabel}."
+                }
+            }
+        }
+    }
+
+    fun requestDownloadVideo(
+        video: domain.video.OnlineVideoItem,
+        details: domain.video.ResolvedVideoDetails?
+    ) {
+        val eligibility = data.download.VideoDownloadEligibilityEvaluator.evaluate(video, details)
+        if (eligibility is data.download.VideoDownloadEligibility.NotPermitted) {
+            _downloadFeedbackMessage.value = eligibility.reason
+            return
+        }
+        val resolved = details ?: return
+        viewModelScope.launch {
+            val config = downloadCoordinator.preferences.getLocationConfig()
+            val hasAccess = downloadCoordinator.hasAccessibleDownloadFolder()
+            if (!config.isConfigured || !hasAccess) {
+                pendingVideoDownloadAfterFolderPick = video to resolved
+                _downloadFlowState.value = DownloadFlowUiState.AskFolderLocation(
+                    pendingTrack = null,
+                    suggestedInitialUri = downloadCoordinator.storageHelper.buildSuggestedInitialTreeUri(),
+                    reasonMessage = "Choose a folder to save downloaded videos & audio offline."
+                )
+            } else {
+                _pendingVideoDownload.value = video to resolved
+            }
+        }
+    }
+
+    fun confirmVideoDownload(
+        video: domain.video.OnlineVideoItem,
+        option: data.download.VideoDownloadOption
+    ) {
+        _pendingVideoDownload.value = null
+        viewModelScope.launch {
+            val config = downloadCoordinator.preferences.getLocationConfig()
+            if (!config.isConfigured) {
+                _downloadFeedbackMessage.value = "Please select a download folder in Settings first."
+                return@launch
+            }
+            val res = downloadCoordinator.enqueueVideoDownload(
+                video = video,
+                option = option,
+                targetFolderUri = config.treeUri
+            )
+            _downloadFeedbackMessage.value = if (res.isSuccess) {
+                val kind = if (option.mediaType == domain.download.DownloadMediaType.VIDEO) "Video (${option.resolutionLabel})" else "Audio (${option.resolutionLabel})"
+                "Downloading $kind: ${video.title}"
+            } else {
+                res.exceptionOrNull()?.message ?: "Unable to start download."
+            }
+        }
+    }
+
+    fun dismissVideoDownloadSheet() {
+        _pendingVideoDownload.value = null
+    }
+
+    fun playDownloadedVideo(track: domain.download.DownloadedTrack) {
+        if (track.isMissingFile) {
+            _downloadFeedbackMessage.value = "Downloaded video file was moved or deleted from storage."
+            return
+        }
+        videoController.playDownloadedLocalVideo(track, expandPlayer = true)
+    }
+
+    fun requestChangeDownloadFolder() {
+        _downloadFlowState.value = DownloadFlowUiState.AskFolderLocation(
+            pendingTrack = null,
+            suggestedInitialUri = downloadCoordinator.storageHelper.buildSuggestedInitialTreeUri(),
+            reasonMessage = null
+        )
+    }
+
+    fun dismissDownloadFlow() {
+        downloadFormatResolveJob?.cancel()
+        downloadFormatResolveJob = null
+        _downloadFlowState.value = DownloadFlowUiState.Idle
+    }
+
+    fun clearDownloadFeedback() {
+        _downloadFeedbackMessage.value = null
+    }
+
+    private fun openDownloadQualitySelector(track: OnlineTrack, folderLabel: String) {
+        downloadFormatResolveJob?.cancel()
+        downloadFormatResolveJob = viewModelScope.launch {
+            val defaultPreset = downloadCoordinator.preferences.defaultQualityFlow.first()
+            _downloadFlowState.value = DownloadFlowUiState.QualitySelector(
+                domain.download.DownloadQualitySheetData(
+                    track = track,
+                    isResolvingFormats = true,
+                    selectedPreset = defaultPreset,
+                    destinationFolderLabel = folderLabel.ifBlank { "Selected Folder" }
+                )
+            )
+
+            // Try pre-resolved stream from active player if it matches this exact track
+            val currentResolved = _currentResolvedStream.value?.takeIf { it.contentUrl == track.contentUrl }
+            val result = if (currentResolved != null) {
+                downloadCoordinator.streamSelector.buildCandidatesFromResolved(currentResolved)
+            } else {
+                downloadCoordinator.streamSelector.extractDownloadableFormats(track)
+            }
+
+            if (result.isFailure) {
+                val errMsg = result.exceptionOrNull()?.message ?: "This track cannot be downloaded."
+                _downloadFlowState.value = DownloadFlowUiState.QualitySelector(
+                    domain.download.DownloadQualitySheetData(
+                        track = track,
+                        isResolvingFormats = false,
+                        selectedPreset = defaultPreset,
+                        destinationFolderLabel = folderLabel.ifBlank { "Selected Folder" },
+                        errorMessage = errMsg
+                    )
+                )
+                return@launch
+            }
+
+            val rawCandidates = result.getOrThrow()
+            val recommendations = downloadCoordinator.streamSelector.buildPresetRecommendations(rawCandidates)
+            _downloadFlowState.value = DownloadFlowUiState.QualitySelector(
+                domain.download.DownloadQualitySheetData(
+                    track = track,
+                    isResolvingFormats = false,
+                    candidates = rawCandidates,
+                    recommendedByPreset = recommendations,
+                    selectedPreset = defaultPreset,
+                    selectedManualStreamId = null,
+                    destinationFolderLabel = folderLabel.ifBlank { "Selected Folder" }
+                )
+            )
+
+            // Optionally enrich genuine Content-Length asynchronously without blocking sheet interaction
+            val enriched = downloadCoordinator.streamSelector.enrichContentLengthsIfUnknown(
+                candidates = rawCandidates,
+                headers = currentResolved?.selectedStream?.headers ?: emptyMap()
+            )
+            val updatedState = _downloadFlowState.value as? DownloadFlowUiState.QualitySelector
+            if (updatedState != null && updatedState.data.track.contentUrl == track.contentUrl) {
+                val updatedRecs = downloadCoordinator.streamSelector.buildPresetRecommendations(enriched)
+                _downloadFlowState.value = DownloadFlowUiState.QualitySelector(
+                    updatedState.data.copy(
+                        candidates = enriched,
+                        recommendedByPreset = updatedRecs
+                    )
+                )
+            }
+        }
+    }
+
+    fun selectDownloadQualityPreset(preset: domain.download.DownloadQualityOption) {
+        val current = (_downloadFlowState.value as? DownloadFlowUiState.QualitySelector)?.data ?: return
+        _downloadFlowState.value = DownloadFlowUiState.QualitySelector(
+            current.copy(selectedPreset = preset, selectedManualStreamId = null)
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            downloadCoordinator.preferences.setDefaultQuality(preset)
+        }
+    }
+
+    fun selectDownloadFormatCandidate(streamId: String) {
+        val current = (_downloadFlowState.value as? DownloadFlowUiState.QualitySelector)?.data ?: return
+        _downloadFlowState.value = DownloadFlowUiState.QualitySelector(
+            current.copy(selectedManualStreamId = streamId)
+        )
+    }
+
+    fun confirmStartDownload() {
+        val current = (_downloadFlowState.value as? DownloadFlowUiState.QualitySelector)?.data ?: return
+        val chosen = current.selectedManualStreamId?.let { id ->
+            current.candidates.firstOrNull { it.streamId == id }
+        } ?: current.recommendedByPreset[current.selectedPreset]
+            ?: current.candidates.firstOrNull()
+        if (chosen == null) {
+            _downloadFeedbackMessage.value = "No downloadable audio format available for this track."
+            return
+        }
+
+        viewModelScope.launch {
+            val location = downloadCoordinator.preferences.getLocationConfig()
+            if (!location.isConfigured || !downloadCoordinator.hasAccessibleDownloadFolder()) {
+                _downloadFlowState.value = DownloadFlowUiState.AskFolderLocation(
+                    pendingTrack = current.track,
+                    suggestedInitialUri = downloadCoordinator.storageHelper.buildSuggestedInitialTreeUri(),
+                    reasonMessage = "Please select an accessible folder to save downloads."
+                )
+                return@launch
+            }
+
+            val enqueueResult = downloadCoordinator.enqueueDownload(
+                track = current.track,
+                qualityOption = current.selectedPreset,
+                selectedCandidate = chosen,
+                targetFolderUri = location.treeUri
+            )
+            _downloadFlowState.value = DownloadFlowUiState.Idle
+            if (enqueueResult.isSuccess) {
+                _downloadFeedbackMessage.value = "Downloading \"${current.track.title}\" (${chosen.codecLabel})."
+            } else {
+                _downloadFeedbackMessage.value = enqueueResult.exceptionOrNull()?.message
+                    ?: "Could not start download."
+            }
+        }
+    }
+
+    fun pauseDownload(taskId: String) {
+        viewModelScope.launch {
+            downloadCoordinator.pauseDownload(taskId)
+        }
+    }
+
+    fun resumeDownload(taskId: String) {
+        viewModelScope.launch {
+            downloadCoordinator.resumeDownload(taskId)
+        }
+    }
+
+    fun cancelDownload(taskId: String) {
+        viewModelScope.launch {
+            downloadCoordinator.cancelDownload(taskId)
+        }
+    }
+
+    fun retryDownload(taskId: String) {
+        viewModelScope.launch {
+            downloadCoordinator.retryDownload(taskId)
+        }
+    }
+
+    fun removeDownloadTask(taskId: String) {
+        viewModelScope.launch {
+            downloadCoordinator.removeDownloadTask(taskId)
+        }
+    }
+
+    fun deleteDownloadedTracks(trackIds: List<Long>) {
+        if (trackIds.isEmpty()) return
+        viewModelScope.launch {
+            downloadCoordinator.deleteDownloadedTracks(trackIds)
+            _downloadFeedbackMessage.value = if (trackIds.size == 1) {
+                "Deleted 1 downloaded track."
+            } else {
+                "Deleted ${trackIds.size} downloaded tracks."
+            }
+        }
+    }
+
+    fun clearDownloadHistory() {
+        viewModelScope.launch {
+            downloadCoordinator.clearDownloadHistory()
+            _downloadFeedbackMessage.value = "Cleared download history (audio files kept intact)."
+        }
+    }
+
+    fun setDownloadSortOption(option: domain.download.DownloadSortOption) {
+        _downloadSortOption.value = option
+    }
+
+    fun setDownloadSearchQuery(query: String) {
+        _downloadSearchQuery.value = query
+    }
+
+    // --- Advanced Full-Screen Synchronized Lyrics Controls ---
+
+    fun setFullScreenLyricsVisible(visible: Boolean) {
+        isFullScreenLyricsOpen = visible
+        if (visible) {
+            val curPos = musicService?.audioEngine?.currentPosition ?: _playbackInfo.value.currentPositionMs
+            _lyricsPositionMs.value = curPos
+            if (_playbackInfo.value.isPlaying) {
+                startHighPrecisionLyricsTracker()
+            }
+            val song = _currentSong.value
+            if (song != null) {
+                val expectedKey = lyricsRepository.trackKeyFor(song)
+                val state = _lyricsLoadState.value
+                val needsLoad = when (state) {
+                    is domain.lyrics.LyricsLoadState.Loaded -> state.document.trackKey != expectedKey
+                    is domain.lyrics.LyricsLoadState.Loading -> state.trackKey != expectedKey
+                    is domain.lyrics.LyricsLoadState.NotFound -> state.trackKey != expectedKey
+                    is domain.lyrics.LyricsLoadState.Error -> state.trackKey != expectedKey
+                    domain.lyrics.LyricsLoadState.Idle -> true
+                }
+                if (needsLoad) {
+                    loadLyricsForTrack(song)
+                }
+            }
+        } else {
+            lyricsPositionJob?.cancel()
+            lyricsPositionJob = null
+        }
+    }
+
+    /**
+     * Polls real Media3 ExoPlayer / AudioEngine playback position at ~20Hz while
+     * the Full-Screen Lyrics screen is visible & playing so line and word highlights
+     * track audio accurately without arbitrary drift timers or a second player.
+     */
+    private fun startHighPrecisionLyricsTracker() {
+        lyricsPositionJob?.cancel()
+        lyricsPositionJob = viewModelScope.launch {
+            while (isActive && isFullScreenLyricsOpen) {
+                val engine = musicService?.audioEngine
+                if (engine != null && engine.isPlaying) {
+                    val pos = engine.currentPosition
+                    _lyricsPositionMs.value = pos
+                } else {
+                    _lyricsPositionMs.value = _playbackInfo.value.currentPositionMs
+                }
+                delay(50L)
+            }
+        }
+    }
+
+    fun loadLyricsForTrack(
+        song: Song,
+        preferredSource: domain.lyrics.LyricsSourceType? = null,
+        forceRefresh: Boolean = false
+    ) {
+        val requestToken = ++activeLyricsRequestToken
+        val trackKey = lyricsRepository.trackKeyFor(song)
+        lyricsLoadJob?.cancel()
+        _currentTrackLyrics.value = null
+        _lyricsLoadState.value = domain.lyrics.LyricsLoadState.Loading(
+            trackKey = trackKey,
+            message = if (preferredSource != null) {
+                "Loading ${preferredSource.displayLabel}..."
+            } else {
+                "Finding synchronized lyrics..."
+            }
+        )
+
+        lyricsLoadJob = viewModelScope.launch {
+            try {
+                // Restore per-track timing offset (or global default)
+                val (savedOffset, hasCustom) = lyricsRepository.getSavedTrackOffset(song)
+                if (requestToken != activeLyricsRequestToken || _currentSong.value?.id != song.id) return@launch
+                _lyricsTimingState.value = domain.lyrics.LyricsTimingState(
+                    trackKey = trackKey,
+                    trackOffsetMs = savedOffset,
+                    globalOffsetMs = lyricsAppearance.value.globalTimingOffsetMs,
+                    hasCustomTrackOffset = hasCustom
+                )
+
+                val doc = lyricsRepository.loadLyricsForSong(
+                    song = song,
+                    preferredSource = preferredSource,
+                    forceRefresh = forceRefresh,
+                    allowNetwork = connectivityMonitor.isOnline.value
+                )
+                if (requestToken != activeLyricsRequestToken || _currentSong.value?.id != song.id) return@launch
+
+                if (doc != null && (doc.hasLyrics || doc.isInstrumental)) {
+                    _currentTrackLyrics.value = doc.rawText
+                    _lyricsLoadState.value = domain.lyrics.LyricsLoadState.Loaded(doc)
+                    _lyricsAvailableSources.value = lyricsRepository.inspectAvailableSources(song, doc.sourceType)
+                } else {
+                    _currentTrackLyrics.value = null
+                    val reason = when {
+                        preferredSource != null -> "No lyrics found from ${preferredSource.displayLabel}."
+                        !connectivityMonitor.isOnline.value -> "No embedded or local .lrc lyrics found. Connect to the internet to search online lyrics or import an .lrc file."
+                        else -> "No matching lyrics found for \"${song.title}\". Try searching online, importing an .lrc file, or adding lyrics manually."
+                    }
+                    _lyricsLoadState.value = domain.lyrics.LyricsLoadState.NotFound(trackKey, reason)
+                    _lyricsAvailableSources.value = lyricsRepository.inspectAvailableSources(
+                        song,
+                        domain.lyrics.LyricsSourceType.NONE
+                    )
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Throwable) {
+                if (requestToken != activeLyricsRequestToken || _currentSong.value?.id != song.id) return@launch
+                Log.w(TAG, "Failed loading lyrics for ${song.title}", e)
+                _lyricsLoadState.value = domain.lyrics.LyricsLoadState.Error(
+                    trackKey = trackKey,
+                    message = e.message ?: "Unable to load lyrics right now."
+                )
+            }
+        }
+    }
+
+    fun refreshCurrentLyrics() {
+        val song = _currentSong.value ?: return
+        lyricsRepository.invalidateMemoryCache(song)
+        loadLyricsForTrack(song, preferredSource = null, forceRefresh = true)
+    }
+
+    fun selectLyricsSource(sourceType: domain.lyrics.LyricsSourceType) {
+        val song = _currentSong.value ?: return
+        loadLyricsForTrack(song, preferredSource = sourceType, forceRefresh = true)
+    }
+
+    fun searchOnlineLyrics(query: String, trackName: String? = null, artistName: String? = null) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank() && trackName.isNullOrBlank()) return
+        lyricsSearchJob?.cancel()
+        _isSearchingLyrics.value = true
+        lyricsSearchJob = viewModelScope.launch {
+            try {
+                val results = lyricsRepository.searchOnlineLyrics(
+                    query = trimmed,
+                    trackName = trackName,
+                    artistName = artistName
+                )
+                _lyricsSearchResults.value = results
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (e: Throwable) {
+                Log.w(TAG, "Online lyrics search failed", e)
+                _lyricsSearchResults.value = emptyList()
+                _lyricsFeedbackMessage.value = "Lyrics search failed. Check your internet connection."
+            } finally {
+                _isSearchingLyrics.value = false
+            }
+        }
+    }
+
+    fun applyLyricsSearchCandidate(candidate: domain.lyrics.LyricsSearchCandidate) {
+        val song = _currentSong.value ?: return
+        val requestToken = ++activeLyricsRequestToken
+        viewModelScope.launch {
+            val doc = lyricsRepository.applySearchCandidate(song, candidate)
+            if (requestToken != activeLyricsRequestToken || _currentSong.value?.id != song.id) return@launch
+            _currentTrackLyrics.value = doc.rawText
+            _lyricsLoadState.value = domain.lyrics.LyricsLoadState.Loaded(doc)
+            _lyricsAvailableSources.value = lyricsRepository.inspectAvailableSources(song, doc.sourceType)
+            _lyricsFeedbackMessage.value = "Applied lyrics from ${candidate.sourceLabel}"
+        }
+    }
+
+    fun importLrcFile(uri: android.net.Uri) {
+        val song = _currentSong.value ?: return
+        val requestToken = ++activeLyricsRequestToken
+        viewModelScope.launch {
+            val displayName = resolveDocumentDisplayName(uri)
+            val result = lyricsRepository.importLrcFromUri(song, uri, displayName)
+            if (requestToken != activeLyricsRequestToken || _currentSong.value?.id != song.id) return@launch
+            result.onSuccess { doc ->
+                _currentTrackLyrics.value = doc.rawText
+                _lyricsLoadState.value = domain.lyrics.LyricsLoadState.Loaded(doc)
+                _lyricsAvailableSources.value = lyricsRepository.inspectAvailableSources(song, doc.sourceType)
+                _lyricsFeedbackMessage.value = "Imported ${doc.syncType.displayLabel.lowercase()} lyrics"
+            }.onFailure { err ->
+                _lyricsFeedbackMessage.value = err.message ?: "Failed to import lyrics file."
+            }
+        }
+    }
+
+    fun saveEditedLyrics(rawText: String) {
+        val song = _currentSong.value ?: return
+        if (rawText.isBlank()) {
+            _lyricsFeedbackMessage.value = "Lyrics cannot be empty."
+            return
+        }
+        val requestToken = ++activeLyricsRequestToken
+        viewModelScope.launch {
+            val doc = lyricsRepository.saveEditedLyrics(song, rawText)
+            if (requestToken != activeLyricsRequestToken || _currentSong.value?.id != song.id) return@launch
+            _currentTrackLyrics.value = doc.rawText
+            _lyricsLoadState.value = domain.lyrics.LyricsLoadState.Loaded(doc)
+            _lyricsAvailableSources.value = lyricsRepository.inspectAvailableSources(song, doc.sourceType)
+            _lyricsFeedbackMessage.value = "Saved ${doc.syncType.displayLabel.lowercase()} lyrics locally"
+        }
+    }
+
+    fun saveCurrentLyricsLocally() {
+        val song = _currentSong.value ?: return
+        val loaded = _lyricsLoadState.value as? domain.lyrics.LyricsLoadState.Loaded ?: return
+        viewModelScope.launch {
+            val saved = lyricsRepository.saveCurrentLyricsLocally(song, loaded.document)
+            if (_currentSong.value?.id == song.id) {
+                _lyricsLoadState.value = domain.lyrics.LyricsLoadState.Loaded(saved)
+                _lyricsAvailableSources.value = lyricsRepository.inspectAvailableSources(song, saved.sourceType)
+                _lyricsFeedbackMessage.value = "Lyrics saved locally for offline playback"
+            }
+        }
+    }
+
+    fun adjustLyricsTimingOffset(deltaMs: Long) {
+        val current = _lyricsTimingState.value.effectiveOffsetMs
+        setLyricsTimingOffset(current + deltaMs)
+    }
+
+    fun setLyricsTimingOffset(offsetMs: Long) {
+        val song = _currentSong.value ?: return
+        val clamped = offsetMs.coerceIn(
+            domain.lyrics.LyricsTimingState.MIN_OFFSET_MS,
+            domain.lyrics.LyricsTimingState.MAX_OFFSET_MS
+        )
+        val trackKey = lyricsRepository.trackKeyFor(song)
+        _lyricsTimingState.value = _lyricsTimingState.value.copy(
+            trackKey = trackKey,
+            trackOffsetMs = clamped,
+            hasCustomTrackOffset = true
+        )
+        viewModelScope.launch {
+            lyricsRepository.saveTrackTimingOffset(song, clamped, hasCustomOffset = true)
+        }
+    }
+
+    fun resetLyricsTimingOffset() {
+        val song = _currentSong.value ?: return
+        val trackKey = lyricsRepository.trackKeyFor(song)
+        _lyricsTimingState.value = _lyricsTimingState.value.copy(
+            trackKey = trackKey,
+            trackOffsetMs = 0L,
+            hasCustomTrackOffset = true
+        )
+        viewModelScope.launch {
+            lyricsRepository.saveTrackTimingOffset(song, 0L, hasCustomOffset = true)
+        }
+    }
+
+    fun setGlobalLyricsTimingOffset(offsetMs: Long) {
+        val clamped = offsetMs.coerceIn(
+            domain.lyrics.LyricsTimingState.MIN_OFFSET_MS,
+            domain.lyrics.LyricsTimingState.MAX_OFFSET_MS
+        )
+        _lyricsTimingState.value = _lyricsTimingState.value.copy(globalOffsetMs = clamped)
+        viewModelScope.launch {
+            lyricsPreferences.setGlobalTimingOffset(clamped)
+            _lyricsFeedbackMessage.value = "Saved global lyrics offset (${if (clamped > 0) "+$clamped" else "$clamped"} ms)"
+        }
+    }
+
+    fun applyGlobalOffsetToCurrentTrack() {
+        val song = _currentSong.value ?: return
+        val global = lyricsAppearance.value.globalTimingOffsetMs
+        val trackKey = lyricsRepository.trackKeyFor(song)
+        _lyricsTimingState.value = domain.lyrics.LyricsTimingState(
+            trackKey = trackKey,
+            trackOffsetMs = global,
+            globalOffsetMs = global,
+            hasCustomTrackOffset = false
+        )
+        viewModelScope.launch {
+            lyricsRepository.saveTrackTimingOffset(song, 0L, hasCustomOffset = false)
+        }
+    }
+
+    fun updateLyricsAppearance(transform: (domain.lyrics.LyricsAppearanceConfig) -> domain.lyrics.LyricsAppearanceConfig) {
+        val updated = transform(lyricsAppearance.value)
+        viewModelScope.launch {
+            lyricsPreferences.saveAppearance(updated)
+        }
+    }
+
+    fun applyLyricsPreset(preset: domain.lyrics.LyricsPreset) {
+        updateLyricsAppearance { it.withPreset(preset) }
+    }
+
+    fun seekToLyricLine(line: domain.lyrics.SyncedLyricLine) {
+        if (!line.isTimed) return
+        val loaded = _lyricsLoadState.value as? domain.lyrics.LyricsLoadState.Loaded
+        val embeddedOffset = loaded?.document?.embeddedOffsetMs ?: 0L
+        val targetMs = domain.lyrics.LyricsSyncEngine.calculateSeekPositionForLine(
+            line = line,
+            userOffsetMs = _lyricsTimingState.value.effectiveOffsetMs,
+            embeddedOffsetMs = embeddedOffset
+        )
+        seekTo(targetMs)
+    }
+
+    fun clearLyricsFeedback() {
+        _lyricsFeedbackMessage.value = null
+    }
+
+    private fun resolveDocumentDisplayName(uri: android.net.Uri): String? {
+        return try {
+            getApplication<Application>().contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
+        lyricsLoadJob?.cancel()
+        lyricsSearchJob?.cancel()
+        lyricsPositionJob?.cancel()
+        queuePersistJob?.cancel()
+        moodDiscoveryJob?.cancel()
+        indiaDiscoveryJob?.cancel()
+        currentSongRecsJob?.cancel()
+        radioTopUpJob?.cancel()
+        videoController.release()
+        cacheManager.onMusicPlayerStateChanged(isOpen = false)
+        downloadFormatResolveJob?.cancel()
         onlineSearchJob?.cancel()
         onlineSuggestionJob?.cancel()
         discoverSectionJobs.values.forEach { it.cancel() }

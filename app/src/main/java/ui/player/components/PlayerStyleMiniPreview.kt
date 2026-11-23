@@ -63,8 +63,16 @@ fun PlayerStyleMiniPreview(
             .clip(RoundedCornerShape(16.dp))
             .background(
                 when (style) {
-                    PlayerStyle.NEON -> Color(0xFF0A0B12)
-                    PlayerStyle.CANVAS -> Color(0xFF14151D)
+                    PlayerStyle.NEON,
+                    PlayerStyle.AMOLED_MINIMAL,
+                    PlayerStyle.AUDIO_VISUALIZER,
+                    PlayerStyle.AURORA,
+                    PlayerStyle.LIQUID_MUSIC,
+                    PlayerStyle.PARTICLE_FLOW,
+                    PlayerStyle.SPATIAL_3D,
+                    PlayerStyle.CINEMATIC -> Color(0xFF0A0B12)
+                    PlayerStyle.CANVAS,
+                    PlayerStyle.RETRO_WALKMAN -> Color(0xFF14151D)
                     else -> colors.background
                 }
             )
@@ -96,6 +104,7 @@ fun PlayerStyleMiniPreview(
             PlayerStyle.HERO -> HeroMiniPreview(accent, colors, song)
             PlayerStyle.NEON -> NeonMiniPreview(accent, song)
             PlayerStyle.GESTURE -> GestureMiniPreview(accent, colors, song)
+            else -> ExtendedPlayerStyleMiniPreview(style, accent, colors, song)
         }
     }
 }

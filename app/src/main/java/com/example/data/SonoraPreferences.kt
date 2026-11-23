@@ -95,6 +95,18 @@ class SonoraPreferences(context: Context) {
         get() = MiniPlayerStyle.fromId(prefs.getString("mini_player_style", MiniPlayerStyle.DEFAULT.id))
         set(value) = prefs.edit().putString("mini_player_style", value.id).apply()
 
+    var landscapePlayerStyle: PlayerStyle
+        get() = PlayerStyle.fromId(prefs.getString("landscape_player_style", PlayerStyle.DEFAULT_LANDSCAPE.id))
+        set(value) = prefs.edit().putString("landscape_player_style", value.id).apply()
+
+    var favoritePlayerStyleIds: Set<String>
+        get() = prefs.getStringSet("favorite_player_style_ids", emptySet())?.toSet() ?: emptySet()
+        set(value) = prefs.edit().putStringSet("favorite_player_style_ids", value.toSet()).apply()
+
+    var favoriteMiniPlayerStyleIds: Set<String>
+        get() = prefs.getStringSet("favorite_mini_player_style_ids", emptySet())?.toSet() ?: emptySet()
+        set(value) = prefs.edit().putStringSet("favorite_mini_player_style_ids", value.toSet()).apply()
+
     var lockScreenStyle: LockScreenStyle
         get() = LockScreenStyle.fromId(prefs.getString("lock_screen_style", LockScreenStyle.DEFAULT.id))
         set(value) = prefs.edit().putString("lock_screen_style", value.id).apply()
@@ -500,6 +512,12 @@ class SonoraPreferences(context: Context) {
                 .apply()
         }
 
+    var librarySectionMode: domain.library.LibrarySectionMode
+        get() = domain.library.LibrarySectionMode.fromId(
+            prefs.getString("library_section_mode", domain.library.LibrarySectionMode.DEFAULT.id)
+        )
+        set(value) = prefs.edit().putString("library_section_mode", value.id).apply()
+
     companion object {
         private const val KEY_SPATIAL_INTENSITY_FLOAT = "spatial_intensity"
         private const val KEY_SPATIAL_INTENSITY_PRESET = "spatial_intensity_preset"
@@ -509,13 +527,19 @@ class SonoraPreferences(context: Context) {
                 put("artworkSize", config.artworkSize.id)
                 put("cornerRadius", config.cornerRadius.id)
                 put("backgroundStyle", config.backgroundStyle.id)
+                put("blurIntensity", config.blurIntensity.toDouble())
+                put("gradientIntensity", config.gradientIntensity.toDouble())
+                put("dynamicColorIntensity", config.dynamicColorIntensity.toDouble())
                 put("controlArrangement", config.controlArrangement.id)
                 put("buttonShape", config.buttonShape.id)
+                put("buttonSize", config.buttonSize.id)
+                put("typographyOption", config.typographyOption.id)
                 put("typographyScale", config.typographyScale.toDouble())
                 put("seekbarThicknessScale", config.seekbarThicknessScale.toDouble())
                 put("useDynamicAlbumAccent", config.useDynamicAlbumAccent)
                 put("animationIntensity", config.animationIntensity.id)
                 put("artworkAnimation", config.artworkAnimation.id)
+                put("layoutOption", config.layoutOption.id)
                 put("showAudioFormatMetadata", config.showAudioFormatMetadata)
                 put("showAlbumMetadata", config.showAlbumMetadata)
                 put("showLyricsShortcut", config.showLyricsShortcut)
@@ -531,13 +555,19 @@ class SonoraPreferences(context: Context) {
                     artworkSize = ArtworkSizeOption.fromId(obj.optString("artworkSize")),
                     cornerRadius = CornerRadiusOption.fromId(obj.optString("cornerRadius")),
                     backgroundStyle = PlayerBackgroundStyle.fromId(obj.optString("backgroundStyle")),
+                    blurIntensity = obj.optDouble("blurIntensity", 0.55).toFloat().coerceIn(0f, 1f),
+                    gradientIntensity = obj.optDouble("gradientIntensity", 0.65).toFloat().coerceIn(0f, 1f),
+                    dynamicColorIntensity = obj.optDouble("dynamicColorIntensity", 0.80).toFloat().coerceIn(0f, 1f),
                     controlArrangement = ControlArrangement.fromId(obj.optString("controlArrangement")),
                     buttonShape = ButtonShapeOption.fromId(obj.optString("buttonShape")),
+                    buttonSize = com.example.model.ControlButtonSizeOption.fromId(obj.optString("buttonSize")),
+                    typographyOption = com.example.model.PlayerTypographyOption.fromId(obj.optString("typographyOption")),
                     typographyScale = obj.optDouble("typographyScale", 1.0).toFloat().coerceIn(0.85f, 1.25f),
                     seekbarThicknessScale = obj.optDouble("seekbarThicknessScale", 1.0).toFloat().coerceIn(0.7f, 1.5f),
                     useDynamicAlbumAccent = obj.optBoolean("useDynamicAlbumAccent", true),
                     animationIntensity = AnimationIntensity.fromId(obj.optString("animationIntensity")),
                     artworkAnimation = ArtworkAnimationOption.fromId(obj.optString("artworkAnimation")),
+                    layoutOption = com.example.model.PlayerLayoutOption.fromId(obj.optString("layoutOption")),
                     showAudioFormatMetadata = obj.optBoolean("showAudioFormatMetadata", true),
                     showAlbumMetadata = obj.optBoolean("showAlbumMetadata", true),
                     showLyricsShortcut = obj.optBoolean("showLyricsShortcut", true),

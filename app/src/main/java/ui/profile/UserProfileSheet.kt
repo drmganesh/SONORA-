@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -96,7 +97,8 @@ fun UserProfileSheet(
     onToggleReduceAnimations: (Boolean) -> Unit,
     onOpenDynamicColors: () -> Unit,
     onOpenPlayerStyles: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenMusicAnalytics: () -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
@@ -425,6 +427,18 @@ fun UserProfileSheet(
                     )
 
                     PersonalizationActionRow(
+                        icon = Icons.Rounded.BarChart,
+                        title = "Music Analytics",
+                        subtitle = "Listening time, top artists, charts & timeline",
+                        colors = colors,
+                        tag = "profile_music_analytics_row",
+                        onClick = {
+                            onDismiss()
+                            onOpenMusicAnalytics()
+                        }
+                    )
+
+                    PersonalizationActionRow(
                         icon = Icons.Rounded.Palette,
                         title = "Dynamic Album Art Colours",
                         subtitle = "${appearanceMode.displayName} • ${colorIntensity.displayName}",
@@ -438,8 +452,8 @@ fun UserProfileSheet(
 
                     PersonalizationActionRow(
                         icon = Icons.Rounded.AutoAwesome,
-                        title = "Now Playing Player Style",
-                        subtitle = playerStyle.displayName,
+                        title = "Music Player",
+                        subtitle = "${playerStyle.displayName} • Styles, mini player & controls",
                         colors = colors,
                         tag = "profile_player_style_row",
                         onClick = {

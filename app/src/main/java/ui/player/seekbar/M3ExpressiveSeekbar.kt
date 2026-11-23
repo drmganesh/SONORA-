@@ -44,7 +44,8 @@ fun M3ExpressiveSeekbar(
     isPlaying: Boolean = false,
     enabled: Boolean = true,
     accentColor: Color = LocalEditorialColors.current.accentStrong,
-    inactiveColor: Color = LocalEditorialColors.current.cardBorder
+    inactiveColor: Color = LocalEditorialColors.current.cardBorder,
+    onSeekCancelled: () -> Unit = {}
 ) {
     val reduceAnimations = LocalReduceAnimations.current
     val infiniteTransition = rememberInfiniteTransition(label = "expressiveSquiggle")
@@ -69,36 +70,15 @@ fun M3ExpressiveSeekbar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(34.dp)
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectTapGestures(
-                    onPress = { offset ->
-                        if (size.width <= 0) return@detectTapGestures
-                        val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                        onSeekConfirmed(newProgress)
-                    }
-                )
-            }
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        if (size.width <= 0) return@detectDragGestures
-                        val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                    },
-                    onDragEnd = { onSeekConfirmed(safeProgress) },
-                    onDragCancel = { onSeekConfirmed(safeProgress) },
-                    onDrag = { change, _ ->
-                        if (size.width <= 0) return@detectDragGestures
-                        change.consume()
-                        val newProgress = (change.position.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                    }
-                )
-            }
+            .height(36.dp)
+            .scrubSeekGestures(
+                enabled = enabled,
+                progress = safeProgress,
+                onScrubStart = onSeekProgress,
+                onScrubUpdate = onSeekProgress,
+                onScrubEnd = onSeekConfirmed,
+                onScrubCancel = onSeekCancelled
+            )
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
             val width = size.width

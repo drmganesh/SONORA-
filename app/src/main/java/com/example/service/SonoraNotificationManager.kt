@@ -123,10 +123,15 @@ class SonoraNotificationManager(
                         service.handleRemoteRepeat()
                     }
 
+                    override fun onStop() {
+                        service.handleExplicitStop()
+                    }
+
                     override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
                         when (action) {
                             ACTION_SHUFFLE -> service.handleRemoteShuffle()
                             ACTION_REPEAT -> service.handleRemoteRepeat()
+                            ACTION_STOP -> service.handleExplicitStop()
                         }
                     }
                 })
@@ -156,8 +161,14 @@ class SonoraNotificationManager(
         this.currentDeviceName = deviceName
 
         if (song == null) {
-            clearNotification()
+            clearNotification(deactivateSession = true)
             return
+        }
+
+        mediaSession?.let { session ->
+            if (!session.isActive) {
+                session.isActive = true
+            }
         }
 
         val position = currentPositionMs ?: service.audioEngine.currentPosition
@@ -254,12 +265,19 @@ class SonoraNotificationManager(
             }
         ).build()
 
+        val stopCustomAction = PlaybackStateCompat.CustomAction.Builder(
+            ACTION_STOP,
+            "Stop Playback",
+            R.drawable.ic_notif_stop
+        ).build()
+
         val speed = if (isPlaying) service.audioEngine.playbackSpeed else 0f
         val stateBuilder = PlaybackStateCompat.Builder()
             .setActions(actions)
             .setState(state, positionMs.coerceAtLeast(0L), speed, SystemClock.elapsedRealtime())
             .addCustomAction(shuffleCustomAction)
             .addCustomAction(repeatCustomAction)
+            .addCustomAction(stopCustomAction)
 
         session.setPlaybackState(stateBuilder.build())
     }
@@ -375,12 +393,12 @@ class SonoraNotificationManager(
             .setStyle(mediaStyle)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
-        // Add 5 Actions in order:
+        // Add 5 Actions in order (Compact view shows Prev, Play/Pause, Next; Expanded adds Shuffle & Stop):
         builder.addAction(shuffleIcon, shuffleTitle, shufflePendingIntent)
         builder.addAction(R.drawable.ic_notif_prev, "Previous", prevPendingIntent)
         builder.addAction(playPauseIcon, playPauseTitle, playPausePendingIntent)
         builder.addAction(R.drawable.ic_notif_next, "Next", nextPendingIntent)
-        builder.addAction(repeatIcon, repeatTitle, repeatPendingIntent)
+        builder.addAction(R.drawable.ic_notif_stop, "Stop", dismissPendingIntent)
 
         return builder.build()
     }
@@ -499,9 +517,10 @@ class SonoraNotificationManager(
         }
     }
 
-    fun clearNotification() {
+    fun clearNotification(deactivateSession: Boolean = true) {
         artworkLoadingJob?.cancel()
         currentSong = null
+        isPlayingState = false
         if (isForegroundActive) {
             try {
                 ServiceCompat.stopForeground(service, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -509,10 +528,26 @@ class SonoraNotificationManager(
                 Log.w("SonoraNotifManager", "stopForeground failed: ${e.message}")
             }
             isForegroundActive = false
-        } else {
-            try {
-                NotificationManagerCompat.from(service).cancel(NOTIFICATION_ID)
-            } catch (_: Throwable) {}
+        }
+        try {
+            NotificationManagerCompat.from(service).cancel(NOTIFICATION_ID)
+        } catch (_: Throwable) {}
+
+        if (deactivateSession) {
+            mediaSession?.let { session ->
+                try {
+                    session.setPlaybackState(
+                        PlaybackStateCompat.Builder()
+                            .setActions(0L)
+                            .setState(PlaybackStateCompat.STATE_NONE, 0L, 0f, SystemClock.elapsedRealtime())
+                            .build()
+                    )
+                    session.setMetadata(null)
+                    session.isActive = false
+                } catch (e: Throwable) {
+                    Log.w("SonoraNotifManager", "Failed clearing MediaSession state: ${e.message}")
+                }
+            }
         }
     }
 

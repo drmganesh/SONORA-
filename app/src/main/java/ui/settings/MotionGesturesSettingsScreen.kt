@@ -138,7 +138,9 @@ fun MotionGesturesSettingsScreen(
             }
 
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("motion_settings_lazy_column"),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 48.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {

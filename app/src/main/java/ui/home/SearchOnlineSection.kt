@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudQueue
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.WifiOff
@@ -60,7 +61,8 @@ import ui.theme.EditorialColors
 
 enum class SearchSourceScope(val label: String, val tagSuffix: String) {
     LOCAL(label = "Offline", tagSuffix = "local"),
-    ONLINE(label = "Online", tagSuffix = "online"),
+    ONLINE(label = "Music", tagSuffix = "online"),
+    VIDEO(label = "Video", tagSuffix = "video"),
     COMBINED(label = "All", tagSuffix = "combined")
 }
 
@@ -76,7 +78,7 @@ fun SearchScopeSelectorRow(
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
             .testTag("search_scope_selector"),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         SearchSourceScope.entries.forEach { scope ->
@@ -84,6 +86,7 @@ fun SearchScopeSelectorRow(
             val icon = when (scope) {
                 SearchSourceScope.LOCAL -> Icons.Rounded.LibraryMusic
                 SearchSourceScope.ONLINE -> Icons.Rounded.CloudQueue
+                SearchSourceScope.VIDEO -> Icons.Rounded.PlayCircle
                 SearchSourceScope.COMBINED -> Icons.Rounded.TravelExplore
             }
             Surface(
@@ -100,7 +103,7 @@ fun SearchScopeSelectorRow(
                     .testTag("search_scope_${scope.tagSuffix}")
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -108,14 +111,14 @@ fun SearchScopeSelectorRow(
                         imageVector = icon,
                         contentDescription = null,
                         tint = if (selected) colors.onAccentStrong else colors.textSecondary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = scope.label,
                         fontFamily = PlusJakartaFontFamily,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
-                        fontSize = 12.5.sp,
+                        fontSize = 11.5.sp,
                         color = if (selected) colors.onAccentStrong else colors.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -269,6 +272,8 @@ fun LazyListScope.onlineSearchLazyContent(
     currentSong: Song?,
     playbackInfo: PlaybackInfo,
     savedIds: Set<Long>,
+    downloadedKeys: Set<String> = emptySet(),
+    canonicalKeyForTrack: (OnlineTrack) -> String = { "${it.providerKey}|${it.contentUrl}" },
     colors: EditorialColors,
     showCombinedHeader: Boolean,
     onExecuteSearch: (String, Boolean) -> Unit,
@@ -277,6 +282,7 @@ fun LazyListScope.onlineSearchLazyContent(
     onPlayTrack: (OnlineTrack, List<OnlineTrack>) -> Unit,
     onOpenCollection: (OnlineTrack) -> Unit,
     onMoreClick: (OnlineTrack) -> Unit,
+    onDownloadClick: ((OnlineTrack) -> Unit)? = null,
     onLoadMore: () -> Unit,
     onRetryPlayback: () -> Unit,
     onSwitchSoundCloudFallback: () -> Unit,
@@ -542,6 +548,7 @@ fun LazyListScope.onlineSearchLazyContent(
                         isPlaying = playbackInfo.isPlaying,
                         isBuffering = playbackInfo.isBuffering,
                         isSaved = item.stableId in savedIds,
+                        isDownloaded = canonicalKeyForTrack(item) in downloadedKeys,
                         colors = colors,
                         onClick = {
                             if (item.kind == OnlineItemKind.TRACK) {
@@ -550,7 +557,10 @@ fun LazyListScope.onlineSearchLazyContent(
                                 onOpenCollection(item)
                             }
                         },
-                        onMoreClick = { onMoreClick(item) }
+                        onMoreClick = { onMoreClick(item) },
+                        onDownloadClick = if (onDownloadClick != null && item.kind == OnlineItemKind.TRACK) {
+                            { onDownloadClick(item) }
+                        } else null
                     )
                 }
 

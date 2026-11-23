@@ -45,6 +45,8 @@ import com.example.ui.theme.SonoraGold
 import com.example.ui.theme.SonoraObsidian
 import com.example.ui.theme.SonoraSurfaceDark
 import com.example.util.AlbumArtHelper
+import data.artwork.AlbumArtworkQualityManager
+import data.artwork.ArtworkDisplayRole
 
 @Composable
 fun ArtworkAlbumView(
@@ -52,12 +54,18 @@ fun ArtworkAlbumView(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 20.dp,
     isPlaying: Boolean = false,
-    isVinylRotating: Boolean = false
+    isVinylRotating: Boolean = false,
+    artworkRole: ArtworkDisplayRole = ArtworkDisplayRole.THUMBNAIL
 ) {
     val context = LocalContext.current
+    val qualityMode = AlbumArtworkQualityManager.currentQualityMode
 
-    val artworkBitmap by produceState<Bitmap?>(initialValue = null, key1 = song?.id, key2 = song?.albumId) {
-        value = AlbumArtHelper.loadAlbumArt(context, song)
+    val artworkBitmap by produceState<Bitmap?>(
+        initialValue = null,
+        key1 = song?.id,
+        key2 = "${song?.albumId}_${artworkRole.name}_${qualityMode.name}"
+    ) {
+        value = AlbumArtHelper.loadAlbumArt(context, song, artworkRole)
     }
 
     val palette = ui.theme.LocalDynamicColorPalette.current

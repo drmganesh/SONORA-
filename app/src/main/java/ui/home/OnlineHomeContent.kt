@@ -64,6 +64,8 @@ import domain.online.OnlineRecommendationProfile
 import domain.online.OnlineTrack
 import ui.home.animations.DailyMixAnimationStyle
 import ui.home.animations.HomeAnimationLevel
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.carouselItemDepthEffect
 import ui.online.OnlineErrorCard
 import ui.online.buildArtistExploreTrack
 import ui.theme.EditorialColors
@@ -124,14 +126,16 @@ fun OnlineHomeContent(
     onDismissPlaybackError: () -> Unit,
     onOpenPlaylistsScreen: () -> Unit,
     onOpenViewAllOnline: () -> Unit,
+    hasMusicMiniPlayer: Boolean = currentSong != null,
     modifier: Modifier = Modifier
 ) {
-    val onlineYourMix = remember(discoverSections, recentlyPlayedOnline, savedOnlineTracks, recommendationProfile) {
+    val onlineYourMix = remember(discoverSections, recentlyPlayedOnline, savedOnlineTracks, recommendationProfile, countryCode) {
         OnlineHomeMixBuilder.buildOnlineYourMix(
             discoverSections = discoverSections,
             recentlyPlayedOnline = recentlyPlayedOnline,
             savedOnlineTracks = savedOnlineTracks,
-            recommendationProfile = recommendationProfile
+            recommendationProfile = recommendationProfile,
+            countryCode = countryCode
         )
     }
 
@@ -152,7 +156,13 @@ fun OnlineHomeContent(
         modifier = modifier
             .fillMaxSize()
             .testTag("home_lazy_column"),
-        contentPadding = PaddingValues(top = 4.dp, bottom = 184.dp),
+        contentPadding = PaddingValues(
+            top = 4.dp,
+            bottom = domain.player.MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
+                isMusicMiniPlayerVisible = hasMusicMiniPlayer,
+                isVideoMiniPlayerVisible = false
+            )
+        ),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
         // 1 & 2. Online Your Mix Hero + Real Online Artist Shortcuts
@@ -644,7 +654,7 @@ fun OnlineHomeContent(
                     )
                     val recentListState = rememberLazyListState()
                     val recentSnap = rememberSnapFlingBehavior(lazyListState = recentListState)
-                    val motionState = ui.motion.LocalEffectiveMotionState.current
+                    val motionState = LocalEffectiveMotionState.current
                     LazyRow(
                         state = recentListState,
                         flingBehavior = recentSnap,
@@ -664,7 +674,7 @@ fun OnlineHomeContent(
                                 colors = colors,
                                 animationLevel = animationLevel,
                                 screenVisible = screenVisible,
-                                modifier = ui.motion.carouselItemDepthEffect(recentListState, idx, motionState),
+                                modifier = Modifier.carouselItemDepthEffect(recentListState, idx, motionState),
                                 onClick = { onRecentOnlineSongClick(song) },
                                 onLongClick = { onRecentOnlineSongLongClick(song) }
                             )
@@ -853,7 +863,7 @@ private fun OnlineHomeCarouselSection(
             is DiscoverSectionState.Success -> {
                 val rowListState = rememberLazyListState()
                 val rowSnap = rememberSnapFlingBehavior(lazyListState = rowListState)
-                val motionState = ui.motion.LocalEffectiveMotionState.current
+                val motionState = LocalEffectiveMotionState.current
                 LazyRow(
                     state = rowListState,
                     flingBehavior = rowSnap,
@@ -871,7 +881,7 @@ private fun OnlineHomeCarouselSection(
                                 colors = colors,
                                 animationLevel = animationLevel,
                                 screenVisible = screenVisible,
-                                modifier = ui.motion.carouselItemDepthEffect(rowListState, idx, motionState),
+                                modifier = Modifier.carouselItemDepthEffect(rowListState, idx, motionState),
                                 onClick = { onCollectionClick(item) },
                                 onLongClick = { onTrackLongClick(item) }
                             )
@@ -890,7 +900,7 @@ private fun OnlineHomeCarouselSection(
                                 colors = colors,
                                 animationLevel = animationLevel,
                                 screenVisible = screenVisible,
-                                modifier = ui.motion.carouselItemDepthEffect(rowListState, idx, motionState),
+                                modifier = Modifier.carouselItemDepthEffect(rowListState, idx, motionState),
                                 onClick = {
                                     if (item.kind == OnlineItemKind.TRACK) {
                                         onTrackClick(item, state.items)

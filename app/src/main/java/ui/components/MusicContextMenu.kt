@@ -12,19 +12,27 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.BookmarkAdd
+import androidx.compose.material.icons.rounded.BookmarkAdded
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MoreVert
@@ -72,6 +80,13 @@ import ui.theme.EditorialColors
 fun MusicContextMenuSheet(
     song: Song,
     colors: EditorialColors,
+    isDownloaded: Boolean = false,
+    isSavedOnline: Boolean = false,
+    onToggleSaveOnline: (() -> Unit)? = null,
+    onAddToOnlinePlaylist: (() -> Unit)? = null,
+    onDownload: (() -> Unit)? = null,
+    onDeleteDownload: (() -> Unit)? = null,
+    onDeleteLocalTrack: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onPlayNow: () -> Unit,
     onAddToQueue: () -> Unit,
@@ -93,6 +108,8 @@ fun MusicContextMenuSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp)
                 .testTag("music_context_menu")
@@ -178,6 +195,68 @@ fun MusicContextMenuSheet(
                 colors = colors,
                 onClick = { onViewArtist(); onDismiss() }
             )
+            if (song.isOnline && onToggleSaveOnline != null) {
+                ContextActionRow(
+                    icon = if (isSavedOnline) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd,
+                    label = if (isSavedOnline) "Remove from Online Library" else "Save to Online Library",
+                    colors = colors,
+                    highlightIcon = isSavedOnline,
+                    modifier = Modifier.testTag("context_menu_save_online_button"),
+                    onClick = {
+                        onToggleSaveOnline()
+                        onDismiss()
+                    }
+                )
+            }
+            if (song.isOnline && onAddToOnlinePlaylist != null) {
+                ContextActionRow(
+                    icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                    label = "Add to Online Playlist",
+                    colors = colors,
+                    modifier = Modifier.testTag("context_menu_online_playlist_button"),
+                    onClick = {
+                        onDismiss()
+                        onAddToOnlinePlaylist()
+                    }
+                )
+            }
+            if (onDownload != null) {
+                ContextActionRow(
+                    icon = if (isDownloaded) Icons.Rounded.DownloadDone else Icons.Rounded.Download,
+                    label = if (isDownloaded) "Downloaded Offline" else "Download",
+                    colors = colors,
+                    highlightIcon = isDownloaded,
+                    modifier = Modifier.testTag("context_menu_download_button"),
+                    onClick = {
+                        onDismiss()
+                        onDownload()
+                    }
+                )
+            }
+            if (onDeleteDownload != null) {
+                ContextActionRow(
+                    icon = Icons.Rounded.DeleteOutline,
+                    label = "Delete Downloaded File",
+                    colors = colors,
+                    modifier = Modifier.testTag("context_menu_delete_download_button"),
+                    onClick = {
+                        onDismiss()
+                        onDeleteDownload()
+                    }
+                )
+            }
+            if (onDeleteLocalTrack != null) {
+                ContextActionRow(
+                    icon = Icons.Rounded.DeleteOutline,
+                    label = "Delete from Device",
+                    colors = colors,
+                    modifier = Modifier.testTag("context_menu_delete_local_button"),
+                    onClick = {
+                        onDismiss()
+                        onDeleteLocalTrack()
+                    }
+                )
+            }
         }
     }
 }
@@ -188,10 +267,11 @@ private fun ContextActionRow(
     label: String,
     colors: EditorialColors,
     highlightIcon: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 50.dp)
             .clip(RoundedCornerShape(14.dp))

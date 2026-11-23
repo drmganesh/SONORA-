@@ -41,7 +41,8 @@ fun WaveLineSeekbar(
     isPlaying: Boolean = false,
     enabled: Boolean = true,
     accentColor: Color = SonoraDustyRose,
-    inactiveColor: Color = SonoraCharcoalBorder
+    inactiveColor: Color = SonoraCharcoalBorder,
+    onSeekCancelled: () -> Unit = {}
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "waveLineTransition")
     val wavePhase by infiniteTransition.animateFloat(
@@ -57,33 +58,15 @@ fun WaveLineSeekbar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(34.dp)
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectTapGestures(
-                    onPress = { offset ->
-                        val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                        onSeekConfirmed(newProgress)
-                    }
-                )
-            }
-            .pointerInput(enabled) {
-                if (!enabled) return@pointerInput
-                detectDragGestures(
-                    onDragStart = { offset ->
-                        val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                    },
-                    onDragEnd = { onSeekConfirmed(progress) },
-                    onDragCancel = { onSeekConfirmed(progress) },
-                    onDrag = { change, _ ->
-                        change.consume()
-                        val newProgress = (change.position.x / size.width).coerceIn(0f, 1f)
-                        onSeekProgress(newProgress)
-                    }
-                )
-            }
+            .height(36.dp)
+            .scrubSeekGestures(
+                enabled = enabled,
+                progress = progress,
+                onScrubStart = onSeekProgress,
+                onScrubUpdate = onSeekProgress,
+                onScrubEnd = onSeekConfirmed,
+                onScrubCancel = onSeekCancelled
+            )
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
             val width = size.width

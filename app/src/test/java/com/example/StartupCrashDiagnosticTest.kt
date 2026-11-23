@@ -1,18 +1,24 @@
 package com.example
 
+import android.app.Application
 import android.content.Intent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
 import com.example.service.SonoraMusicService
+import data.preferences.AmbientEffectsPreferences
+import data.preferences.SnowfallSettings
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
@@ -26,80 +32,87 @@ import org.robolectric.annotation.Config
 class StartupCrashDiagnosticTest {
 
     @get:Rule
-    val composeRule = createAndroidComposeRule<MainActivity>()
+    val composeRule = createEmptyComposeRule()
 
     @Test
     fun mainActivityStartsCleanlyAndNavigatesAllCoreScreens() {
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("greeting_header").assertIsDisplayed()
-        composeRule.onNodeWithTag("header_profile_avatar").assertIsDisplayed()
-
-        // 1. Open UserProfileSheet -> Dynamic Colours -> Back
-        composeRule.onNodeWithTag("header_profile_avatar").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("user_profile_sheet").assertIsDisplayed()
-        composeRule.onNodeWithTag("profile_display_name_input").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("profile_dynamic_colors_row").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("dynamic_theme_settings_screen").assertIsDisplayed()
-        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
-
-        // 2. Open UserProfileSheet -> Player Style Selector -> Back
-        composeRule.onNodeWithTag("header_profile_avatar").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("profile_player_style_row").performScrollTo().performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("player_style_selector").assertIsDisplayed()
-        composeRule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-        composeRule.waitForIdle()
-
-        // 3. Open Settings -> Back
-        composeRule.onNodeWithTag("header_settings_button").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("settings_back_button").performClick()
-        composeRule.waitForIdle()
-
-        // 4. Switch bottom navigation tabs: Search -> Library -> Home
-        composeRule.onNodeWithTag("nav_tab_search").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("search_screen").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("nav_tab_library").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("library_screen").assertIsDisplayed()
-
-        composeRule.onNodeWithTag("nav_tab_home").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
-
-        // 5. Wait for demo/library tracks to populate and open 15-Band EQ & Audio Studio overlays
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodes(hasTestTag("your_mix_section")).fetchSemanticsNodes().isNotEmpty()
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        runBlocking {
+            AmbientEffectsPreferences(app).saveSettings(SnowfallSettings.DEFAULT.copy(enabled = false))
         }
-        val verticalScrollable = SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)
-        composeRule.onNode(verticalScrollable).performScrollToNode(hasTestTag("home_quick_tools_strip"))
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("quick_tool_15_band_eq").performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("adaptive_equalizer_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("eq_back_button").performClick()
-        composeRule.waitForIdle()
 
-        composeRule.onNode(verticalScrollable).performScrollToNode(hasTestTag("home_quick_tools_strip"))
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("home_quick_tools_strip").performScrollToNode(hasTestTag("quick_tool_audio_studio"))
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("quick_tool_audio_studio").performSemanticsAction(SemanticsActions.OnClick)
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("audio_effects_studio_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("audio_studio_back_button").performClick()
-        composeRule.waitForIdle()
-        composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
+            composeRule.onNodeWithTag("greeting_header").assertIsDisplayed()
+            composeRule.onNodeWithTag("header_profile_avatar").assertIsDisplayed()
+
+            // 1. Open UserProfileSheet -> Dynamic Colours -> Back
+            composeRule.onNodeWithTag("header_profile_avatar").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("user_profile_sheet").assertIsDisplayed()
+            composeRule.onNodeWithTag("profile_display_name_input").assertIsDisplayed()
+
+            composeRule.onNodeWithTag("profile_dynamic_colors_row").performScrollTo().performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("dynamic_theme_settings_screen").assertIsDisplayed()
+            scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
+
+            // 2. Open UserProfileSheet -> Music Player Hub -> Back
+            composeRule.onNodeWithTag("header_profile_avatar").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("profile_player_style_row").performScrollTo().performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("player_appearance_hub_screen").assertIsDisplayed()
+            scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            composeRule.waitForIdle()
+
+            // 3. Open Settings -> Back
+            composeRule.onNodeWithTag("header_settings_button").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("settings_screen").assertIsDisplayed()
+            composeRule.onNodeWithTag("settings_back_button").performClick()
+            composeRule.waitForIdle()
+
+            // 4. Switch bottom navigation tabs: Search -> Library -> Home
+            composeRule.onNodeWithTag("nav_tab_search").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("search_screen").assertIsDisplayed()
+
+            composeRule.onNodeWithTag("nav_tab_library").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("library_screen").assertIsDisplayed()
+
+            composeRule.onNodeWithTag("nav_tab_home").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
+
+            // 5. Wait for demo/library tracks to populate and open 15-Band EQ & Audio Studio overlays
+            composeRule.waitUntil(timeoutMillis = 5_000) {
+                composeRule.onAllNodes(hasTestTag("your_mix_section")).fetchSemanticsNodes().isNotEmpty()
+            }
+            val verticalScrollable = SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)
+            composeRule.onNode(verticalScrollable).performScrollToNode(hasTestTag("home_quick_tools_strip"))
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("quick_tool_15_band_eq").performSemanticsAction(SemanticsActions.OnClick)
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("adaptive_equalizer_screen").assertIsDisplayed()
+            composeRule.onNodeWithTag("eq_back_button").performClick()
+            composeRule.waitForIdle()
+
+            composeRule.onNode(verticalScrollable).performScrollToNode(hasTestTag("home_quick_tools_strip"))
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("home_quick_tools_strip").performScrollToNode(hasTestTag("quick_tool_audio_studio"))
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("quick_tool_audio_studio").performSemanticsAction(SemanticsActions.OnClick)
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("audio_effects_studio_screen").assertIsDisplayed()
+            composeRule.onNodeWithTag("audio_studio_back_button").performClick()
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("home_screen").assertIsDisplayed()
+        }
     }
 
     @Test

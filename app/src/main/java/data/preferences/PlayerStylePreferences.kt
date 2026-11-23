@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.SonoraPreferences
 import com.example.model.LockScreenStyle
@@ -31,8 +32,9 @@ private val Context.playerStyleDataStore: DataStore<Preferences> by preferencesD
 )
 
 /**
- * DataStore Preferences implementation for persisting Player Style,
- * Mini-Player & Lock-Screen styles, Player Appearance customization, and Player Gestures.
+ * DataStore Preferences implementation for persisting Full Player Style,
+ * Landscape Player Style, Mini-Player Style, Favorite Styles, Lock-Screen style,
+ * Player Appearance customization, and Player Gestures.
  * Keeps in sync with SonoraPreferences for synchronous immediate access on startup.
  */
 class PlayerStylePreferences(private val context: Context) {
@@ -41,6 +43,9 @@ class PlayerStylePreferences(private val context: Context) {
     companion object {
         val KEY_PLAYER_STYLE = stringPreferencesKey("key_player_style")
         val KEY_MINI_PLAYER_STYLE = stringPreferencesKey("key_mini_player_style")
+        val KEY_LANDSCAPE_PLAYER_STYLE = stringPreferencesKey("key_landscape_player_style")
+        val KEY_FAVORITE_PLAYER_STYLES = stringSetPreferencesKey("key_favorite_player_styles")
+        val KEY_FAVORITE_MINI_PLAYER_STYLES = stringSetPreferencesKey("key_favorite_mini_player_styles")
         val KEY_LOCK_SCREEN_STYLE = stringPreferencesKey("key_lock_screen_style")
         val KEY_PLAYER_APPEARANCE = stringPreferencesKey("key_player_appearance_json")
         val KEY_PLAYER_GESTURES = stringPreferencesKey("key_player_gestures_json")
@@ -65,13 +70,34 @@ class PlayerStylePreferences(private val context: Context) {
         MiniPlayerStyle.fromId(id)
     }
 
+    val landscapePlayerStyleFlow: Flow<PlayerStyle> = safeData.map { preferences ->
+        val id = preferences[KEY_LANDSCAPE_PLAYER_STYLE] ?: sonoraPrefs.landscapePlayerStyle.id
+        PlayerStyle.fromId(id)
+    }
+
+    val favoritePlayerStylesFlow: Flow<Set<String>> = safeData.map { preferences ->
+        preferences[KEY_FAVORITE_PLAYER_STYLES] ?: sonoraPrefs.favoritePlayerStyleIds
+    }
+
+    val favoriteMiniPlayerStylesFlow: Flow<Set<String>> = safeData.map { preferences ->
+        preferences[KEY_FAVORITE_MINI_PLAYER_STYLES] ?: sonoraPrefs.favoriteMiniPlayerStyleIds
+    }
+
     val lockScreenStyleFlow: Flow<LockScreenStyle> = safeData.map { preferences ->
         val id = preferences[KEY_LOCK_SCREEN_STYLE] ?: sonoraPrefs.lockScreenStyle.id
         LockScreenStyle.fromId(id)
     }
 
+    val appearanceConfigFlow: Flow<PlayerAppearanceConfig> = safeData.map { preferences ->
+        val raw = preferences[KEY_PLAYER_APPEARANCE]
+        if (raw != null) SonoraPreferences.decodeAppearanceJson(raw) else sonoraPrefs.playerAppearanceConfig
+    }
+
     fun getInitialStyle(): PlayerStyle = sonoraPrefs.playerStyle
     fun getInitialMiniPlayerStyle(): MiniPlayerStyle = sonoraPrefs.miniPlayerStyle
+    fun getInitialLandscapeStyle(): PlayerStyle = sonoraPrefs.landscapePlayerStyle
+    fun getInitialFavoritePlayerStyles(): Set<String> = sonoraPrefs.favoritePlayerStyleIds
+    fun getInitialFavoriteMiniPlayerStyles(): Set<String> = sonoraPrefs.favoriteMiniPlayerStyleIds
     fun getInitialLockScreenStyle(): LockScreenStyle = sonoraPrefs.lockScreenStyle
     fun getInitialAppearanceConfig(): PlayerAppearanceConfig = sonoraPrefs.playerAppearanceConfig
     fun getInitialGestureConfig(): PlayerGestureConfig = sonoraPrefs.playerGestureConfig
@@ -95,6 +121,39 @@ class PlayerStylePreferences(private val context: Context) {
             }
         } catch (e: Exception) {
             Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving mini-player style", e)
+        }
+    }
+
+    suspend fun setLandscapePlayerStyle(style: PlayerStyle) {
+        sonoraPrefs.landscapePlayerStyle = style
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_LANDSCAPE_PLAYER_STYLE] = style.id
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving landscape player style", e)
+        }
+    }
+
+    suspend fun setFavoritePlayerStyles(ids: Set<String>) {
+        sonoraPrefs.favoritePlayerStyleIds = ids
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_FAVORITE_PLAYER_STYLES] = ids
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving favorite player styles", e)
+        }
+    }
+
+    suspend fun setFavoriteMiniPlayerStyles(ids: Set<String>) {
+        sonoraPrefs.favoriteMiniPlayerStyleIds = ids
+        try {
+            context.playerStyleDataStore.edit { preferences ->
+                preferences[KEY_FAVORITE_MINI_PLAYER_STYLES] = ids
+            }
+        } catch (e: Exception) {
+            Log.e(PLAYER_STYLE_PREFS_TAG, "Failed saving favorite mini-player styles", e)
         }
     }
 

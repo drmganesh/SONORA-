@@ -1,6 +1,7 @@
 package ui.online
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -50,18 +51,30 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import data.online.IndiaMusicCategory
+import data.online.MusicMoodActivity
 import data.online.OnlineTrackMapper
+import data.online.PersonalizedMusicMixCard
 import domain.online.DiscoverMusicLanguage
 import domain.online.DiscoverSectionState
 import domain.online.DiscoverSectionType
 import domain.online.OnlineItemKind
 import domain.online.OnlineTrack
 import ui.components.EditorialPlaylistPickerDialog
+import ui.library.OnlinePlaylistPickerDialog
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraTransitions
 import ui.theme.EditorialColors
 
 @Composable
@@ -71,6 +84,7 @@ fun OnlineMusicScreen(
     initialSearchOpen: Boolean = false,
     onInitialSearchConsumed: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenNowPlaying: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val providers by viewModel.onlineProviders.collectAsState()
@@ -85,11 +99,31 @@ fun OnlineMusicScreen(
     val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val miniPlayerDisplayState by viewModel.miniPlayerDisplayState.collectAsState()
     val collectionState by viewModel.onlineCollectionState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
+    val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
+    val savedOnlineAlbumIds by viewModel.savedOnlineAlbumIds.collectAsState()
+    val followedOnlineArtistIds by viewModel.followedOnlineArtistIds.collectAsState()
+    val savedOnlinePlaylistUrls by viewModel.savedOnlinePlaylistUrls.collectAsState()
     val onlineCountryCode by viewModel.onlineContentCountry.collectAsState()
     val onlineLanguageCode by viewModel.onlineContentLanguage.collectAsState()
     val discoverLanguage by viewModel.discoverMusicLanguage.collectAsState()
+    val musicExperienceSettings by viewModel.musicExperienceSettings.collectAsState()
+    val madeForYouCards by viewModel.madeForYouCards.collectAsState()
+    val basedOnListeningCards by viewModel.basedOnListeningCards.collectAsState()
+    val selectedMoodActivity by viewModel.selectedMoodActivity.collectAsState()
+    val moodDiscoveryTracks by viewModel.moodDiscoveryTracks.collectAsState()
+    val isLoadingMoodDiscovery by viewModel.isLoadingMoodDiscovery.collectAsState()
+    val selectedIndiaCategory by viewModel.selectedIndiaCategory.collectAsState()
+    val indiaDiscoveryTracks by viewModel.indiaDiscoveryTracks.collectAsState()
+    val isLoadingIndiaDiscovery by viewModel.isLoadingIndiaDiscovery.collectAsState()
+
+    LaunchedEffect(selectedProvider?.key, musicExperienceSettings.musicRecommendationsEnabled) {
+        if (musicExperienceSettings.musicRecommendationsEnabled) {
+            viewModel.ensureAdvancedMusicDiscoveryLoaded()
+        }
+    }
 
     val savedIds = remember(savedTracks) { savedTracks.map { it.id }.toSet() }
     val favoriteIds = remember(allOnlineTracks) { allOnlineTracks.filter { it.isFavorite }.map { it.id }.toSet() }
@@ -105,31 +139,31 @@ fun OnlineMusicScreen(
     var showRegionSheet by remember { mutableStateOf(false) }
     var optionsTarget by remember { mutableStateOf<OnlineTrack?>(null) }
     var playlistPickerSong by remember { mutableStateOf<Song?>(null) }
+    var onlinePlaylistPickerSong by remember { mutableStateOf<Song?>(null) }
 
-    if (showSearchView) {
-        BackHandler { showSearchView = false }
-        OnlineSearchScreen(
-            viewModel = viewModel,
-            colors = colors,
-            onBack = { showSearchView = false },
+    val motionState = LocalEffectiveMotionState.current
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
             modifier = modifier
-        )
-        return
-    }
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.backgroundBrush)
-            .statusBarsPadding()
-            .testTag("online_music_screen"),
-        contentAlignment = Alignment.TopCenter
-    ) {
+                .fillMaxSize()
+                .background(colors.backgroundBrush)
+                .statusBarsPadding()
+                .testTag("online_music_screen"),
+            contentAlignment = Alignment.TopCenter
+        ) {
         LazyColumn(
             modifier = Modifier
                 .widthIn(max = 760.dp)
                 .fillMaxSize(),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 184.dp),
+            contentPadding = PaddingValues(
+                top = 8.dp,
+                bottom = domain.player.MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
+                    isMusicMiniPlayerVisible = currentSong != null &&
+                        miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER,
+                    isVideoMiniPlayerVisible = false
+                )
+            ),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             // Editorial Header
@@ -159,6 +193,23 @@ fun OnlineMusicScreen(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (currentSong != null && miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.DISMISSED) {
+                            IconButton(
+                                onClick = {
+                                    viewModel.restoreMusicMiniPlayer()
+                                },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("online_music_restore_now_playing_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MusicNote,
+                                    contentDescription = "Restore mini player",
+                                    tint = colors.accentStrong
+                                )
+                            }
+                        }
+
                         Surface(
                             onClick = { showRegionSheet = true },
                             shape = RoundedCornerShape(18.dp),
@@ -401,6 +452,64 @@ fun OnlineMusicScreen(
                 }
             }
 
+            // Personalized SONORA Music Discovery (Made For You, Based on Your Listening, Moods, India Music)
+            if (musicExperienceSettings.musicRecommendationsEnabled) {
+                item(key = "online_made_for_you_section") {
+                    PersonalizedMixCardShelf(
+                        title = "Made For You",
+                        subtitle = "Transparent SONORA Mixes tailored to your local listening profile",
+                        cards = madeForYouCards,
+                        colors = colors,
+                        testTagPrefix = "made_for_you",
+                        onCardClick = { viewModel.playPersonalizedMixCard(it) }
+                    )
+                }
+
+                item(key = "online_based_on_listening_section") {
+                    PersonalizedMixCardShelf(
+                        title = "Based on Your Listening",
+                        subtitle = "Similar artists, songs, albums & fresh discoveries",
+                        cards = basedOnListeningCards,
+                        colors = colors,
+                        testTagPrefix = "based_listening",
+                        onCardClick = { viewModel.playPersonalizedMixCard(it) }
+                    )
+                }
+
+                item(key = "online_mood_activity_section") {
+                    MoodAndActivityDiscoverySection(
+                        selectedMood = selectedMoodActivity,
+                        tracks = moodDiscoveryTracks,
+                        isLoading = isLoadingMoodDiscovery,
+                        countryCode = onlineCountryCode,
+                        providerName = selectedProvider?.displayName ?: "Provider",
+                        currentSongId = currentSong?.id,
+                        isPlaying = playbackInfo.isPlaying,
+                        colors = colors,
+                        onSelectMood = { viewModel.loadMoodDiscovery(it) },
+                        onPlayTrack = { track, pool -> viewModel.playOnlineTrack(track, pool) },
+                        onTrackLongClick = { optionsTarget = it }
+                    )
+                }
+
+                if (domain.online.RegionMusicEligibilityFilter.isIndiaRegion(onlineCountryCode)) {
+                    item(key = "online_india_music_section") {
+                        IndiaMusicDiscoverySection(
+                            selectedCategory = selectedIndiaCategory,
+                            tracks = indiaDiscoveryTracks,
+                            isLoading = isLoadingIndiaDiscovery,
+                            providerName = selectedProvider?.displayName ?: "Provider",
+                            currentSongId = currentSong?.id,
+                            isPlaying = playbackInfo.isPlaying,
+                            colors = colors,
+                            onSelectCategory = { viewModel.loadIndiaMusicCategory(it) },
+                            onPlayTrack = { track, pool -> viewModel.playOnlineTrack(track, pool) },
+                            onTrackLongClick = { optionsTarget = it }
+                        )
+                    }
+                }
+            }
+
             // Independent Fault-Tolerant Discover Sections
             items(DiscoverSectionType.entries, key = { "discover_sec_${it.name}" }) { sectionType ->
                 val secState = discoverSections[sectionType] ?: DiscoverSectionState.Loading
@@ -461,6 +570,8 @@ fun OnlineMusicScreen(
                         isBuffering = playbackInfo.isBuffering,
                         isSaved = true,
                         colors = colors,
+                        isDownloaded = viewModel.isTrackDownloaded(track),
+                        onDownloadClick = { viewModel.requestDownloadTrack(track) },
                         onClick = { viewModel.playSong(song, savedTracks) },
                         onMoreClick = { optionsTarget = track }
                     )
@@ -490,6 +601,8 @@ fun OnlineMusicScreen(
                         isBuffering = playbackInfo.isBuffering,
                         isSaved = song.id in savedIds,
                         colors = colors,
+                        isDownloaded = viewModel.isTrackDownloaded(track),
+                        onDownloadClick = { viewModel.requestDownloadTrack(track) },
                         onClick = { viewModel.playSong(song, recentOnlineTracks) },
                         onMoreClick = { optionsTarget = track }
                     )
@@ -499,10 +612,21 @@ fun OnlineMusicScreen(
     }
 
     optionsTarget?.let { target ->
+        val artistUrl = if (target.kind == OnlineItemKind.ARTIST) target.contentUrl else target.artistUrl.orEmpty()
+        val isArtistFollowed = artistUrl.isNotBlank() &&
+            OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, artistUrl.trim()) in followedOnlineArtistIds
+        val isCollectionSaved = when (target.kind) {
+            OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(target.providerKey.ifBlank { "online" }, target.contentUrl.trim()) in savedOnlineAlbumIds
+            OnlineItemKind.PLAYLIST -> target.contentUrl.trim() in savedOnlinePlaylistUrls
+            else -> false
+        }
         OnlineTrackOptionsSheet(
             track = target,
             isSaved = target.stableId in savedIds,
             isFavorite = target.stableId in favoriteIds,
+            isDownloaded = viewModel.isTrackDownloaded(target),
+            isArtistFollowed = isArtistFollowed,
+            isCollectionSaved = isCollectionSaved,
             resolvedStream = currentResolvedStream,
             colors = colors,
             onPlayNow = {
@@ -522,6 +646,21 @@ fun OnlineMusicScreen(
             onToggleSave = { viewModel.toggleSaveOnlineTrack(target) },
             onToggleFavorite = { viewModel.toggleFavorite(OnlineTrackMapper.toUnifiedSong(target)) },
             onAddToPlaylist = { playlistPickerSong = OnlineTrackMapper.toUnifiedSong(target) },
+            onAddToOnlinePlaylist = if (target.kind == OnlineItemKind.TRACK) {
+                { onlinePlaylistPickerSong = OnlineTrackMapper.toUnifiedSong(target) }
+            } else null,
+            onToggleFollowArtist = if (artistUrl.isNotBlank()) {
+                { viewModel.toggleFollowOnlineArtist(target) }
+            } else null,
+            onToggleSaveCollection = when (target.kind) {
+                OnlineItemKind.ALBUM -> ({ viewModel.toggleSaveOnlineAlbum(target) })
+                OnlineItemKind.PLAYLIST -> ({ viewModel.toggleSaveExternalOnlinePlaylist(target) })
+                else -> null
+            },
+            onDownload = { viewModel.requestDownloadTrack(target) },
+            onStartRadio = if (target.kind == OnlineItemKind.TRACK) {
+                { viewModel.startSongRadio(OnlineTrackMapper.toUnifiedSong(target), autoPlayFirstAdded = false) }
+            } else null,
             onOpenQualitySettings = { showQualitySheet = true },
             onViewArtistChannel = buildArtistExploreTrack(target)?.let { channelItem ->
                 { viewModel.openOnlineCollection(channelItem) }
@@ -544,6 +683,21 @@ fun OnlineMusicScreen(
         )
     }
 
+    onlinePlaylistPickerSong?.let { songTarget ->
+        OnlinePlaylistPickerDialog(
+            song = songTarget,
+            playlists = onlinePlaylists,
+            colors = colors,
+            onDismiss = { onlinePlaylistPickerSong = null },
+            onSelectPlaylist = { playlist ->
+                viewModel.addTrackToOnlinePlaylist(playlist.id, songTarget, playlist.name)
+            },
+            onCreatePlaylistWithSong = { name ->
+                viewModel.createOnlinePlaylist(name, initialTrack = songTarget)
+            }
+        )
+    }
+
     OnlineCollectionDetailsSheet(
         state = collectionState,
         currentSongId = currentSong?.id,
@@ -551,6 +705,24 @@ fun OnlineMusicScreen(
         isBuffering = playbackInfo.isBuffering,
         savedIds = savedIds,
         colors = colors,
+        isTrackDownloaded = { viewModel.isTrackDownloaded(it) },
+        onDownloadTrack = { viewModel.requestDownloadTrack(it) },
+        isCollectionSavedOrFollowed = { source ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in followedOnlineArtistIds
+                OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in savedOnlineAlbumIds
+                OnlineItemKind.PLAYLIST -> source.contentUrl.trim() in savedOnlinePlaylistUrls
+                else -> false
+            }
+        },
+        onToggleSaveOrFollowCollection = { source, details ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> viewModel.toggleFollowOnlineArtist(source, details)
+                OnlineItemKind.ALBUM -> viewModel.toggleSaveOnlineAlbum(source, details)
+                OnlineItemKind.PLAYLIST -> viewModel.toggleSaveExternalOnlinePlaylist(source, details)
+                else -> Unit
+            }
+        },
         onPlayTrack = { track, tracks -> viewModel.playOnlineTrack(track, tracks) },
         onPlayAll = { tracks, shuffle ->
             val songs = tracks.map { OnlineTrackMapper.toUnifiedSong(it) }
@@ -583,6 +755,21 @@ fun OnlineMusicScreen(
             onSelectLanguage = { viewModel.setOnlineContentLanguage(it) },
             onDismiss = { showRegionSheet = false }
         )
+    }
+
+        AnimatedVisibility(
+            visible = showSearchView,
+            enter = SonoraTransitions.pushEnter(motionState),
+            exit = SonoraTransitions.pushExit(motionState)
+        ) {
+            BackHandler { showSearchView = false }
+            OnlineSearchScreen(
+                viewModel = viewModel,
+                colors = colors,
+                onBack = { showSearchView = false },
+                modifier = modifier
+            )
+        }
     }
 }
 
@@ -772,6 +959,429 @@ private fun DiscoverSectionBlock(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonalizedMixCardShelf(
+    title: String,
+    subtitle: String,
+    cards: List<PersonalizedMusicMixCard>,
+    colors: EditorialColors,
+    testTagPrefix: String,
+    onCardClick: (PersonalizedMusicMixCard) -> Unit
+) {
+    if (cards.isEmpty()) return
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("${testTagPrefix}_shelf")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.AutoAwesome,
+                contentDescription = null,
+                tint = colors.accentStrong,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = colors.textPrimary
+                )
+                Text(
+                    text = subtitle,
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(cards, key = { "${testTagPrefix}_${it.id}" }) { card ->
+                val gradient = remember(card.gradientColors) {
+                    val palette = card.gradientColors.map { Color(it) }
+                    if (palette.size >= 2) Brush.linearGradient(palette)
+                    else Brush.linearGradient(listOf(colors.accentStrong, colors.surfaceElevated))
+                }
+                Surface(
+                    onClick = { onCardClick(card) },
+                    shape = RoundedCornerShape(22.dp),
+                    color = Color.Transparent,
+                    border = BorderStroke(0.75.dp, Color.White.copy(alpha = 0.22f)),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier
+                        .width(214.dp)
+                        .height(132.dp)
+                        .testTag("${testTagPrefix}_card_${card.id}")
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(gradient)
+                            .padding(14.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = Color.Black.copy(alpha = 0.34f)
+                                ) {
+                                    Text(
+                                        text = card.badge.label,
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(30.dp)
+                                        .background(Color.White.copy(alpha = 0.22f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = if (card.id.contains("radio")) Icons.Rounded.Radio else Icons.Rounded.PlayArrow,
+                                        contentDescription = "Play ${card.title}",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Text(
+                                    text = card.title,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 16.sp,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = card.subtitle,
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontSize = 11.5.sp,
+                                    color = Color.White.copy(alpha = 0.86f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MoodAndActivityDiscoverySection(
+    selectedMood: MusicMoodActivity,
+    tracks: List<OnlineTrack>,
+    isLoading: Boolean,
+    countryCode: String,
+    providerName: String,
+    currentSongId: Long?,
+    isPlaying: Boolean,
+    colors: EditorialColors,
+    onSelectMood: (MusicMoodActivity) -> Unit,
+    onPlayTrack: (OnlineTrack, List<OnlineTrack>) -> Unit,
+    onTrackLongClick: (OnlineTrack) -> Unit
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("mood_activity_discovery_section")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MusicNote,
+                contentDescription = null,
+                tint = colors.accentStrong,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(
+                    text = "Mood & Activity",
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = colors.textPrimary
+                )
+                Text(
+                    text = selectedMood.subtitle,
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 12.sp,
+                    color = colors.textSecondary
+                )
+            }
+        }
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(MusicMoodActivity.entries, key = { "mood_${it.id}" }) { mood ->
+                val selected = mood == selectedMood
+                Surface(
+                    onClick = { onSelectMood(mood) },
+                    shape = RoundedCornerShape(18.dp),
+                    color = if (selected) colors.accentStrong else colors.surfaceTinted,
+                    border = BorderStroke(
+                        width = if (selected) 1.25.dp else 0.75.dp,
+                        color = if (selected) colors.accentStrong else colors.cardBorder
+                    ),
+                    modifier = Modifier
+                        .height(40.dp)
+                        .testTag("mood_chip_${mood.id}")
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    ) {
+                        Text(
+                            text = mood.label,
+                            fontFamily = PlusJakartaFontFamily,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.5.sp,
+                            color = if (selected) colors.onAccentStrong else colors.textPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        when {
+            isLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = colors.accentStrong,
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+            tracks.isNotEmpty() -> {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(tracks, key = { "mood_tr_${selectedMood.id}_${it.stableId}_${it.contentUrl}" }) { item ->
+                        OnlineDiscoveryCard(
+                            track = item,
+                            isCurrent = currentSongId == item.stableId,
+                            isPlaying = isPlaying,
+                            colors = colors,
+                            onClick = { onPlayTrack(item, tracks) },
+                            onLongClick = { onTrackLongClick(item) }
+                        )
+                    }
+                }
+            }
+            else -> {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = colors.surfaceTinted,
+                    border = BorderStroke(0.75.dp, colors.cardBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .testTag("mood_discovery_empty_state")
+                ) {
+                    Text(
+                        text = domain.online.RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
+                            sectionTitle = "${selectedMood.label} recommendations",
+                            countryCode = countryCode,
+                            providerName = providerName
+                        ),
+                        fontFamily = PlusJakartaFontFamily,
+                        fontSize = 12.5.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IndiaMusicDiscoverySection(
+    selectedCategory: IndiaMusicCategory,
+    tracks: List<OnlineTrack>,
+    isLoading: Boolean,
+    providerName: String,
+    currentSongId: Long?,
+    isPlaying: Boolean,
+    colors: EditorialColors,
+    onSelectCategory: (IndiaMusicCategory) -> Unit,
+    onPlayTrack: (OnlineTrack, List<OnlineTrack>) -> Unit,
+    onTrackLongClick: (OnlineTrack) -> Unit
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("india_music_discovery_section")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Public,
+                contentDescription = null,
+                tint = colors.accentStrong,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(
+                    text = "India Music Discovery",
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = colors.textPrimary
+                )
+                Text(
+                    text = selectedCategory.subtitle,
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 12.sp,
+                    color = colors.textSecondary
+                )
+            }
+        }
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(IndiaMusicCategory.entries, key = { "india_${it.id}" }) { cat ->
+                val selected = cat == selectedCategory
+                Surface(
+                    onClick = { onSelectCategory(cat) },
+                    shape = RoundedCornerShape(18.dp),
+                    color = if (selected) colors.accentStrong else colors.surfaceTinted,
+                    border = BorderStroke(
+                        width = if (selected) 1.25.dp else 0.75.dp,
+                        color = if (selected) colors.accentStrong else colors.cardBorder
+                    ),
+                    modifier = Modifier
+                        .height(40.dp)
+                        .testTag("india_chip_${cat.id}")
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    ) {
+                        Text(
+                            text = cat.label,
+                            fontFamily = PlusJakartaFontFamily,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.5.sp,
+                            color = if (selected) colors.onAccentStrong else colors.textPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        when {
+            isLoading -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = colors.accentStrong,
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+            tracks.isNotEmpty() -> {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(tracks, key = { "india_tr_${selectedCategory.id}_${it.stableId}_${it.contentUrl}" }) { item ->
+                        OnlineDiscoveryCard(
+                            track = item,
+                            isCurrent = currentSongId == item.stableId,
+                            isPlaying = isPlaying,
+                            colors = colors,
+                            onClick = { onPlayTrack(item, tracks) },
+                            onLongClick = { onTrackLongClick(item) }
+                        )
+                    }
+                }
+            }
+            else -> {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = colors.surfaceTinted,
+                    border = BorderStroke(0.75.dp, colors.cardBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .testTag("india_discovery_empty_state")
+                ) {
+                    Text(
+                        text = domain.online.RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
+                            sectionTitle = selectedCategory.label,
+                            countryCode = domain.online.RegionMusicEligibilityFilter.REGION_INDIA,
+                            providerName = providerName
+                        ),
+                        fontFamily = PlusJakartaFontFamily,
+                        fontSize = 12.5.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 }
             }
         }

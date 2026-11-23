@@ -24,10 +24,18 @@ fun Material3Seekbar(
     accentColor: Color = SonoraDustyRose,
     inactiveColor: Color = SonoraCharcoal
 ) {
+    val latestValueRef = androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableFloatStateOf(progress.coerceIn(0f, 1f))
+    }
+    val safeProgress = progress.coerceIn(0f, 1f)
     Slider(
-        value = progress.coerceIn(0f, 1f),
-        onValueChange = { onSeekProgress(it) },
-        onValueChangeFinished = { onSeekConfirmed(progress) },
+        value = safeProgress,
+        onValueChange = { value ->
+            val clamped = value.coerceIn(0f, 1f)
+            latestValueRef.floatValue = clamped
+            onSeekProgress(clamped)
+        },
+        onValueChangeFinished = { onSeekConfirmed(latestValueRef.floatValue) },
         enabled = enabled,
         colors = SliderDefaults.colors(
             thumbColor = accentColor,

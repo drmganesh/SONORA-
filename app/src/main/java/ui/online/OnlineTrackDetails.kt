@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
@@ -26,11 +28,16 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.BookmarkAdd
 import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.PersonAdd
+import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.PersonSearch
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -68,6 +75,9 @@ fun OnlineTrackOptionsSheet(
     track: OnlineTrack,
     isSaved: Boolean,
     isFavorite: Boolean,
+    isDownloaded: Boolean = false,
+    isArtistFollowed: Boolean = false,
+    isCollectionSaved: Boolean = false,
     resolvedStream: ResolvedOnlineStreamResult?,
     colors: EditorialColors,
     onPlayNow: () -> Unit,
@@ -76,6 +86,11 @@ fun OnlineTrackOptionsSheet(
     onToggleSave: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onAddToOnlinePlaylist: (() -> Unit)? = null,
+    onToggleFollowArtist: (() -> Unit)? = null,
+    onToggleSaveCollection: (() -> Unit)? = null,
+    onDownload: (() -> Unit)? = null,
+    onStartRadio: (() -> Unit)? = null,
     onOpenQualitySettings: () -> Unit,
     onViewArtistChannel: (() -> Unit)?,
     onDismiss: () -> Unit
@@ -92,6 +107,7 @@ fun OnlineTrackOptionsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 8.dp)
                 .testTag("online_track_options_sheet")
@@ -177,6 +193,19 @@ fun OnlineTrackOptionsSheet(
                         onDismiss()
                     }
                 )
+                if (onStartRadio != null) {
+                    OnlineSheetActionRow(
+                        icon = Icons.Rounded.Radio,
+                        title = "Start Song Radio",
+                        colors = colors,
+                        highlighted = true,
+                        modifier = Modifier.testTag("online_menu_start_radio"),
+                        onClick = {
+                            onStartRadio()
+                            onDismiss()
+                        }
+                    )
+                }
                 OnlineSheetActionRow(
                     icon = if (isSaved) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd,
                     title = if (isSaved) "Saved in Online Library" else "Save to Online Library",
@@ -197,15 +226,53 @@ fun OnlineTrackOptionsSheet(
                         onDismiss()
                     }
                 )
+                if (onAddToOnlinePlaylist != null) {
+                    OnlineSheetActionRow(
+                        icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                        title = "Add to Online Playlist",
+                        colors = colors,
+                        modifier = Modifier.testTag("online_menu_add_online_playlist"),
+                        onClick = {
+                            onDismiss()
+                            onAddToOnlinePlaylist()
+                        }
+                    )
+                }
                 OnlineSheetActionRow(
                     icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                    title = "Add to Playlist",
+                    title = "Add to Local Playlist",
                     colors = colors,
                     onClick = {
                         onDismiss()
                         onAddToPlaylist()
                     }
                 )
+                if (onToggleFollowArtist != null) {
+                    OnlineSheetActionRow(
+                        icon = if (isArtistFollowed) Icons.Rounded.PersonRemove else Icons.Rounded.PersonAdd,
+                        title = if (isArtistFollowed) "Unfollow ${track.artist}" else "Follow ${track.artist}",
+                        colors = colors,
+                        highlighted = isArtistFollowed,
+                        modifier = Modifier.testTag("online_menu_follow_artist"),
+                        onClick = {
+                            onToggleFollowArtist()
+                            onDismiss()
+                        }
+                    )
+                }
+                if (onDownload != null) {
+                    OnlineSheetActionRow(
+                        icon = if (isDownloaded) Icons.Rounded.DownloadDone else Icons.Rounded.Download,
+                        title = if (isDownloaded) "Downloaded Offline" else "Download Track",
+                        colors = colors,
+                        highlighted = isDownloaded,
+                        modifier = Modifier.testTag("online_menu_download_button"),
+                        onClick = {
+                            onDismiss()
+                            onDownload()
+                        }
+                    )
+                }
             } else {
                 OnlineSheetActionRow(
                     icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
@@ -216,6 +283,32 @@ fun OnlineTrackOptionsSheet(
                         onDismiss()
                     }
                 )
+                if (track.kind == OnlineItemKind.ARTIST && onToggleFollowArtist != null) {
+                    OnlineSheetActionRow(
+                        icon = if (isArtistFollowed) Icons.Rounded.PersonRemove else Icons.Rounded.PersonAdd,
+                        title = if (isArtistFollowed) "Following Artist (Tap to Unfollow)" else "Follow Artist",
+                        colors = colors,
+                        highlighted = isArtistFollowed,
+                        modifier = Modifier.testTag("online_menu_follow_artist"),
+                        onClick = {
+                            onToggleFollowArtist()
+                            onDismiss()
+                        }
+                    )
+                } else if (onToggleSaveCollection != null) {
+                    val labelKind = if (track.kind == OnlineItemKind.ALBUM) "Album" else "Playlist"
+                    OnlineSheetActionRow(
+                        icon = if (isCollectionSaved) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd,
+                        title = if (isCollectionSaved) "Saved $labelKind in Online Library" else "Save $labelKind to Online Library",
+                        colors = colors,
+                        highlighted = isCollectionSaved,
+                        modifier = Modifier.testTag("online_menu_save_collection"),
+                        onClick = {
+                            onToggleSaveCollection()
+                            onDismiss()
+                        }
+                    )
+                }
             }
 
             if (onViewArtistChannel != null && !track.artistUrl.isNullOrBlank()) {
@@ -251,10 +344,11 @@ private fun OnlineSheetActionRow(
     title: String,
     colors: EditorialColors,
     highlighted: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(14.dp))
@@ -288,6 +382,10 @@ fun OnlineCollectionDetailsSheet(
     isBuffering: Boolean,
     savedIds: Set<Long>,
     colors: EditorialColors,
+    isTrackDownloaded: (OnlineTrack) -> Boolean = { false },
+    onDownloadTrack: ((OnlineTrack) -> Unit)? = null,
+    isCollectionSavedOrFollowed: ((OnlineTrack) -> Boolean)? = null,
+    onToggleSaveOrFollowCollection: ((OnlineTrack, domain.online.OnlineCollectionDetails) -> Unit)? = null,
     onPlayTrack: (OnlineTrack, List<OnlineTrack>) -> Unit,
     onPlayAll: (List<OnlineTrack>, Boolean) -> Unit,
     onRetry: (OnlineTrack) -> Unit,
@@ -386,6 +484,9 @@ fun OnlineCollectionDetailsSheet(
 
                 is OnlineCollectionUiState.Success -> {
                     val details = state.details
+                    val sourceItem = state.sourceItem
+                    val savedOrFollowed = sourceItem != null && isCollectionSavedOrFollowed?.invoke(sourceItem) == true
+                    val headerKind = sourceItem?.kind ?: OnlineItemKind.PLAYLIST
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -395,7 +496,7 @@ fun OnlineCollectionDetailsSheet(
                         OnlineTrackThumbnail(
                             artworkUrl = details.artworkUrl,
                             title = details.title,
-                            kind = OnlineItemKind.PLAYLIST,
+                            kind = headerKind,
                             colors = colors,
                             size = 64.dp,
                             cornerRadius = 16.dp
@@ -422,6 +523,57 @@ fun OnlineCollectionDetailsSheet(
                         }
                         IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Rounded.Close, contentDescription = "Close", tint = colors.textPrimary)
+                        }
+                    }
+
+                    // Save Album / Follow Artist / Save Playlist button on Album, Artist & Playlist pages
+                    if (sourceItem != null && onToggleSaveOrFollowCollection != null && sourceItem.kind != OnlineItemKind.TRACK) {
+                        val actionLabel = when (sourceItem.kind) {
+                            OnlineItemKind.ARTIST -> if (savedOrFollowed) "Following Artist" else "Follow Artist"
+                            OnlineItemKind.ALBUM -> if (savedOrFollowed) "Saved in Online Library" else "Save Album to Online Library"
+                            OnlineItemKind.PLAYLIST -> if (savedOrFollowed) "Saved in Online Playlists" else "Save Playlist to Online Library"
+                            OnlineItemKind.TRACK -> ""
+                        }
+                        val actionIcon = when (sourceItem.kind) {
+                            OnlineItemKind.ARTIST -> if (savedOrFollowed) Icons.Rounded.PersonRemove else Icons.Rounded.PersonAdd
+                            else -> if (savedOrFollowed) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd
+                        }
+                        Surface(
+                            onClick = { onToggleSaveOrFollowCollection(sourceItem, details) },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (savedOrFollowed) colors.accentStrong.copy(alpha = 0.16f) else colors.surfaceTinted,
+                            border = BorderStroke(
+                                0.85.dp,
+                                if (savedOrFollowed) colors.accentStrong else colors.cardBorder
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 4.dp)
+                                .height(48.dp)
+                                .testTag("collection_save_or_follow_button")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = actionIcon,
+                                    contentDescription = actionLabel,
+                                    tint = if (savedOrFollowed) colors.accentStrong else colors.textPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = actionLabel,
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (savedOrFollowed) colors.accentStrong else colors.textPrimary
+                                )
+                            }
                         }
                     }
 
@@ -486,6 +638,8 @@ fun OnlineCollectionDetailsSheet(
                                     isBuffering = isBuffering,
                                     isSaved = track.stableId in savedIds,
                                     colors = colors,
+                                    isDownloaded = isTrackDownloaded(track),
+                                    onDownloadClick = onDownloadTrack?.let { cb -> { cb(track) } },
                                     onClick = { onPlayTrack(track, details.tracks) },
                                     onMoreClick = { onTrackMoreClick(track) }
                                 )

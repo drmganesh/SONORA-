@@ -95,7 +95,10 @@ fun PlaybackControls(
         ButtonShapeOption.SQUIRCLE -> RoundedCornerShape(22.dp)
         ButtonShapeOption.PILL -> RoundedCornerShape(36.dp)
     }
-    val playWidth = if (appearance.buttonShape == ButtonShapeOption.PILL) primaryButtonSize * 1.32f else primaryButtonSize
+    val effectivePrimarySize = (primaryButtonSize * appearance.buttonSize.iconScale).coerceIn(52.dp, 88.dp)
+    val playWidth = if (appearance.buttonShape == ButtonShapeOption.PILL) effectivePrimarySize * 1.32f else effectivePrimarySize
+    val skipIconSize = (32.dp * appearance.buttonSize.iconScale).coerceIn(26.dp, 38.dp)
+    val playIconSize = (34.dp * appearance.buttonSize.iconScale).coerceIn(28.dp, 42.dp)
 
     val horizontalArrangement = when (appearance.controlArrangement) {
         ControlArrangement.COMPACT_CENTER -> Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)
@@ -157,7 +160,7 @@ fun PlaybackControls(
                 imageVector = Icons.Default.SkipPrevious,
                 contentDescription = "Previous",
                 tint = iconTint,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(skipIconSize)
             )
         }
 
@@ -168,7 +171,7 @@ fun PlaybackControls(
             },
             interactionSource = playInteractionSource,
             modifier = Modifier
-                .size(width = playWidth, height = primaryButtonSize)
+                .size(width = playWidth, height = effectivePrimarySize)
                 .graphicsLayer {
                     scaleX = playButtonScale
                     scaleY = playButtonScale
@@ -198,7 +201,7 @@ fun PlaybackControls(
                         imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (playing) "Pause" else "Play",
                         tint = onAccentColor,
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(playIconSize)
                     )
                 }
             }
@@ -217,7 +220,7 @@ fun PlaybackControls(
                 imageVector = Icons.Default.SkipNext,
                 contentDescription = "Next",
                 tint = iconTint,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(skipIconSize)
             )
         }
 
@@ -264,6 +267,18 @@ fun TrackMetadataBar(
     val trackDirection = LocalTrackTransitionDirection.current
     val performHaptic = rememberMotionAwareHaptic()
     val scale = appearance.typographyScale.coerceIn(0.85f, 1.25f)
+    val titleFont = ui.player.PlayerStyleManager.resolveTitleFontFamily(appearance.typographyOption)
+    val bodyFont = ui.player.PlayerStyleManager.resolveBodyFontFamily(appearance.typographyOption)
+    val titleWeight = if (appearance.typographyOption == com.example.model.PlayerTypographyOption.BOLD_DISPLAY) {
+        FontWeight.Black
+    } else {
+        FontWeight.Bold
+    }
+    val titleTracking = if (appearance.typographyOption == com.example.model.PlayerTypographyOption.BOLD_DISPLAY) {
+        (-0.5).sp
+    } else {
+        0.sp
+    }
 
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -279,10 +294,11 @@ fun TrackMetadataBar(
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
                     text = song?.title ?: "No Song Selected",
-                    fontFamily = OutfitFontFamily,
+                    fontFamily = titleFont,
                     color = titleColor,
                     fontSize = (22f * scale).sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = titleWeight,
+                    letterSpacing = titleTracking,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -293,7 +309,7 @@ fun TrackMetadataBar(
                 }
                 Text(
                     text = artistAlbum,
-                    fontFamily = PlusJakartaFontFamily,
+                    fontFamily = bodyFont,
                     color = subtitleColor,
                     fontSize = (13f * scale).sp,
                     maxLines = 1,

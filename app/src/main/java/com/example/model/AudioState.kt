@@ -115,6 +115,15 @@ data class SpatialAudioConfig(
     val spatialIntensity: SpatialIntensity = SpatialIntensity.BALANCED
 )
 
+enum class OnlinePlaybackStage(val defaultMessage: String) {
+    IDLE(""),
+    RESOLVING_STREAM("Finding audio stream..."),
+    PREPARING_PLAYER("Preparing next track..."),
+    BUFFERING_AUDIO("Buffering audio..."),
+    PLAYING("Now playing"),
+    FAILED("Unable to play. Retry.")
+}
+
 data class PlaybackInfo(
     val isPlaying: Boolean = false,
     val currentPositionMs: Long = 0L,
@@ -126,6 +135,13 @@ data class PlaybackInfo(
     val sleepTimerMinutesRemaining: Int? = null,
     val isBuffering: Boolean = false,
     val bufferedPositionMs: Long = 0L,
+    val playbackStage: OnlinePlaybackStage = OnlinePlaybackStage.IDLE,
+    val statusMessage: String = "",
     val playbackError: String? = null,
-    val playbackErrorKind: domain.online.OnlineErrorKind? = null
-)
+    val playbackErrorKind: domain.online.OnlineErrorKind? = null,
+    val isSeekable: Boolean = true,
+    val isLiveStream: Boolean = false
+) {
+    val canUserSeek: Boolean
+        get() = isSeekable && !isLiveStream && durationMs > 0L
+}

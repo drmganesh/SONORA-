@@ -15,13 +15,19 @@ enum class HomeMusicMode(
         id = "offline",
         title = "Offline Music",
         badgeLabel = "OFFLINE",
-        subtitle = "Local device library, albums, mixes & lossless audio"
+        subtitle = "Personal local music collection"
     ),
     ONLINE(
         id = "online",
         title = "Online Music",
         badgeLabel = "ONLINE",
-        subtitle = "Streaming charts, Indian regional hits & NewPipe discovery"
+        subtitle = "Online music discovery and streaming"
+    ),
+    ONLINE_VIDEO(
+        id = "online_video",
+        title = "Online Video",
+        badgeLabel = "VIDEO",
+        subtitle = "Video discovery, streaming and channel browsing"
     );
 
     companion object {

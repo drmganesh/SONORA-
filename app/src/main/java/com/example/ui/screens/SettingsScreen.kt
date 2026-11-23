@@ -29,13 +29,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AcUnit
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Balance
 import androidx.compose.material.icons.rounded.BluetoothConnected
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Info
@@ -45,12 +51,19 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircleOutline
 import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.SpatialAudio
 import androidx.compose.material.icons.rounded.Source
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -59,6 +72,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -78,20 +94,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.DoubleTapAction
 import com.example.model.LockScreenStyle
-import com.example.model.MiniPlayerStyle
 import com.example.model.SingleTapAction
 import com.example.model.SwipeAction
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
+import domain.download.DownloadedTrack
+import domain.download.formatByteCount
+import ui.downloads.DownloadManagerScreen
 import ui.home.animations.HomeAnimationSettingsScreen
-import ui.player.PlayerCustomizationScreen
-import ui.player.PlayerStyleSelector
+import ui.player.PlayerAppearanceHubScreen
+import ui.player.PlayerAppearanceSection
+import data.cache.formatCacheLimitLabel
+import data.cache.formatCacheSize
+import ui.settings.BackgroundPlaybackSettingsScreen
+import ui.settings.CacheManagementScreen
 import ui.settings.DynamicThemeSettingsScreen
 import ui.settings.LibraryFolderManagementScreen
+import ui.settings.MusicExperienceSettingsScreen
+import ui.settings.OnlineVideoPlayerGesturesScreen
 import ui.settings.SeekbarStyleScreen
 import ui.settings.SettingsAboutContent
+import ui.settings.VideoExperienceSettingsScreen
 import ui.settings.rememberInstalledAppVersion
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraTransitions
 import ui.theme.EditorialAccentSwatches
 import ui.theme.EditorialColors
 import ui.theme.HomeThemeMode
@@ -99,6 +126,7 @@ import ui.theme.LocalEditorialColors
 import java.util.Locale
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SonoraViewModel,
@@ -106,6 +134,7 @@ fun SettingsScreen(
     onOpenEqualizer: () -> Unit = {},
     onOpenAudioStudio: () -> Unit = {},
     onOpenFolderManagement: (() -> Unit)? = null,
+    onOpenDownloadManager: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -123,6 +152,7 @@ fun SettingsScreen(
     val dynamicGradientEnabled by viewModel.dynamicGradientEnabled.collectAsState()
     val homeAnimationLevel by viewModel.homeAnimationLevel.collectAsState()
     val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
+    val snowfallSettings by viewModel.snowfallSettings.collectAsState()
 
     val gaplessEnabled by viewModel.gaplessEnabled.collectAsState()
     val crossfadeSeconds by viewModel.crossfadeSeconds.collectAsState()
@@ -149,16 +179,36 @@ fun SettingsScreen(
     val showNotificationFormatBadge by viewModel.showNotificationFormatBadge.collectAsState()
     val onlineContentCountry by viewModel.onlineContentCountry.collectAsState()
     val onlineContentLanguage by viewModel.onlineContentLanguage.collectAsState()
+    val videoGestureSettings by viewModel.videoController.gestureSettings.collectAsState()
+    val videoExperienceSettings by viewModel.videoExperienceSettings.collectAsState()
+    val musicExperienceSettings by viewModel.musicExperienceSettings.collectAsState()
+
+    val downloadStorageSummary by viewModel.downloadStorageSummary.collectAsState()
+    val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+    val downloadTasks by viewModel.downloadTasks.collectAsState()
+    val activeDownloadTasksCount by viewModel.activeDownloadTasksCount.collectAsState()
+    val cacheSettings by viewModel.cacheSettings.collectAsState()
+    val cacheStorageSnapshot by viewModel.cacheStorageSnapshot.collectAsState()
 
     val motionConfig by viewModel.motionConfig.collectAsState()
 
     var showMotionGesturesSettings by remember { mutableStateOf(false) }
+    var showOnlineVideoPlayerGestures by remember { mutableStateOf(false) }
+    var showVideoExperienceSettings by remember { mutableStateOf(false) }
+    var showMusicExperienceSettings by remember { mutableStateOf(false) }
     var showHomeAnimationSettings by remember { mutableStateOf(false) }
-    var showPlayerStyleSelector by remember { mutableStateOf(false) }
-    var showPlayerCustomization by remember { mutableStateOf(false) }
+    var showAmbientEffectsSettings by remember { mutableStateOf(false) }
+    var showPlayerAppearanceHub by remember { mutableStateOf(false) }
+    var playerAppearanceHubInitialSection by remember { mutableStateOf(PlayerAppearanceSection.NOW_PLAYING) }
     var showSeekbarStyleScreen by remember { mutableStateOf(false) }
     var showDynamicThemeSettings by remember { mutableStateOf(false) }
     var showInternalFolderManagement by remember { mutableStateOf(false) }
+    var showInternalDownloadManager by remember { mutableStateOf(false) }
+    var showCacheManagement by remember { mutableStateOf(false) }
+    var showBackgroundPlaybackSettings by remember { mutableStateOf(false) }
+    var showManageDownloadedFilesSheet by remember { mutableStateOf(false) }
+    var showClearDownloadHistoryDialog by remember { mutableStateOf(false) }
+    var downloadedTrackPendingDelete by remember { mutableStateOf<DownloadedTrack?>(null) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
     var showLicensesDialog by remember { mutableStateOf(false) }
     var rescanRequested by remember { mutableStateOf(false) }
@@ -168,85 +218,25 @@ fun SettingsScreen(
     var audioExpanded by remember { mutableStateOf(true) }
     var libraryExpanded by remember { mutableStateOf(true) }
     var onlineExpanded by remember { mutableStateOf(true) }
+    var onlineVideoExpanded by remember { mutableStateOf(true) }
+    var storageCacheExpanded by remember { mutableStateOf(true) }
+    var downloadsExpanded by remember { mutableStateOf(true) }
     var notificationsExpanded by remember { mutableStateOf(true) }
     var aboutExpanded by remember { mutableStateOf(true) }
     val installedAppVersion = rememberInstalledAppVersion()
+    val motionState = LocalEffectiveMotionState.current
+    val pushEnter = SonoraTransitions.pushEnter(motionState)
+    val pushExit = SonoraTransitions.pushExit(motionState)
 
-    if (showMotionGesturesSettings) {
-        ui.settings.MotionGesturesSettingsScreen(
-            viewModel = viewModel,
-            onBack = { showMotionGesturesSettings = false }
-        )
-        return
-    }
-    if (showHomeAnimationSettings) {
-        HomeAnimationSettingsScreen(
-            viewModel = viewModel,
-            onBack = { showHomeAnimationSettings = false }
-        )
-        return
-    }
-    if (showInternalFolderManagement) {
-        BackHandler { showInternalFolderManagement = false }
-        LibraryFolderManagementScreen(
-            viewModel = viewModel,
-            onBack = { showInternalFolderManagement = false }
-        )
-        return
-    }
-    if (showDynamicThemeSettings) {
-        DynamicThemeSettingsScreen(
-            viewModel = viewModel,
-            onBack = { showDynamicThemeSettings = false },
-            onOpenPlayer = {
-                showDynamicThemeSettings = false
-                onOpenNowPlaying()
-            }
-        )
-        return
-    }
-    if (showPlayerCustomization) {
-        PlayerCustomizationScreen(
-            viewModel = viewModel,
-            onBack = { showPlayerCustomization = false },
-            onOpenPlayer = {
-                showPlayerCustomization = false
-                onOpenNowPlaying()
-            }
-        )
-        return
-    }
-    if (showPlayerStyleSelector) {
-        PlayerStyleSelector(
-            viewModel = viewModel,
-            onBack = { showPlayerStyleSelector = false },
-            onOpenPlayer = {
-                showPlayerStyleSelector = false
-                onOpenNowPlaying()
-            }
-        )
-        return
-    }
-    if (showSeekbarStyleScreen) {
-        SeekbarStyleScreen(
-            viewModel = viewModel,
-            onBack = { showSeekbarStyleScreen = false },
-            onOpenPlayer = {
-                showSeekbarStyleScreen = false
-                onOpenNowPlaying()
-            }
-        )
-        return
-    }
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.backgroundBrush)
-            .statusBarsPadding()
-            .testTag("settings_screen"),
-        contentAlignment = Alignment.TopCenter
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(colors.backgroundBrush)
+                .statusBarsPadding()
+                .testTag("settings_screen"),
+            contentAlignment = Alignment.TopCenter
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -298,7 +288,9 @@ fun SettingsScreen(
             }
 
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("settings_lazy_column"),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 100.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -478,6 +470,19 @@ fun SettingsScreen(
                         )
 
                         SettingsLinkRow(
+                            icon = Icons.Rounded.AcUnit,
+                            title = "Ambient Effects",
+                            subtitle = if (snowfallSettings.enabled) {
+                                "Snowfall On • ${snowfallSettings.intensity.label} • ${snowfallSettings.speed.label}"
+                            } else {
+                                "Snowfall Off • Customize Music Home ambience"
+                            },
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_ambient_effects_row"),
+                            onClick = { showAmbientEffectsSettings = true }
+                        )
+
+                        SettingsLinkRow(
                             icon = Icons.Rounded.AutoAwesome,
                             title = "Dynamic Colours & Modes",
                             subtitle = if (dynamicColorsEnabled) "${dynamicAppearanceMode.displayName} • ${dynamicColorIntensity.displayName}" else "Off • ${dynamicThemeMode.displayName}",
@@ -487,18 +492,14 @@ fun SettingsScreen(
 
                         SettingsLinkRow(
                             icon = Icons.Rounded.Palette,
-                            title = "Player Style",
-                            subtitle = "${playerStyle.displayName} • 19 layouts",
+                            title = "Music Player",
+                            subtitle = "${playerStyle.displayName} • ${miniPlayerStyle.displayName} • Styles, artwork, visualizer & controls",
                             colors = colors,
-                            onClick = { showPlayerStyleSelector = true }
-                        )
-
-                        SettingsLinkRow(
-                            icon = Icons.Rounded.Tune,
-                            title = "Player Appearance & Layout",
-                            subtitle = "Artwork size, corners, backdrop & button shape",
-                            colors = colors,
-                            onClick = { showPlayerCustomization = true }
+                            modifier = Modifier.testTag("settings_music_player_row"),
+                            onClick = {
+                                playerAppearanceHubInitialSection = PlayerAppearanceSection.NOW_PLAYING
+                                showPlayerAppearanceHub = true
+                            }
                         )
 
                         SettingsLinkRow(
@@ -507,22 +508,6 @@ fun SettingsScreen(
                             subtitle = "${seekbarStyle.displayName} • 10 styles",
                             colors = colors,
                             onClick = { showSeekbarStyleScreen = true }
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Mini-Player Style",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = colors.textPrimary
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        GestureOptionChipRow(
-                            options = MiniPlayerStyle.entries.map { it to it.displayName },
-                            selected = miniPlayerStyle,
-                            onSelect = { viewModel.setMiniPlayerStyle(it) },
-                            colors = colors
                         )
 
                         HorizontalDivider(color = colors.cardBorder, modifier = Modifier.padding(vertical = 10.dp))
@@ -862,6 +847,16 @@ fun SettingsScreen(
                         )
 
                         Spacer(modifier = Modifier.height(6.dp))
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.PlayCircleOutline,
+                            title = "Background Playback & Session",
+                            subtitle = "Circular mini player, phone call resume, restore & Recents",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_open_background_session"),
+                            onClick = { showBackgroundPlaybackSettings = true }
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
                         Surface(
                             shape = RoundedCornerShape(14.dp),
                             color = colors.surfaceTinted,
@@ -1078,10 +1073,127 @@ fun SettingsScreen(
                             onSelect = { viewModel.setOnlineContentLanguage(it) },
                             colors = colors
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        HorizontalDivider(color = colors.cardBorder)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.AutoAwesome,
+                            title = "Music Experience",
+                            subtitle = "Artwork: ${musicExperienceSettings.albumArtworkQualityMode.label} • ${if (musicExperienceSettings.unlimitedQueueEnabled) "Unlimited Queue" else "Standard Queue"} • ${if (musicExperienceSettings.autoSongRadioEnabled) "Auto Radio" else "Manual Radio"}",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_music_experience_row"),
+                            onClick = { showMusicExperienceSettings = true }
+                        )
                     }
                 }
 
-                // 6. NOTIFICATIONS
+                // 5b. ONLINE VIDEO
+                item {
+                    ExpandableSettingsSection(
+                        title = "ONLINE VIDEO",
+                        subtitle = "${if (videoExperienceSettings.autoPipEnabled) "Auto PiP" else "PiP Off"} • ${if (videoExperienceSettings.autoVideoQualityEnabled) "Auto Quality" else "Manual Quality"} • ${videoGestureSettings.defaultAspectRatio.shortLabel}",
+                        expanded = onlineVideoExpanded,
+                        onToggle = { onlineVideoExpanded = !onlineVideoExpanded },
+                        colors = colors
+                    ) {
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.Tune,
+                            title = "Video Experience",
+                            subtitle = "Automatic PiP, swipe mini-player, pinch-to-zoom, adaptive quality & download folder",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_video_experience_row"),
+                            onClick = { showVideoExperienceSettings = true }
+                        )
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.PlayCircleOutline,
+                            title = "Player Gestures",
+                            subtitle = "Swipe fullscreen, smart aspect ratio (${videoGestureSettings.defaultAspectRatio.shortLabel}), ${videoGestureSettings.doubleTapSeekSeconds}s double-tap & auto-orientation",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_online_video_gestures_row"),
+                            onClick = { showOnlineVideoPlayerGestures = true }
+                        )
+                    }
+                }
+
+                // 5c. STORAGE & CACHE
+                item {
+                    val musicUsed = formatCacheSize(cacheStorageSnapshot.musicCacheBytes)
+                    val videoUsed = formatCacheSize(cacheStorageSnapshot.totalVideoAndShortsBytes)
+                    val musicLimit = formatCacheLimitLabel(cacheSettings.clampedMusicLimitBytes)
+                    ExpandableSettingsSection(
+                        title = "STORAGE & CACHE",
+                        subtitle = "Music $musicUsed / $musicLimit • Video $videoUsed",
+                        expanded = storageCacheExpanded,
+                        onToggle = { storageCacheExpanded = !storageCacheExpanded },
+                        colors = colors
+                    ) {
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.SdStorage,
+                            title = "Cache Management",
+                            subtitle = "Streaming cache switches, $musicLimit music limit, preloading & cleanup",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_cache_management_row"),
+                            onClick = { showCacheManagement = true }
+                        )
+                    }
+                }
+
+                // 6. DOWNLOADS
+                item {
+                    val usedSpaceText = formatByteCount(downloadStorageSummary.totalBytes).ifEmpty { "0 MB" }
+                    ExpandableSettingsSection(
+                        title = "DOWNLOADS",
+                        subtitle = "${downloadStorageSummary.trackCount} tracks • $usedSpaceText",
+                        expanded = downloadsExpanded,
+                        onToggle = { downloadsExpanded = !downloadsExpanded },
+                        colors = colors
+                    ) {
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.FolderOpen,
+                            title = "Download Location",
+                            subtitle = if (downloadStorageSummary.folderLabel.isNotBlank()) {
+                                "${downloadStorageSummary.folderLabel} • Tap to change"
+                            } else {
+                                "Not chosen yet • Tap to select folder"
+                            },
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_change_download_folder"),
+                            onClick = { viewModel.requestChangeDownloadFolder() }
+                        )
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.Downloading,
+                            title = "Open Download Manager",
+                            subtitle = if (activeDownloadTasksCount > 0) {
+                                "$activeDownloadTasksCount active • ${downloadTasks.size} total tasks"
+                            } else {
+                                "${downloadTasks.size} transfer history records"
+                            },
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_open_download_manager"),
+                            onClick = {
+                                onOpenDownloadManager?.invoke() ?: run { showInternalDownloadManager = true }
+                            }
+                        )
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.DownloadDone,
+                            title = "Manage Downloaded Files",
+                            subtitle = "${downloadedTracks.size} offline files • $usedSpaceText used",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_manage_downloaded_files"),
+                            onClick = { showManageDownloadedFilesSheet = true }
+                        )
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.CleaningServices,
+                            title = "Clear Download History",
+                            subtitle = "Clears task history only (keeps audio files safe)",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_clear_download_history"),
+                            onClick = { showClearDownloadHistoryDialog = true }
+                        )
+                    }
+                }
+
+                // 7. NOTIFICATIONS
                 item {
                     ExpandableSettingsSection(
                         title = "NOTIFICATIONS",
@@ -1220,6 +1332,350 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+
+        AnimatedVisibility(
+            visible = showMotionGesturesSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            ui.settings.MotionGesturesSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showMotionGesturesSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showOnlineVideoPlayerGestures,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            OnlineVideoPlayerGesturesScreen(
+                settings = videoGestureSettings,
+                onSwipeFullscreenChanged = { viewModel.videoController.setSwipeFullscreenEnabled(it) },
+                onAutoAspectRatioChanged = { viewModel.videoController.setAutoAspectRatioEnabled(it) },
+                onDefaultAspectRatioChanged = { viewModel.videoController.setDefaultAspectRatio(it) },
+                onSwipeSensitivityChanged = { viewModel.videoController.setSwipeSensitivity(it) },
+                onDoubleTapSeekSecondsChanged = { viewModel.videoController.setDoubleTapSeekSeconds(it) },
+                onAutoOrientationChanged = { viewModel.videoController.setAutoOrientationEnabled(it) },
+                onResetToDefaults = { viewModel.videoController.resetVideoGestureSettings() },
+                onBack = { showOnlineVideoPlayerGestures = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showVideoExperienceSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            VideoExperienceSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showVideoExperienceSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showMusicExperienceSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            MusicExperienceSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showMusicExperienceSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showHomeAnimationSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            HomeAnimationSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showHomeAnimationSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showAmbientEffectsSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            ui.settings.AmbientEffectsSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showAmbientEffectsSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showInternalFolderManagement,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            BackHandler { showInternalFolderManagement = false }
+            LibraryFolderManagementScreen(
+                viewModel = viewModel,
+                onBack = { showInternalFolderManagement = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showDynamicThemeSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            DynamicThemeSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showDynamicThemeSettings = false },
+                onOpenPlayer = {
+                    showDynamicThemeSettings = false
+                    onOpenNowPlaying()
+                }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showPlayerAppearanceHub,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            PlayerAppearanceHubScreen(
+                viewModel = viewModel,
+                initialSection = playerAppearanceHubInitialSection,
+                onBack = { showPlayerAppearanceHub = false },
+                onOpenPlayer = {
+                    showPlayerAppearanceHub = false
+                    onOpenNowPlaying()
+                }
+            )
+        }
+
+        if (showClearDownloadHistoryDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearDownloadHistoryDialog = false },
+                containerColor = colors.surface,
+                title = {
+                    Text(
+                        text = "Clear Download History?",
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary
+                    )
+                },
+                text = {
+                    Text(
+                        text = "This clears finished and failed download history entries from Download Manager. Your downloaded audio files will NOT be deleted.",
+                        fontFamily = PlusJakartaFontFamily,
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.clearDownloadHistory()
+                            showClearDownloadHistoryDialog = false
+                        },
+                        modifier = Modifier.testTag("settings_confirm_clear_history")
+                    ) {
+                        Text("Clear History", color = colors.accentStrong, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearDownloadHistoryDialog = false }) {
+                        Text("Cancel", color = colors.textSecondary)
+                    }
+                }
+            )
+        }
+
+        if (showManageDownloadedFilesSheet) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { showManageDownloadedFilesSheet = false },
+                sheetState = sheetState,
+                containerColor = colors.surface,
+                contentColor = colors.textPrimary,
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 24.dp)
+                        .testTag("manage_downloaded_files_sheet")
+                ) {
+                    Text(
+                        text = "Manage Downloaded Files",
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                        color = colors.textPrimary
+                    )
+                    Text(
+                        text = "${downloadedTracks.size} tracks • ${formatByteCount(downloadStorageSummary.totalBytes).ifEmpty { "0 MB" }} in ${downloadStorageSummary.folderLabel}",
+                        fontFamily = PlusJakartaFontFamily,
+                        fontSize = 12.sp,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    if (downloadedTracks.isEmpty()) {
+                        Text(
+                            text = "No downloaded audio files stored.",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 13.sp,
+                            color = colors.textSecondary,
+                            modifier = Modifier.padding(vertical = 20.dp)
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(downloadedTracks, key = { it.id }) { track ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(colors.surfaceTinted)
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = track.title,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            color = colors.textPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        val sizeStr = formatByteCount(track.fileSizeBytes)
+                                        Text(
+                                            text = listOfNotNull(
+                                                track.artist,
+                                                track.formatLabel,
+                                                sizeStr.takeIf { it.isNotEmpty() }
+                                            ).joinToString(" • "),
+                                            fontFamily = PlusJakartaFontFamily,
+                                            fontSize = 11.5.sp,
+                                            color = colors.textSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { downloadedTrackPendingDelete = track },
+                                        modifier = Modifier.testTag("settings_delete_downloaded_file_${track.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.DeleteOutline,
+                                            contentDescription = "Delete ${track.title}",
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        downloadedTrackPendingDelete?.let { track ->
+            AlertDialog(
+                onDismissRequest = { downloadedTrackPendingDelete = null },
+                containerColor = colors.surface,
+                title = {
+                    Text(
+                        text = "Delete Downloaded File?",
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Permanently delete \"${track.title}\" from your downloads folder?",
+                        fontFamily = PlusJakartaFontFamily,
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.deleteDownloadedTracks(listOf(track.id))
+                            downloadedTrackPendingDelete = null
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { downloadedTrackPendingDelete = null }) {
+                        Text("Cancel", color = colors.textSecondary)
+                    }
+                }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showInternalDownloadManager,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            BackHandler { showInternalDownloadManager = false }
+            DownloadManagerScreen(
+                viewModel = viewModel,
+                onBack = { showInternalDownloadManager = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showCacheManagement,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            CacheManagementScreen(
+                viewModel = viewModel,
+                onBack = { showCacheManagement = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showBackgroundPlaybackSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            BackgroundPlaybackSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showBackgroundPlaybackSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showSeekbarStyleScreen,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            SeekbarStyleScreen(
+                viewModel = viewModel,
+                onBack = { showSeekbarStyleScreen = false },
+                onOpenPlayer = {
+                    showSeekbarStyleScreen = false
+                    onOpenNowPlaying()
+                }
+            )
+        }
     }
 }
 

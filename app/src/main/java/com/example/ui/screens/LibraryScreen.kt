@@ -1,6 +1,11 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -49,6 +54,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -70,6 +76,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -78,9 +85,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -90,6 +97,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -105,28 +113,59 @@ import com.example.model.Song
 import com.example.model.SortOption
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
+import com.example.viewmodel.OnlineCollectionUiState
 import com.example.viewmodel.SonoraViewModel
+import data.online.OnlineTrackMapper
+import domain.download.DownloadSortOption
+import domain.library.LibrarySectionMode
+import domain.library.OnlinePlaylist
+import domain.online.OnlineItemKind
+import domain.online.OnlineTrack
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import ui.components.CircularArtwork
 import ui.components.CollectionDetailSheet
 import ui.components.EditorialArtworkCard
 import ui.components.EditorialPlaylistPickerDialog
 import ui.components.MusicContextMenuSheet
+import ui.downloads.DownloadManagerScreen
+import ui.downloads.DownloadedTrackDisplayItem
+import ui.downloads.LibraryDownloadsSection
+import ui.library.CreateOnlinePlaylistDialog
+import ui.library.LibraryModeSegmentedSelector
+import ui.library.OfflinePlaylistsSection
+import ui.library.OnlineLibraryContent
+import ui.library.OnlineLibrarySortSheet
+import ui.library.OnlinePlaylistDetailSheet
+import ui.library.OnlinePlaylistPickerDialog
+import ui.library.RenameOnlinePlaylistDialog
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraTransitions
+import ui.online.OnlineCollectionDetailsSheet
+import ui.online.OnlineTrackOptionsSheet
 import ui.settings.LibraryFolderManagementScreen
+import domain.video.OnlineVideoItem
 import ui.theme.EditorialColors
 import ui.theme.LocalEditorialColors
+import ui.video.OnlineVideoLibraryContent
+import ui.video.VideoOptionsBottomSheet
+import ui.video.VideoPlaylistPickerDialog
+import ui.video.openOfficialExternalUrl
+import ui.video.shareVideoLink
 import java.io.File
 
-private enum class LibraryCategory(val label: String) {
+private enum class OfflineLibraryCategory(val label: String) {
     ALL_SONGS("All Songs"),
-    ONLINE_SAVED("Online Saved"),
-    ONLINE_RECENT("Streamed"),
     ALBUMS("Albums"),
     ARTISTS("Artists"),
     FOLDERS("Folders"),
-    GENRES("Genres"),
+    PLAYLISTS("Playlists"),
+    RECENTLY_PLAYED("Recently Played"),
     RECENTLY_ADDED("Recently Added"),
     MOST_PLAYED("Most Played"),
-    FAVOURITES("Favourites")
+    DOWNLOADS("Downloads"),
+    FAVOURITES("Favourites"),
+    GENRES("Genres")
 }
 
 private data class LibraryDetailCollection(
@@ -141,33 +180,94 @@ fun LibraryScreen(
     viewModel: SonoraViewModel,
     onOpenFolderManagement: (() -> Unit)? = null,
     onOpenPlaylists: (() -> Unit)? = null,
+    onOpenDownloadManager: (() -> Unit)? = null,
+    onOpenOnlineMusic: (() -> Unit)? = null,
+    onOpenOnlineVideo: (() -> Unit)? = null,
+    openDownloadsTrigger: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val motionState = LocalEffectiveMotionState.current
 
+    // Persisted Library Section Mode (Offline Library vs Online Library)
+    val librarySectionMode by viewModel.librarySectionMode.collectAsState()
+
+    // Offline Library state
     val allLibrarySongs by viewModel.allSongs.collectAsState()
-    val onlineSavedTracks by viewModel.onlineSavedTracks.collectAsState()
-    val recentlyPlayedOnlineTracks by viewModel.recentlyPlayedOnlineTracks.collectAsState()
+    val downloadedTracks by viewModel.downloadedTracks.collectAsState()
+    val downloadedSongs by viewModel.downloadedSongs.collectAsState()
+    val downloadSortOption by viewModel.downloadSortOption.collectAsState()
+    val downloadStorageSummary by viewModel.downloadStorageSummary.collectAsState()
+    val activeDownloadTasksCount by viewModel.activeDownloadTasksCount.collectAsState()
     val filteredSongs by viewModel.filteredSongs.collectAsState()
     val albums by viewModel.albums.collectAsState()
     val artists by viewModel.artists.collectAsState()
     val genres by viewModel.genres.collectAsState()
     val folders by viewModel.folders.collectAsState()
+    val recentlyPlayedLocal by viewModel.recentlyPlayedSongs.collectAsState()
     val recentlyAdded by viewModel.recentlyAddedSongs.collectAsState()
     val mostPlayed by viewModel.mostPlayedSongs.collectAsState()
     val favorites by viewModel.favoriteSongs.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
-    val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playlistSongsMap by viewModel.playlistSongsMap.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val sortOption by viewModel.sortOption.collectAsState()
 
-    var selectedCategory by remember { mutableStateOf(LibraryCategory.ALL_SONGS) }
+    // Online Library state
+    val onlineSavedTracks by viewModel.onlineSavedTracks.collectAsState()
+    val onlineFavoriteTracks by viewModel.onlineFavoriteTracks.collectAsState()
+    val recentlyPlayedOnlineTracks by viewModel.recentlyPlayedOnlineTracks.collectAsState()
+    val onlineListeningHistory by viewModel.onlineListeningHistory.collectAsState()
+    val savedOnlineAlbums by viewModel.savedOnlineAlbums.collectAsState()
+    val followedOnlineArtists by viewModel.followedOnlineArtists.collectAsState()
+    val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
+    val onlineLibrarySearchQuery by viewModel.onlineLibrarySearchQuery.collectAsState()
+    val onlineLibrarySortOption by viewModel.onlineLibrarySortOption.collectAsState()
+    val onlineLibraryProviderFilter by viewModel.onlineLibraryProviderFilter.collectAsState()
+    val onlineProviders by viewModel.onlineProviders.collectAsState()
+    val onlineCollectionState by viewModel.onlineCollectionState.collectAsState()
+    val savedOnlineAlbumIds by viewModel.savedOnlineAlbumIds.collectAsState()
+    val followedOnlineArtistIds by viewModel.followedOnlineArtistIds.collectAsState()
+    val savedOnlinePlaylistUrls by viewModel.savedOnlinePlaylistUrls.collectAsState()
+
+    // Online Video Library state
+    val likedVideos by viewModel.videoController.likedVideos.collectAsState()
+    val watchLaterVideos by viewModel.videoController.watchLaterVideos.collectAsState()
+    val videoHistory by viewModel.videoController.videoHistory.collectAsState()
+    val savedVideos by viewModel.videoController.savedVideos.collectAsState()
+    val subscribedVideoChannels by viewModel.videoController.subscribedChannels.collectAsState()
+    val videoPlaylists by viewModel.videoController.videoPlaylists.collectAsState()
+    val videoPlayerState by viewModel.videoController.playerState.collectAsState()
+    val watchLaterVideoIds = remember(watchLaterVideos) { watchLaterVideos.map { it.videoId }.toSet() }
+    val savedVideoIds = remember(savedVideos) { savedVideos.map { it.videoId }.toSet() }
+
+    // Shared single-engine playback state
+    val currentSong by viewModel.currentSong.collectAsState()
+    val playbackInfo by viewModel.playbackInfo.collectAsState()
+
+    var selectedCategory by remember { mutableStateOf(OfflineLibraryCategory.ALL_SONGS) }
+    LaunchedEffect(openDownloadsTrigger) {
+        if (openDownloadsTrigger > 0) {
+            viewModel.setLibrarySectionMode(LibrarySectionMode.OFFLINE)
+            selectedCategory = OfflineLibraryCategory.DOWNLOADS
+        }
+    }
+
     var isGridView by remember { mutableStateOf(false) }
     var isMultiSelectMode by remember { mutableStateOf(false) }
     var selectedSongIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
+    // Exit multi-select cleanly when leaving Offline Library
+    LaunchedEffect(librarySectionMode) {
+        if (librarySectionMode != LibrarySectionMode.OFFLINE && isMultiSelectMode) {
+            isMultiSelectMode = false
+            selectedSongIds = emptySet()
+        }
+    }
+
+    // Offline modal / dialog states
     var showSortSheet by remember { mutableStateOf(false) }
     var activeDetailCollection by remember { mutableStateOf<LibraryDetailCollection?>(null) }
     var activeFolderDrillDown by remember { mutableStateOf<MusicFolder?>(null) }
@@ -176,68 +276,193 @@ fun LibraryScreen(
     var singleSongForPlaylist by remember { mutableStateOf<Song?>(null) }
     var showBatchPlaylistPicker by remember { mutableStateOf(false) }
     var showInternalFolderManagement by remember { mutableStateOf(false) }
+    var showInternalDownloadManager by remember { mutableStateOf(false) }
+    var singleDownloadedToDelete by remember { mutableStateOf<Song?>(null) }
+    var singleLocalTrackToDelete by remember { mutableStateOf<Song?>(null) }
+    var showBatchDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var pendingSystemDeleteIds by remember { mutableStateOf<List<Long>>(emptyList()) }
 
-    if (showInternalFolderManagement) {
-        BackHandler { showInternalFolderManagement = false }
-        LibraryFolderManagementScreen(
-            viewModel = viewModel,
-            onBack = { showInternalFolderManagement = false }
-        )
-        return
+    // Safe scoped-storage system delete launcher (API 29 RecoverableSecurityException / API 30+ MediaStore.createDeleteRequest)
+    val systemDeleteLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && pendingSystemDeleteIds.isNotEmpty()) {
+            viewModel.onSystemLocalDeleteConfirmed(pendingSystemDeleteIds)
+        }
+        pendingSystemDeleteIds = emptyList()
+    }
+
+    val requestSafeDeleteLocalSongs: (List<Song>) -> Unit = { targets ->
+        viewModel.deleteLocalSongs(targets) { intentSender, pendingIds ->
+            pendingSystemDeleteIds = pendingIds
+            try {
+                systemDeleteLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+            } catch (_: Exception) {
+                pendingSystemDeleteIds = emptyList()
+            }
+        }
+    }
+
+    // Online Library modal / dialog states
+    var showOnlineSortSheet by remember { mutableStateOf(false) }
+    var showCreateOnlinePlaylistDialog by remember { mutableStateOf(false) }
+    var activeOnlinePlaylistId by remember { mutableStateOf<Long?>(null) }
+    var playlistToRename by remember { mutableStateOf<OnlinePlaylist?>(null) }
+    var playlistToDelete by remember { mutableStateOf<OnlinePlaylist?>(null) }
+    var songForOnlinePlaylistPicker by remember { mutableStateOf<Song?>(null) }
+    var onlineTrackForOptions by remember { mutableStateOf<OnlineTrack?>(null) }
+    var videoForOptions by remember { mutableStateOf<OnlineVideoItem?>(null) }
+    var videoForPlaylistPicker by remember { mutableStateOf<OnlineVideoItem?>(null) }
+
+    var downloadFileExistsMap by remember { mutableStateOf<Map<Long, Boolean>>(emptyMap()) }
+    LaunchedEffect(downloadedTracks) {
+        downloadFileExistsMap = withContext(Dispatchers.IO) {
+            downloadedTracks.associate { track ->
+                track.id to viewModel.downloadCoordinator.storageHelper.doesDownloadedFileExist(track.localFileUri)
+            }
+        }
     }
 
     BackHandler(enabled = isMultiSelectMode) {
         isMultiSelectMode = false
         selectedSongIds = emptySet()
     }
-    BackHandler(enabled = activeFolderDrillDown != null && !isMultiSelectMode) {
+    BackHandler(enabled = librarySectionMode == LibrarySectionMode.OFFLINE && activeFolderDrillDown != null && !isMultiSelectMode) {
         activeFolderDrillDown = null
     }
 
     val openFolderManager: () -> Unit = {
         onOpenFolderManagement?.invoke() ?: run { showInternalFolderManagement = true }
     }
+    val openDownloadManagerScreen: () -> Unit = {
+        onOpenDownloadManager?.invoke() ?: run { showInternalDownloadManager = true }
+    }
 
-    val filterListByQueryAndSort: (List<Song>) -> List<Song> = { list ->
-        val searched = if (searchQuery.isBlank()) list else {
-            list.filter {
+    // Offline filtering & sorting via OfflineLibraryRepository
+    val displayedDownloadItems = remember(downloadedTracks, downloadedSongs, searchQuery, downloadSortOption, downloadFileExistsMap) {
+        val songMap = downloadedSongs.associateBy { it.id }
+        val filtered = if (searchQuery.isBlank()) downloadedTracks else {
+            downloadedTracks.filter {
                 it.title.contains(searchQuery, ignoreCase = true) ||
                     it.artist.contains(searchQuery, ignoreCase = true) ||
                     it.album.contains(searchQuery, ignoreCase = true) ||
-                    it.genre.contains(searchQuery, ignoreCase = true)
+                    it.formatLabel.contains(searchQuery, ignoreCase = true)
             }
         }
-        when (sortOption) {
-            SortOption.TITLE_ASC -> searched.sortedBy { it.title.lowercase() }
-            SortOption.TITLE_DESC -> searched.sortedByDescending { it.title.lowercase() }
-            SortOption.ARTIST_ASC -> searched.sortedBy { it.artist.lowercase() }
-            SortOption.ALBUM_ASC -> searched.sortedBy { it.album.lowercase() }
-            SortOption.DURATION_DESC -> searched.sortedByDescending { it.durationMs }
-            SortOption.DATE_ADDED_DESC -> searched.sortedByDescending { it.dateAdded }
+        val sorted = when (downloadSortOption) {
+            DownloadSortOption.RECENTLY_DOWNLOADED -> filtered.sortedByDescending { it.downloadedAt }
+            DownloadSortOption.ARTIST_ASC -> filtered.sortedBy { it.artist.lowercase() }
+            DownloadSortOption.ALBUM_ASC -> filtered.sortedBy { it.album.lowercase() }
+            DownloadSortOption.TITLE_ASC -> filtered.sortedBy { it.title.lowercase() }
+        }
+        sorted.map { track ->
+            val resolvedSong = songMap[track.id] ?: track.toSong()
+            val exists = downloadFileExistsMap[track.id] ?: true
+            DownloadedTrackDisplayItem(
+                track = track,
+                song = resolvedSong,
+                isMissingFile = !exists
+            )
         }
     }
+    val displayedDownloadedSongs = remember(displayedDownloadItems) {
+        displayedDownloadItems.map { it.song }
+    }
 
-    val displayedOnlineSaved = remember(onlineSavedTracks, searchQuery, sortOption) { filterListByQueryAndSort(onlineSavedTracks) }
-    val displayedOnlineRecent = remember(recentlyPlayedOnlineTracks, searchQuery, sortOption) { filterListByQueryAndSort(recentlyPlayedOnlineTracks) }
-    val displayedRecentSongs = remember(recentlyAdded, searchQuery, sortOption) { filterListByQueryAndSort(recentlyAdded) }
-    val displayedMostPlayedSongs = remember(mostPlayed, searchQuery, sortOption) { filterListByQueryAndSort(mostPlayed) }
-    val displayedFavSongs = remember(favorites, searchQuery, sortOption) { filterListByQueryAndSort(favorites) }
+    val displayedRecentlyPlayedLocal = remember(recentlyPlayedLocal, searchQuery, sortOption) {
+        viewModel.offlineLibraryRepository.filterAndSortSongs(recentlyPlayedLocal, searchQuery, sortOption)
+    }
+    val displayedRecentSongs = remember(recentlyAdded, searchQuery, sortOption) {
+        viewModel.offlineLibraryRepository.filterAndSortSongs(recentlyAdded, searchQuery, sortOption)
+    }
+    val displayedMostPlayedSongs = remember(mostPlayed, searchQuery, sortOption) {
+        viewModel.offlineLibraryRepository.filterAndSortSongs(mostPlayed, searchQuery, sortOption)
+    }
+    val displayedFavSongs = remember(favorites, searchQuery, sortOption) {
+        viewModel.offlineLibraryRepository.filterAndSortSongs(favorites, searchQuery, sortOption)
+    }
+    val displayedAlbums = remember(albums, searchQuery) {
+        viewModel.offlineLibraryRepository.filterAlbums(albums, searchQuery)
+    }
+    val displayedArtists = remember(artists, searchQuery) {
+        viewModel.offlineLibraryRepository.filterArtists(artists, searchQuery)
+    }
+    val displayedFolders = remember(folders, searchQuery) {
+        viewModel.offlineLibraryRepository.filterFolders(folders, searchQuery)
+    }
+    val displayedLocalPlaylists = remember(playlists, searchQuery) {
+        viewModel.offlineLibraryRepository.filterPlaylists(playlists, searchQuery)
+    }
     val drillDownSongs = remember(activeFolderDrillDown, allLibrarySongs, searchQuery, sortOption) {
         val folder = activeFolderDrillDown ?: return@remember emptyList()
-        filterListByQueryAndSort(
-            allLibrarySongs.filter { (File(it.dataPath).parent ?: "/storage") == folder.path }
+        viewModel.offlineLibraryRepository.filterAndSortSongs(
+            allLibrarySongs.filter { (File(it.dataPath).parent ?: "/storage") == folder.path },
+            searchQuery,
+            sortOption
         )
     }
 
-    val currentSelectablePool: List<Song> = when (selectedCategory) {
-        LibraryCategory.ALL_SONGS -> filteredSongs
-        LibraryCategory.ONLINE_SAVED -> displayedOnlineSaved
-        LibraryCategory.ONLINE_RECENT -> displayedOnlineRecent
-        LibraryCategory.RECENTLY_ADDED -> displayedRecentSongs
-        LibraryCategory.MOST_PLAYED -> displayedMostPlayedSongs
-        LibraryCategory.FAVOURITES -> displayedFavSongs
-        LibraryCategory.FOLDERS -> if (activeFolderDrillDown != null) drillDownSongs else emptyList()
-        else -> emptyList()
+    // Online Library zero-network local metadata search + filter + sort
+    val onlineSavedTrackIds = remember(onlineSavedTracks) {
+        onlineSavedTracks.map { it.id }.toSet()
+    }
+    val onlineSearchResults = remember(
+        onlineLibrarySearchQuery,
+        onlineLibraryProviderFilter,
+        onlineLibrarySortOption,
+        onlineSavedTracks,
+        savedOnlineAlbums,
+        followedOnlineArtists,
+        onlinePlaylists,
+        onlineListeningHistory,
+        onlineFavoriteTracks
+    ) {
+        viewModel.onlineLibraryRepository.searchSavedContent(
+            query = onlineLibrarySearchQuery,
+            providerFilterKey = onlineLibraryProviderFilter,
+            sortOption = onlineLibrarySortOption,
+            savedTracks = onlineSavedTracks,
+            savedAlbums = savedOnlineAlbums,
+            followedArtists = followedOnlineArtists,
+            onlinePlaylists = onlinePlaylists,
+            listeningHistory = onlineListeningHistory,
+            favorites = onlineFavoriteTracks
+        )
+    }
+    val filteredOnlineRecentlyPlayed = remember(
+        recentlyPlayedOnlineTracks,
+        onlineLibrarySearchQuery,
+        onlineLibraryProviderFilter
+    ) {
+        val byProvider = if (onlineLibraryProviderFilter.isNullOrBlank()) {
+            recentlyPlayedOnlineTracks
+        } else {
+            recentlyPlayedOnlineTracks.filter { it.providerKey.equals(onlineLibraryProviderFilter, ignoreCase = true) }
+        }
+        val q = onlineLibrarySearchQuery.trim()
+        if (q.isEmpty()) byProvider else {
+            byProvider.filter {
+                it.title.contains(q, ignoreCase = true) ||
+                    it.artist.contains(q, ignoreCase = true) ||
+                    it.album.contains(q, ignoreCase = true) ||
+                    it.providerName.contains(q, ignoreCase = true)
+            }
+        }
+    }
+
+    val currentSelectablePool: List<Song> = if (librarySectionMode == LibrarySectionMode.OFFLINE) {
+        when (selectedCategory) {
+            OfflineLibraryCategory.ALL_SONGS -> filteredSongs
+            OfflineLibraryCategory.DOWNLOADS -> displayedDownloadedSongs
+            OfflineLibraryCategory.RECENTLY_PLAYED -> displayedRecentlyPlayedLocal
+            OfflineLibraryCategory.RECENTLY_ADDED -> displayedRecentSongs
+            OfflineLibraryCategory.MOST_PLAYED -> displayedMostPlayedSongs
+            OfflineLibraryCategory.FAVOURITES -> displayedFavSongs
+            OfflineLibraryCategory.FOLDERS -> if (activeFolderDrillDown != null) drillDownSongs else emptyList()
+            else -> emptyList()
+        }
+    } else {
+        emptyList()
     }
 
     Box(
@@ -257,7 +482,7 @@ fun LibraryScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -271,38 +496,115 @@ fun LibraryScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    val subtitleText = when (librarySectionMode) {
+                        LibrarySectionMode.OFFLINE -> buildString {
+                            append("${allLibrarySongs.size} device tracks")
+                            if (downloadedTracks.isNotEmpty()) {
+                                append(" • ${downloadedTracks.size} downloads")
+                            } else {
+                                append(" • ${albums.size} albums")
+                            }
+                        }
+                        LibrarySectionMode.ONLINE ->
+                            "${onlineSavedTracks.size} saved • ${onlinePlaylists.size} playlists • ${followedOnlineArtists.size} artists"
+                        LibrarySectionMode.ONLINE_VIDEO ->
+                            "${watchLaterVideos.size} watch later • ${videoHistory.size} history • ${videoPlaylists.size} playlists"
+                    }
                     Text(
-                        text = "${allLibrarySongs.size} tracks • ${albums.size} albums",
+                        text = subtitleText,
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
-                        color = colors.textSecondary
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (onOpenPlaylists != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (librarySectionMode == LibrarySectionMode.OFFLINE) {
+                        HeaderCircleAction(
+                            icon = if (isMultiSelectMode) Icons.Rounded.Close else Icons.Rounded.Checklist,
+                            contentDescription = if (isMultiSelectMode) "Exit Multi-Select" else "Multi-Select Songs",
+                            isActive = isMultiSelectMode,
+                            colors = colors,
+                            testTag = "library_multiselect_button",
+                            onClick = {
+                                isMultiSelectMode = !isMultiSelectMode
+                                if (!isMultiSelectMode) selectedSongIds = emptySet()
+                            }
+                        )
+                        HeaderCircleAction(
+                            icon = Icons.Rounded.FolderSpecial,
+                            contentDescription = "Manage Folder Blacklist & Whitelist",
+                            isActive = false,
+                            colors = colors,
+                            testTag = "library_folder_settings_button",
+                            onClick = openFolderManager
+                        )
+                        HeaderCircleAction(
+                            icon = Icons.Rounded.Refresh,
+                            contentDescription = "Rescan Local Library",
+                            isActive = false,
+                            colors = colors,
+                            testTag = "rescan_library_button",
+                            onClick = { viewModel.loadLocalSongs() }
+                        )
+                    } else if (librarySectionMode == LibrarySectionMode.ONLINE && onOpenOnlineMusic != null) {
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = colors.accentPill,
                             modifier = Modifier
                                 .height(40.dp)
                                 .clip(RoundedCornerShape(18.dp))
-                                .clickable { onOpenPlaylists() }
-                                .testTag("library_playlists_shortcut")
+                                .clickable { onOpenOnlineMusic() }
+                                .testTag("online_library_discover_shortcut")
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                                    contentDescription = "Open Playlists",
+                                    imageVector = Icons.Rounded.Search,
+                                    contentDescription = "Explore Online Music",
                                     tint = colors.onAccentPill,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))
                                 Text(
-                                    text = "Playlists",
+                                    text = "Discover",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = colors.onAccentPill
+                                )
+                            }
+                        }
+                    } else if (librarySectionMode == LibrarySectionMode.ONLINE_VIDEO && onOpenOnlineVideo != null) {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = colors.accentPill,
+                            modifier = Modifier
+                                .height(40.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable { onOpenOnlineVideo() }
+                                .testTag("online_video_library_discover_shortcut")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Search,
+                                    contentDescription = "Explore Online Videos",
+                                    tint = colors.onAccentPill,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Videos",
                                     fontFamily = PlusJakartaFontFamily,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 12.sp,
@@ -311,658 +613,835 @@ fun LibraryScreen(
                             }
                         }
                     }
-
-                    // Multi-select toggle
-                    HeaderCircleAction(
-                        icon = if (isMultiSelectMode) Icons.Rounded.Close else Icons.Rounded.Checklist,
-                        contentDescription = if (isMultiSelectMode) "Exit Multi-Select" else "Multi-Select Songs",
-                        isActive = isMultiSelectMode,
-                        colors = colors,
-                        testTag = "library_multiselect_button",
-                        onClick = {
-                            isMultiSelectMode = !isMultiSelectMode
-                            if (!isMultiSelectMode) selectedSongIds = emptySet()
-                        }
-                    )
-
-                    // Folder Blacklist / Whitelist shortcut
-                    HeaderCircleAction(
-                        icon = Icons.Rounded.FolderSpecial,
-                        contentDescription = "Manage Folder Blacklist & Whitelist",
-                        isActive = false,
-                        colors = colors,
-                        testTag = "library_folder_settings_button",
-                        onClick = openFolderManager
-                    )
-
-                    // Rescan library
-                    HeaderCircleAction(
-                        icon = Icons.Rounded.Refresh,
-                        contentDescription = "Rescan Library",
-                        isActive = false,
-                        colors = colors,
-                        testTag = "rescan_library_button",
-                        onClick = { viewModel.loadLocalSongs() }
-                    )
                 }
             }
 
-            // Inline Search + Sort + Grid/List Toggle Row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.setSearchQuery(it) },
-                    placeholder = {
-                        Text(
-                            text = "Filter songs, albums, artists...",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontSize = 13.sp,
-                            color = colors.textMuted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Rounded.Search, contentDescription = null, tint = colors.accentStrong)
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                Icon(Icons.Rounded.Close, contentDescription = "Clear search", tint = colors.textSecondary)
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(24.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.accentStrong,
-                        unfocusedBorderColor = colors.cardBorder,
-                        focusedContainerColor = colors.surface,
-                        unfocusedContainerColor = colors.surface,
-                        focusedTextColor = colors.textPrimary,
-                        unfocusedTextColor = colors.textPrimary
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("library_search_input")
-                )
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                // Sort sheet trigger
-                Surface(
-                    shape = CircleShape,
-                    color = colors.surface,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .border(0.75.dp, colors.cardBorder, CircleShape)
-                        .clip(CircleShape)
-                        .clickable { showSortSheet = true }
-                        .testTag("sort_button")
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.Sort,
-                            contentDescription = "Sort Options",
-                            tint = colors.accentStrong
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // Grid / List toggle
-                Surface(
-                    shape = CircleShape,
-                    color = if (isGridView) colors.accentPill else colors.surface,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .border(0.75.dp, colors.cardBorder, CircleShape)
-                        .clip(CircleShape)
-                        .clickable { isGridView = !isGridView }
-                        .testTag("library_layout_toggle")
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = if (isGridView) Icons.AutoMirrored.Rounded.ViewList else Icons.Rounded.GridView,
-                            contentDescription = if (isGridView) "Switch to List view" else "Switch to Grid view",
-                            tint = if (isGridView) colors.onAccentPill else colors.textPrimary
-                        )
-                    }
-                }
-            }
+            // Prominent Three-Option Segmented Selector: [ Offline ] [ Music ] [ Video ]
+            LibraryModeSegmentedSelector(
+                selectedMode = librarySectionMode,
+                colors = colors,
+                onSelectMode = { targetMode ->
+                    viewModel.setLibrarySectionMode(targetMode)
+                },
+                modifier = Modifier.padding(horizontal = 20.dp)
+            )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 8 Editorial Category Filter Pills
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                LibraryCategory.entries.forEach { category ->
-                    val selected = selectedCategory == category
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (selected) colors.accentStrong else colors.surface,
-                        modifier = Modifier
-                            .height(40.dp)
-                            .border(
-                                width = 0.75.dp,
-                                color = if (selected) colors.accentStrong else colors.cardBorder,
-                                shape = RoundedCornerShape(20.dp)
-                            )
-                            .clip(RoundedCornerShape(20.dp))
-                            .clickable {
-                                selectedCategory = category
-                                if (category != LibraryCategory.FOLDERS) activeFolderDrillDown = null
-                            }
-                            .testTag("library_tab_${category.name.lowercase()}")
-                    ) {
-                        Box(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = category.label,
-                                fontFamily = PlusJakartaFontFamily,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 13.sp,
-                                color = if (selected) colors.onAccentStrong else colors.textSecondary
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Multi-select select-all helper bar
-            if (isMultiSelectMode && currentSelectablePool.isNotEmpty()) {
-                val allPoolSelected = currentSelectablePool.all { it.id in selectedSongIds }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "${selectedSongIds.size} of ${currentSelectablePool.size} tracks selected",
-                        fontFamily = PlusJakartaFontFamily,
-                        fontSize = 12.sp,
-                        color = colors.textSecondary
+            // Smooth section transition between Offline, Online Music & Online Video Library
+            AnimatedContent(
+                targetState = librarySectionMode,
+                transitionSpec = {
+                    SonoraTransitions.tabTransition(
+                        forward = targetState.ordinal >= initialState.ordinal,
+                        motion = motionState
                     )
-                    TextButton(
-                        onClick = {
-                            selectedSongIds = if (allPoolSelected) {
-                                emptySet()
-                            } else {
-                                currentSelectablePool.map { it.id }.toSet()
+                },
+                label = "library_section_mode_transition",
+                modifier = Modifier.weight(1f)
+            ) { activeMode ->
+                when (activeMode) {
+                    LibrarySectionMode.ONLINE -> {
+                        OnlineLibraryContent(
+                        searchResults = onlineSearchResults,
+                        recentlyPlayed = filteredOnlineRecentlyPlayed,
+                        savedTrackIds = onlineSavedTrackIds,
+                        availableProviders = onlineProviders,
+                        selectedProviderKey = onlineLibraryProviderFilter,
+                        searchQuery = onlineLibrarySearchQuery,
+                        sortOption = onlineLibrarySortOption,
+                        isCollectionLoading = onlineCollectionState is OnlineCollectionUiState.Loading,
+                        currentSongId = currentSong?.id,
+                        isPlaying = playbackInfo.isPlaying,
+                        colors = colors,
+                        onSearchQueryChange = { viewModel.setOnlineLibrarySearchQuery(it) },
+                        onSelectProviderFilter = { viewModel.setOnlineLibraryProviderFilter(it) },
+                        onOpenSortSheet = { showOnlineSortSheet = true },
+                        onCreateOnlinePlaylist = { showCreateOnlinePlaylistDialog = true },
+                        onOpenOnlinePlaylist = { playlist -> activeOnlinePlaylistId = playlist.id },
+                        onPlaySongs = { list, song, shuffle ->
+                            if (list.isNotEmpty()) {
+                                if (shuffle || song == null) {
+                                    viewModel.playCollection(list, shuffle = shuffle)
+                                } else {
+                                    viewModel.playSong(song, list)
+                                }
                             }
-                        }
-                    ) {
-                        Text(
-                            text = if (allPoolSelected) "Clear All" else "Select All",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.accentStrong
+                        },
+                        onToggleSaveTrack = { viewModel.toggleSaveOnlineTrack(it) },
+                        onToggleFavoriteTrack = { viewModel.toggleFavorite(it) },
+                        onOpenSongMore = { song ->
+                            onlineTrackForOptions = OnlineTrackMapper.toOnlineTrack(song)
+                        },
+                        onOpenAlbum = { album ->
+                            viewModel.openOnlineCollection(album.toOnlineTrack())
+                        },
+                        onRemoveAlbum = { album ->
+                            viewModel.removeSavedOnlineAlbum(album.stableId, album.title)
+                        },
+                        onOpenArtist = { artist ->
+                            viewModel.openOnlineCollection(artist.toOnlineTrack())
+                        },
+                        onUnfollowArtist = { artist ->
+                            viewModel.unfollowOnlineArtist(artist.stableId, artist.name)
+                        },
+                        onClearHistory = { viewModel.clearOnlineListeningHistory() },
+                        onExploreOnlineMusic = { onOpenOnlineMusic?.invoke() }
+                    )
+                    }
+                    LibrarySectionMode.ONLINE_VIDEO -> {
+                        OnlineVideoLibraryContent(
+                            likedVideos = likedVideos,
+                            watchLaterVideos = watchLaterVideos,
+                            videoHistory = videoHistory,
+                            savedVideos = savedVideos,
+                            subscribedChannels = subscribedVideoChannels,
+                            videoPlaylists = videoPlaylists,
+                            activeVideoId = videoPlayerState.activeVideo?.videoId,
+                            colors = colors,
+                            onPlayVideo = { video, pool ->
+                                viewModel.videoController.playVideo(video, pool, expandPlayer = true)
+                            },
+                            onPlayAllLikedVideos = { list ->
+                                viewModel.videoController.playAllLikedVideos(list)
+                            },
+                            onAddVideoToQueue = { video ->
+                                viewModel.videoController.addVideoToQueue(video)
+                            },
+                            onUnlikeVideo = { videoId ->
+                                viewModel.videoController.unlikeVideo(videoId)
+                            },
+                            onClearAllLikedVideos = {
+                                viewModel.videoController.clearAllLikedVideos()
+                            },
+                            onRemoveWatchLater = { viewModel.videoController.toggleWatchLater(it) },
+                            onRemoveFromHistory = { viewModel.videoController.removeFromVideoHistory(it) },
+                            onClearVideoHistory = { viewModel.videoController.clearVideoHistory() },
+                            onRemoveSavedVideo = { viewModel.videoController.toggleSaveVideo(it) },
+                            onOpenChannel = { channel ->
+                                viewModel.videoController.openChannelProfile(
+                                    channelUrl = channel.channelUrl,
+                                    channelName = channel.name,
+                                    initialAvatarUrl = channel.avatarUrl
+                                )
+                            },
+                            onRemoveChannelBookmark = { channel ->
+                                viewModel.videoController.toggleFollowChannelLocally(channel)
+                            },
+                            onUpdateChannelNotification = { channel, pref ->
+                                viewModel.videoController.setSonoraChannelNotificationPreference(channel, pref)
+                            },
+                            onCreatePlaylist = { name -> viewModel.videoController.createVideoPlaylist(name) },
+                            onRenamePlaylist = { id, name -> viewModel.videoController.renameVideoPlaylist(id, name) },
+                            onDeletePlaylist = { id -> viewModel.videoController.deleteVideoPlaylist(id) },
+                            onRemoveVideoFromPlaylist = { pid, vid ->
+                                viewModel.videoController.removeVideoFromPlaylist(pid, vid)
+                            },
+                            onVideoMoreClick = { videoForOptions = it },
+                            onExploreOnlineVideos = { onOpenOnlineVideo?.invoke() }
                         )
                     }
-                }
-            }
-
-            // Active Category Content
-            when (selectedCategory) {
-                LibraryCategory.ALL_SONGS -> SongsCollectionContent(
-                    songs = filteredSongs,
-                    emptyText = "No local audio tracks found",
-                    isGridView = isGridView,
-                    isMultiSelectMode = isMultiSelectMode,
-                    selectedIds = selectedSongIds,
-                    currentSongId = currentSong?.id,
-                    isPlaying = playbackInfo.isPlaying,
-                    colors = colors,
-                    onPlayAll = { if (filteredSongs.isNotEmpty()) viewModel.playCollection(filteredSongs, shuffle = false) },
-                    onShuffleAll = { if (filteredSongs.isNotEmpty()) viewModel.playCollection(filteredSongs, shuffle = true) },
-                    onSongClick = { song ->
-                        if (isMultiSelectMode) {
-                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
-                        } else {
-                            viewModel.playSong(song, filteredSongs)
-                        }
-                    },
-                    onSongLongClick = { song ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (!isMultiSelectMode) {
-                            isMultiSelectMode = true
-                            selectedSongIds = setOf(song.id)
-                        } else {
-                            selectedSongIds = selectedSongIds + song.id
-                        }
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onOpenMore = { contextMenuSong = it }
-                )
-
-                LibraryCategory.ONLINE_SAVED -> SongsCollectionContent(
-                    songs = displayedOnlineSaved,
-                    emptyText = "Save online tracks from Online Music to see them here",
-                    isGridView = isGridView,
-                    isMultiSelectMode = isMultiSelectMode,
-                    selectedIds = selectedSongIds,
-                    currentSongId = currentSong?.id,
-                    isPlaying = playbackInfo.isPlaying,
-                    colors = colors,
-                    onPlayAll = { if (displayedOnlineSaved.isNotEmpty()) viewModel.playCollection(displayedOnlineSaved, shuffle = false) },
-                    onShuffleAll = { if (displayedOnlineSaved.isNotEmpty()) viewModel.playCollection(displayedOnlineSaved, shuffle = true) },
-                    onSongClick = { song ->
-                        if (isMultiSelectMode) {
-                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
-                        } else {
-                            viewModel.playSong(song, displayedOnlineSaved)
-                        }
-                    },
-                    onSongLongClick = { song ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isMultiSelectMode = true
-                        selectedSongIds = selectedSongIds + song.id
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onOpenMore = { contextMenuSong = it }
-                )
-
-                LibraryCategory.ONLINE_RECENT -> SongsCollectionContent(
-                    songs = displayedOnlineRecent,
-                    emptyText = "Streamed online tracks will appear here",
-                    isGridView = isGridView,
-                    isMultiSelectMode = isMultiSelectMode,
-                    selectedIds = selectedSongIds,
-                    currentSongId = currentSong?.id,
-                    isPlaying = playbackInfo.isPlaying,
-                    colors = colors,
-                    onPlayAll = { if (displayedOnlineRecent.isNotEmpty()) viewModel.playCollection(displayedOnlineRecent, shuffle = false) },
-                    onShuffleAll = { if (displayedOnlineRecent.isNotEmpty()) viewModel.playCollection(displayedOnlineRecent, shuffle = true) },
-                    onSongClick = { song ->
-                        if (isMultiSelectMode) {
-                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
-                        } else {
-                            viewModel.playSong(song, displayedOnlineRecent)
-                        }
-                    },
-                    onSongLongClick = { song ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isMultiSelectMode = true
-                        selectedSongIds = selectedSongIds + song.id
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onOpenMore = { contextMenuSong = it }
-                )
-
-                LibraryCategory.RECENTLY_ADDED -> SongsCollectionContent(
-                    songs = displayedRecentSongs,
-                    emptyText = "No recently added tracks",
-                    isGridView = isGridView,
-                    isMultiSelectMode = isMultiSelectMode,
-                    selectedIds = selectedSongIds,
-                    currentSongId = currentSong?.id,
-                    isPlaying = playbackInfo.isPlaying,
-                    colors = colors,
-                    onPlayAll = { if (displayedRecentSongs.isNotEmpty()) viewModel.playCollection(displayedRecentSongs, shuffle = false) },
-                    onShuffleAll = { if (displayedRecentSongs.isNotEmpty()) viewModel.playCollection(displayedRecentSongs, shuffle = true) },
-                    onSongClick = { song ->
-                        if (isMultiSelectMode) {
-                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
-                        } else {
-                            viewModel.playSong(song, displayedRecentSongs)
-                        }
-                    },
-                    onSongLongClick = { song ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isMultiSelectMode = true
-                        selectedSongIds = selectedSongIds + song.id
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onOpenMore = { contextMenuSong = it }
-                )
-
-                LibraryCategory.MOST_PLAYED -> SongsCollectionContent(
-                    songs = displayedMostPlayedSongs,
-                    emptyText = "Play some music to populate Most Played",
-                    isGridView = isGridView,
-                    isMultiSelectMode = isMultiSelectMode,
-                    selectedIds = selectedSongIds,
-                    currentSongId = currentSong?.id,
-                    isPlaying = playbackInfo.isPlaying,
-                    colors = colors,
-                    onPlayAll = { if (displayedMostPlayedSongs.isNotEmpty()) viewModel.playCollection(displayedMostPlayedSongs, shuffle = false) },
-                    onShuffleAll = { if (displayedMostPlayedSongs.isNotEmpty()) viewModel.playCollection(displayedMostPlayedSongs, shuffle = true) },
-                    onSongClick = { song ->
-                        if (isMultiSelectMode) {
-                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
-                        } else {
-                            viewModel.playSong(song, displayedMostPlayedSongs)
-                        }
-                    },
-                    onSongLongClick = { song ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isMultiSelectMode = true
-                        selectedSongIds = selectedSongIds + song.id
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onOpenMore = { contextMenuSong = it }
-                )
-
-                LibraryCategory.FAVOURITES -> SongsCollectionContent(
-                    songs = displayedFavSongs,
-                    emptyText = "Tap the heart on any track to save it here",
-                    isGridView = isGridView,
-                    isMultiSelectMode = isMultiSelectMode,
-                    selectedIds = selectedSongIds,
-                    currentSongId = currentSong?.id,
-                    isPlaying = playbackInfo.isPlaying,
-                    colors = colors,
-                    onPlayAll = { if (displayedFavSongs.isNotEmpty()) viewModel.playCollection(displayedFavSongs, shuffle = false) },
-                    onShuffleAll = { if (displayedFavSongs.isNotEmpty()) viewModel.playCollection(displayedFavSongs, shuffle = true) },
-                    onSongClick = { song ->
-                        if (isMultiSelectMode) {
-                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
-                        } else {
-                            viewModel.playSong(song, displayedFavSongs)
-                        }
-                    },
-                    onSongLongClick = { song ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        isMultiSelectMode = true
-                        selectedSongIds = selectedSongIds + song.id
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onOpenMore = { contextMenuSong = it }
-                )
-
-                LibraryCategory.ALBUMS -> {
-                    if (albums.isEmpty()) {
-                        LibraryEmptyState("No albums match your filter", colors)
-                    } else if (isGridView) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(156.dp),
-                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 152.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.fillMaxSize()
+                    LibrarySectionMode.OFFLINE -> {
+                    // OFFLINE LIBRARY
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("offline_library_content")
+                    ) {
+                        // Offline Search + Sort + Grid/List Toggle Row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            items(albums, key = { "${it.id}_${it.title}" }) { album ->
-                                val repSong = remember(album, allLibrarySongs) {
-                                    allLibrarySongs.firstOrNull { it.album == album.title }
-                                }
-                                EditorialArtworkCard(
-                                    song = repSong,
-                                    title = album.title,
-                                    subtitle = "${album.artist} • ${album.songCount} tracks",
-                                    colors = colors,
-                                    artworkSize = 152.dp,
-                                    cornerRadius = 24.dp,
-                                    showPlayBadge = true,
-                                    onClick = {
-                                        val albumSongs = allLibrarySongs.filter { it.album == album.title }
-                                        activeDetailCollection = LibraryDetailCollection(
-                                            title = album.title,
-                                            subtitle = album.artist,
-                                            songs = albumSongs
-                                        )
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { viewModel.setSearchQuery(it) },
+                                placeholder = {
+                                    Text(
+                                        text = "Search device songs, albums, folders...",
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontSize = 13.sp,
+                                        color = colors.textMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.Search, contentDescription = null, tint = colors.accentStrong)
+                                },
+                                trailingIcon = {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                                            Icon(Icons.Rounded.Close, contentDescription = "Clear search", tint = colors.textSecondary)
+                                        }
                                     }
-                                )
-                            }
-                        }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 152.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(albums, key = { "${it.id}_${it.title}" }) { album ->
-                                val repSong = remember(album, allLibrarySongs) {
-                                    allLibrarySongs.firstOrNull { it.album == album.title }
-                                }
-                                EditorialAlbumRow(
-                                    album = album,
-                                    repSong = repSong,
-                                    colors = colors,
-                                    onClick = {
-                                        val albumSongs = allLibrarySongs.filter { it.album == album.title }
-                                        activeDetailCollection = LibraryDetailCollection(
-                                            title = album.title,
-                                            subtitle = album.artist,
-                                            songs = albumSongs
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                LibraryCategory.ARTISTS -> {
-                    if (artists.isEmpty()) {
-                        LibraryEmptyState("No artists match your filter", colors)
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 152.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(artists, key = { it.name }) { artist ->
-                                val repSong = remember(artist, allLibrarySongs) {
-                                    allLibrarySongs.firstOrNull { it.artist == artist.name }
-                                }
-                                EditorialArtistRow(
-                                    artist = artist,
-                                    repSong = repSong,
-                                    colors = colors,
-                                    onClick = {
-                                        val artistSongs = allLibrarySongs.filter { it.artist == artist.name }
-                                        activeDetailCollection = LibraryDetailCollection(
-                                            title = artist.name,
-                                            subtitle = "${artist.albumCount} albums",
-                                            songs = artistSongs
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                LibraryCategory.GENRES -> {
-                    if (genres.isEmpty()) {
-                        LibraryEmptyState("No genres match your filter", colors)
-                    } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(156.dp),
-                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 152.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            items(genres, key = { it.name }) { genre ->
-                                EditorialGenreCard(
-                                    genre = genre,
-                                    colors = colors,
-                                    onClick = {
-                                        val genreSongs = allLibrarySongs.filter { it.genre == genre.name }
-                                        activeDetailCollection = LibraryDetailCollection(
-                                            title = genre.name,
-                                            subtitle = "Genre",
-                                            songs = genreSongs
-                                        )
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                LibraryCategory.FOLDERS -> {
-                    val activeFolder = activeFolderDrillDown
-                    if (activeFolder != null) {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = colors.surfaceTinted,
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(24.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = colors.accentStrong,
+                                    unfocusedBorderColor = colors.cardBorder,
+                                    focusedContainerColor = colors.surface,
+                                    unfocusedContainerColor = colors.surface,
+                                    focusedTextColor = colors.textPrimary,
+                                    unfocusedTextColor = colors.textPrimary
+                                ),
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 20.dp, vertical = 4.dp)
-                                    .border(0.75.dp, colors.cardBorder, RoundedCornerShape(18.dp))
+                                    .weight(1f)
+                                    .testTag("library_search_input")
+                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            // Sort sheet trigger
+                            Surface(
+                                shape = CircleShape,
+                                color = colors.surface,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .border(0.75.dp, colors.cardBorder, CircleShape)
+                                    .clip(CircleShape)
+                                    .clickable { showSortSheet = true }
+                                    .testTag("sort_button")
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    IconButton(
-                                        onClick = { activeFolderDrillDown = null },
-                                        modifier = Modifier.size(44.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                            contentDescription = "All Folders",
-                                            tint = colors.textPrimary
-                                        )
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = activeFolder.name,
-                                            fontFamily = OutfitFontFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            color = colors.textPrimary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = activeFolder.path,
-                                            fontFamily = PlusJakartaFontFamily,
-                                            fontSize = 11.sp,
-                                            color = colors.textSecondary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.Sort,
+                                        contentDescription = "Sort Offline Library",
+                                        tint = colors.accentStrong
+                                    )
                                 }
                             }
 
-                            SongsCollectionContent(
-                                songs = drillDownSongs,
-                                emptyText = "No visible audio files in this folder",
-                                isGridView = isGridView,
-                                isMultiSelectMode = isMultiSelectMode,
-                                selectedIds = selectedSongIds,
-                                currentSongId = currentSong?.id,
-                                isPlaying = playbackInfo.isPlaying,
-                                colors = colors,
-                                onPlayAll = { if (drillDownSongs.isNotEmpty()) viewModel.playCollection(drillDownSongs, shuffle = false) },
-                                onShuffleAll = { if (drillDownSongs.isNotEmpty()) viewModel.playCollection(drillDownSongs, shuffle = true) },
-                                onSongClick = { song ->
-                                    if (isMultiSelectMode) {
-                                        selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
-                                    } else {
-                                        viewModel.playSong(song, drillDownSongs)
-                                    }
-                                },
-                                onSongLongClick = { song ->
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    isMultiSelectMode = true
-                                    selectedSongIds = selectedSongIds + song.id
-                                },
-                                onToggleFavorite = { viewModel.toggleFavorite(it) },
-                                onOpenMore = { contextMenuSong = it }
-                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+
+                            // Grid / List toggle
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isGridView) colors.accentPill else colors.surface,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .border(0.75.dp, colors.cardBorder, CircleShape)
+                                    .clip(CircleShape)
+                                    .clickable { isGridView = !isGridView }
+                                    .testTag("library_layout_toggle")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (isGridView) Icons.AutoMirrored.Rounded.ViewList else Icons.Rounded.GridView,
+                                        contentDescription = if (isGridView) "Switch to List view" else "Switch to Grid view",
+                                        tint = if (isGridView) colors.onAccentPill else colors.textPrimary
+                                    )
+                                }
+                            }
                         }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 152.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Offline Library Category Pills (All Songs, Albums, Artists, Folders, Playlists, Recently Played, Recently Added, Most Played, Downloads, Favourites, Genres)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            item {
+                            OfflineLibraryCategory.entries.forEach { category ->
+                                val selected = selectedCategory == category
                                 Surface(
                                     shape = RoundedCornerShape(20.dp),
-                                    color = colors.accentPill.copy(alpha = 0.45f),
+                                    color = if (selected) colors.accentStrong else colors.surface,
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .border(1.dp, colors.accentStrong.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+                                        .height(40.dp)
+                                        .border(
+                                            width = 0.75.dp,
+                                            color = if (selected) colors.accentStrong else colors.cardBorder,
+                                            shape = RoundedCornerShape(20.dp)
+                                        )
                                         .clip(RoundedCornerShape(20.dp))
-                                        .clickable { openFolderManager() }
-                                        .testTag("library_manage_folders_button")
+                                        .clickable {
+                                            selectedCategory = category
+                                            if (category != OfflineLibraryCategory.FOLDERS) activeFolderDrillDown = null
+                                        }
+                                        .testTag("library_tab_${category.name.lowercase()}")
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(14.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Box(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(42.dp)
-                                                .background(colors.accentStrong, CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.FolderSpecial,
-                                                contentDescription = null,
-                                                tint = colors.onAccentStrong,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Manage Blacklist & Whitelist",
-                                                fontFamily = OutfitFontFamily,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 15.sp,
-                                                color = colors.textPrimary
-                                            )
-                                            Text(
-                                                text = "Control which storage folders appear in SONORA",
-                                                fontFamily = PlusJakartaFontFamily,
-                                                fontSize = 12.sp,
-                                                color = colors.textSecondary
-                                            )
-                                        }
-                                        Icon(
-                                            imageVector = Icons.Rounded.ChevronRight,
-                                            contentDescription = "Open Folder Manager",
-                                            tint = colors.textPrimary
+                                        Text(
+                                            text = category.label,
+                                            fontFamily = PlusJakartaFontFamily,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            fontSize = 13.sp,
+                                            color = if (selected) colors.onAccentStrong else colors.textSecondary
                                         )
                                     }
                                 }
                             }
+                        }
 
-                            items(folders, key = { it.path }) { folder ->
-                                EditorialFolderRow(
-                                    folder = folder,
-                                    colors = colors,
-                                    onClick = { activeFolderDrillDown = folder }
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Multi-select select-all helper bar
+                        if (isMultiSelectMode && currentSelectablePool.isNotEmpty()) {
+                            val allPoolSelected = currentSelectablePool.all { it.id in selectedSongIds }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${selectedSongIds.size} of ${currentSelectablePool.size} tracks selected",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary
                                 )
+                                TextButton(
+                                    onClick = {
+                                        selectedSongIds = if (allPoolSelected) {
+                                            emptySet()
+                                        } else {
+                                            currentSelectablePool.map { it.id }.toSet()
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        text = if (allPoolSelected) "Clear All" else "Select All",
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.accentStrong
+                                    )
+                                }
                             }
                         }
+
+                        // Active Offline Category Content
+                        AnimatedContent(
+                            targetState = selectedCategory,
+                            transitionSpec = {
+                                SonoraTransitions.tabTransition(
+                                    forward = targetState.ordinal >= initialState.ordinal,
+                                    motion = motionState
+                                )
+                            },
+                            label = "offline_library_category_transition",
+                            modifier = Modifier.weight(1f)
+                        ) { category ->
+                            when (category) {
+                                OfflineLibraryCategory.ALL_SONGS -> SongsCollectionContent(
+                                    songs = filteredSongs,
+                                    emptyText = if (searchQuery.isNotBlank()) "No local songs match \"$searchQuery\"" else "No local audio tracks found on device",
+                                    isGridView = isGridView,
+                                    isMultiSelectMode = isMultiSelectMode,
+                                    selectedIds = selectedSongIds,
+                                    currentSongId = currentSong?.id,
+                                    isPlaying = playbackInfo.isPlaying,
+                                    colors = colors,
+                                    onPlayAll = { if (filteredSongs.isNotEmpty()) viewModel.playCollection(filteredSongs, shuffle = false) },
+                                    onShuffleAll = { if (filteredSongs.isNotEmpty()) viewModel.playCollection(filteredSongs, shuffle = true) },
+                                    onSongClick = { song ->
+                                        if (isMultiSelectMode) {
+                                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                                        } else {
+                                            viewModel.playSong(song, filteredSongs)
+                                        }
+                                    },
+                                    onSongLongClick = { song ->
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        if (!isMultiSelectMode) {
+                                            isMultiSelectMode = true
+                                            selectedSongIds = setOf(song.id)
+                                        } else {
+                                            selectedSongIds = selectedSongIds + song.id
+                                        }
+                                    },
+                                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                    onOpenMore = { contextMenuSong = it }
+                                )
+
+                                OfflineLibraryCategory.DOWNLOADS -> {
+                                    val downloadedVideos by viewModel.downloadedVideos.collectAsState()
+                                    val playableDownloadSongs = displayedDownloadItems.filter { !it.isMissingFile }.map { it.song }
+                                    LibraryDownloadsSection(
+                                        items = displayedDownloadItems,
+                                        sortOption = downloadSortOption,
+                                        storageSummary = downloadStorageSummary,
+                                        activeDownloadCount = activeDownloadTasksCount,
+                                        isMultiSelectMode = isMultiSelectMode,
+                                        selectedIds = selectedSongIds,
+                                        currentSongId = currentSong?.id,
+                                        isPlaying = playbackInfo.isPlaying,
+                                        colors = colors,
+                                        onSelectSort = { viewModel.setDownloadSortOption(it) },
+                                        onOpenDownloadManager = openDownloadManagerScreen,
+                                        onPlayAll = {
+                                            if (playableDownloadSongs.isNotEmpty()) {
+                                                viewModel.playCollection(playableDownloadSongs, shuffle = false)
+                                            }
+                                        },
+                                        onShuffleAll = {
+                                            if (playableDownloadSongs.isNotEmpty()) {
+                                                viewModel.playCollection(playableDownloadSongs, shuffle = true)
+                                            }
+                                        },
+                                        onTrackClick = { item ->
+                                            if (isMultiSelectMode) {
+                                                selectedSongIds = if (item.song.id in selectedSongIds) {
+                                                    selectedSongIds - item.song.id
+                                                } else {
+                                                    selectedSongIds + item.song.id
+                                                }
+                                            } else if (!item.isMissingFile) {
+                                                viewModel.playSong(item.song, playableDownloadSongs.ifEmpty { listOf(item.song) })
+                                            } else {
+                                                singleDownloadedToDelete = item.song
+                                            }
+                                        },
+                                        onTrackLongClick = { item ->
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            if (!isMultiSelectMode) {
+                                                isMultiSelectMode = true
+                                                selectedSongIds = setOf(item.song.id)
+                                            } else {
+                                                selectedSongIds = selectedSongIds + item.song.id
+                                            }
+                                        },
+                                        onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                        onRequestDelete = { singleDownloadedToDelete = it.song },
+                                        onOpenMore = { contextMenuSong = it },
+                                        downloadedVideos = downloadedVideos,
+                                        onPlayDownloadedVideo = { viewModel.playDownloadedVideo(it) },
+                                        onDeleteDownloadedVideo = { viewModel.deleteDownloadedTracks(listOf(it.id)) }
+                                    )
+                                }
+
+                                OfflineLibraryCategory.PLAYLISTS -> {
+                                    OfflinePlaylistsSection(
+                                        playlists = displayedLocalPlaylists,
+                                        allLocalSongs = allLibrarySongs,
+                                        playlistSongResolver = { pid -> playlistSongsMap[pid].orEmpty() },
+                                        colors = colors,
+                                        onCreatePlaylist = { name -> viewModel.createPlaylist(name) },
+                                        onDeletePlaylist = { playlist -> viewModel.deletePlaylist(playlist.id) },
+                                        onOpenPlaylist = { playlist, songs ->
+                                            activeDetailCollection = LibraryDetailCollection(
+                                                title = playlist.name,
+                                                subtitle = "Local Playlist • ${songs.size} tracks",
+                                                songs = songs
+                                            )
+                                        },
+                                        onPlayPlaylist = { songs ->
+                                            if (songs.isNotEmpty()) viewModel.playCollection(songs, shuffle = false)
+                                        },
+                                        onOpenFullPlaylistsManager = onOpenPlaylists
+                                    )
+                                }
+
+                                OfflineLibraryCategory.RECENTLY_PLAYED -> SongsCollectionContent(
+                                    songs = displayedRecentlyPlayedLocal,
+                                    emptyText = "Play local songs to build your Recently Played list",
+                                    isGridView = isGridView,
+                                    isMultiSelectMode = isMultiSelectMode,
+                                    selectedIds = selectedSongIds,
+                                    currentSongId = currentSong?.id,
+                                    isPlaying = playbackInfo.isPlaying,
+                                    colors = colors,
+                                    onPlayAll = { if (displayedRecentlyPlayedLocal.isNotEmpty()) viewModel.playCollection(displayedRecentlyPlayedLocal, shuffle = false) },
+                                    onShuffleAll = { if (displayedRecentlyPlayedLocal.isNotEmpty()) viewModel.playCollection(displayedRecentlyPlayedLocal, shuffle = true) },
+                                    onSongClick = { song ->
+                                        if (isMultiSelectMode) {
+                                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                                        } else {
+                                            viewModel.playSong(song, displayedRecentlyPlayedLocal)
+                                        }
+                                    },
+                                    onSongLongClick = { song ->
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        isMultiSelectMode = true
+                                        selectedSongIds = selectedSongIds + song.id
+                                    },
+                                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                    onOpenMore = { contextMenuSong = it }
+                                )
+
+                                OfflineLibraryCategory.RECENTLY_ADDED -> SongsCollectionContent(
+                                    songs = displayedRecentSongs,
+                                    emptyText = "No recently added local tracks",
+                                    isGridView = isGridView,
+                                    isMultiSelectMode = isMultiSelectMode,
+                                    selectedIds = selectedSongIds,
+                                    currentSongId = currentSong?.id,
+                                    isPlaying = playbackInfo.isPlaying,
+                                    colors = colors,
+                                    onPlayAll = { if (displayedRecentSongs.isNotEmpty()) viewModel.playCollection(displayedRecentSongs, shuffle = false) },
+                                    onShuffleAll = { if (displayedRecentSongs.isNotEmpty()) viewModel.playCollection(displayedRecentSongs, shuffle = true) },
+                                    onSongClick = { song ->
+                                        if (isMultiSelectMode) {
+                                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                                        } else {
+                                            viewModel.playSong(song, displayedRecentSongs)
+                                        }
+                                    },
+                                    onSongLongClick = { song ->
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        isMultiSelectMode = true
+                                        selectedSongIds = selectedSongIds + song.id
+                                    },
+                                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                    onOpenMore = { contextMenuSong = it }
+                                )
+
+                                OfflineLibraryCategory.MOST_PLAYED -> SongsCollectionContent(
+                                    songs = displayedMostPlayedSongs,
+                                    emptyText = "Play local music to populate Most Played",
+                                    isGridView = isGridView,
+                                    isMultiSelectMode = isMultiSelectMode,
+                                    selectedIds = selectedSongIds,
+                                    currentSongId = currentSong?.id,
+                                    isPlaying = playbackInfo.isPlaying,
+                                    colors = colors,
+                                    onPlayAll = { if (displayedMostPlayedSongs.isNotEmpty()) viewModel.playCollection(displayedMostPlayedSongs, shuffle = false) },
+                                    onShuffleAll = { if (displayedMostPlayedSongs.isNotEmpty()) viewModel.playCollection(displayedMostPlayedSongs, shuffle = true) },
+                                    onSongClick = { song ->
+                                        if (isMultiSelectMode) {
+                                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                                        } else {
+                                            viewModel.playSong(song, displayedMostPlayedSongs)
+                                        }
+                                    },
+                                    onSongLongClick = { song ->
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        isMultiSelectMode = true
+                                        selectedSongIds = selectedSongIds + song.id
+                                    },
+                                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                    onOpenMore = { contextMenuSong = it }
+                                )
+
+                                OfflineLibraryCategory.FAVOURITES -> SongsCollectionContent(
+                                    songs = displayedFavSongs,
+                                    emptyText = "Tap the heart on any local track to save it here",
+                                    isGridView = isGridView,
+                                    isMultiSelectMode = isMultiSelectMode,
+                                    selectedIds = selectedSongIds,
+                                    currentSongId = currentSong?.id,
+                                    isPlaying = playbackInfo.isPlaying,
+                                    colors = colors,
+                                    onPlayAll = { if (displayedFavSongs.isNotEmpty()) viewModel.playCollection(displayedFavSongs, shuffle = false) },
+                                    onShuffleAll = { if (displayedFavSongs.isNotEmpty()) viewModel.playCollection(displayedFavSongs, shuffle = true) },
+                                    onSongClick = { song ->
+                                        if (isMultiSelectMode) {
+                                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                                        } else {
+                                            viewModel.playSong(song, displayedFavSongs)
+                                        }
+                                    },
+                                    onSongLongClick = { song ->
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        isMultiSelectMode = true
+                                        selectedSongIds = selectedSongIds + song.id
+                                    },
+                                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                    onOpenMore = { contextMenuSong = it }
+                                )
+
+                                OfflineLibraryCategory.ALBUMS -> {
+                                    if (displayedAlbums.isEmpty()) {
+                                        LibraryEmptyState("No local albums match your filter", colors)
+                                    } else if (isGridView) {
+                                        LazyVerticalGrid(
+                                            columns = GridCells.Adaptive(156.dp),
+                                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 152.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            items(displayedAlbums, key = { "${it.id}_${it.title}" }) { album ->
+                                                val repSong = remember(album, allLibrarySongs) {
+                                                    allLibrarySongs.firstOrNull { it.album == album.title }
+                                                }
+                                                EditorialArtworkCard(
+                                                    song = repSong,
+                                                    title = album.title,
+                                                    subtitle = "${album.artist} • ${album.songCount} tracks",
+                                                    colors = colors,
+                                                    artworkSize = 152.dp,
+                                                    cornerRadius = 24.dp,
+                                                    showPlayBadge = true,
+                                                    onClick = {
+                                                        val albumSongs = allLibrarySongs.filter { it.album == album.title }
+                                                        activeDetailCollection = LibraryDetailCollection(
+                                                            title = album.title,
+                                                            subtitle = album.artist,
+                                                            songs = albumSongs
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        LazyColumn(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 152.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            items(displayedAlbums, key = { "${it.id}_${it.title}" }) { album ->
+                                                val repSong = remember(album, allLibrarySongs) {
+                                                    allLibrarySongs.firstOrNull { it.album == album.title }
+                                                }
+                                                EditorialAlbumRow(
+                                                    album = album,
+                                                    repSong = repSong,
+                                                    colors = colors,
+                                                    onClick = {
+                                                        val albumSongs = allLibrarySongs.filter { it.album == album.title }
+                                                        activeDetailCollection = LibraryDetailCollection(
+                                                            title = album.title,
+                                                            subtitle = album.artist,
+                                                            songs = albumSongs
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                OfflineLibraryCategory.ARTISTS -> {
+                                    if (displayedArtists.isEmpty()) {
+                                        LibraryEmptyState("No local artists match your filter", colors)
+                                    } else {
+                                        LazyColumn(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 152.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            items(displayedArtists, key = { it.name }) { artist ->
+                                                val repSong = remember(artist, allLibrarySongs) {
+                                                    allLibrarySongs.firstOrNull { it.artist == artist.name }
+                                                }
+                                                EditorialArtistRow(
+                                                    artist = artist,
+                                                    repSong = repSong,
+                                                    colors = colors,
+                                                    onClick = {
+                                                        val artistSongs = allLibrarySongs.filter { it.artist == artist.name }
+                                                        activeDetailCollection = LibraryDetailCollection(
+                                                            title = artist.name,
+                                                            subtitle = "${artist.albumCount} albums",
+                                                            songs = artistSongs
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                OfflineLibraryCategory.GENRES -> {
+                                    if (genres.isEmpty()) {
+                                        LibraryEmptyState("No genres match your filter", colors)
+                                    } else {
+                                        LazyVerticalGrid(
+                                            columns = GridCells.Adaptive(156.dp),
+                                            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 152.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                                            modifier = Modifier.fillMaxSize()
+                                        ) {
+                                            items(genres, key = { it.name }) { genre ->
+                                                EditorialGenreCard(
+                                                    genre = genre,
+                                                    colors = colors,
+                                                    onClick = {
+                                                        val genreSongs = allLibrarySongs.filter { it.genre == genre.name }
+                                                        activeDetailCollection = LibraryDetailCollection(
+                                                            title = genre.name,
+                                                            subtitle = "Genre",
+                                                            songs = genreSongs
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                OfflineLibraryCategory.FOLDERS -> {
+                                    AnimatedContent(
+                                        targetState = activeFolderDrillDown,
+                                        transitionSpec = {
+                                            SonoraTransitions.tabTransition(
+                                                forward = targetState != null,
+                                                motion = motionState
+                                            )
+                                        },
+                                        label = "library_folder_drilldown",
+                                        modifier = Modifier.fillMaxSize()
+                                    ) { activeFolder ->
+                                        if (activeFolder != null) {
+                                            Column(modifier = Modifier.fillMaxSize()) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(18.dp),
+                                                    color = colors.surfaceTinted,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                                                        .border(0.75.dp, colors.cardBorder, RoundedCornerShape(18.dp))
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        IconButton(
+                                                            onClick = { activeFolderDrillDown = null },
+                                                            modifier = Modifier.size(48.dp)
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                                                contentDescription = "All Folders",
+                                                                tint = colors.textPrimary
+                                                            )
+                                                        }
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(
+                                                                text = activeFolder.name,
+                                                                fontFamily = OutfitFontFamily,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 15.sp,
+                                                                color = colors.textPrimary,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                            Text(
+                                                                text = activeFolder.path,
+                                                                fontFamily = PlusJakartaFontFamily,
+                                                                fontSize = 11.sp,
+                                                                color = colors.textSecondary,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
+                                                }
+
+                                                SongsCollectionContent(
+                                                    songs = drillDownSongs,
+                                                    emptyText = "No visible audio files in this folder",
+                                                    isGridView = isGridView,
+                                                    isMultiSelectMode = isMultiSelectMode,
+                                                    selectedIds = selectedSongIds,
+                                                    currentSongId = currentSong?.id,
+                                                    isPlaying = playbackInfo.isPlaying,
+                                                    colors = colors,
+                                                    onPlayAll = { if (drillDownSongs.isNotEmpty()) viewModel.playCollection(drillDownSongs, shuffle = false) },
+                                                    onShuffleAll = { if (drillDownSongs.isNotEmpty()) viewModel.playCollection(drillDownSongs, shuffle = true) },
+                                                    onSongClick = { song ->
+                                                        if (isMultiSelectMode) {
+                                                            selectedSongIds = if (song.id in selectedSongIds) selectedSongIds - song.id else selectedSongIds + song.id
+                                                        } else {
+                                                            viewModel.playSong(song, drillDownSongs)
+                                                        }
+                                                    },
+                                                    onSongLongClick = { song ->
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        isMultiSelectMode = true
+                                                        selectedSongIds = selectedSongIds + song.id
+                                                    },
+                                                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                                    onOpenMore = { contextMenuSong = it }
+                                                )
+                                            }
+                                        } else {
+                                            LazyColumn(
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 152.dp),
+                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                item {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(20.dp),
+                                                        color = colors.accentPill.copy(alpha = 0.45f),
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .border(1.dp, colors.accentStrong.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+                                                            .clip(RoundedCornerShape(20.dp))
+                                                            .clickable { openFolderManager() }
+                                                            .testTag("library_manage_folders_button")
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(14.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(42.dp)
+                                                                    .background(colors.accentStrong, CircleShape),
+                                                                contentAlignment = Alignment.Center
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = Icons.Rounded.FolderSpecial,
+                                                                    contentDescription = null,
+                                                                    tint = colors.onAccentStrong,
+                                                                    modifier = Modifier.size(20.dp)
+                                                                )
+                                                            }
+                                                            Spacer(modifier = Modifier.width(12.dp))
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = "Manage Blacklist & Whitelist",
+                                                                    fontFamily = OutfitFontFamily,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 15.sp,
+                                                                    color = colors.textPrimary
+                                                                )
+                                                                Text(
+                                                                    text = "Control which storage folders appear in SONORA",
+                                                                    fontFamily = PlusJakartaFontFamily,
+                                                                    fontSize = 12.sp,
+                                                                    color = colors.textSecondary
+                                                                )
+                                                            }
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.ChevronRight,
+                                                                contentDescription = "Open Folder Manager",
+                                                                tint = colors.textPrimary
+                                                            )
+                                                        }
+                                                    }
+                                                }
+
+                                                items(displayedFolders, key = { it.path }) { folder ->
+                                                    EditorialFolderRow(
+                                                        folder = folder,
+                                                        colors = colors,
+                                                        onClick = { activeFolderDrillDown = folder }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     }
                 }
             }
         }
 
-        // Multi-Select Contextual Bottom Action Bar
+        // Offline Library Multi-Select Contextual Bottom Action Bar
         AnimatedVisibility(
-            visible = isMultiSelectMode && selectedSongIds.isNotEmpty(),
+            visible = librarySectionMode == LibrarySectionMode.OFFLINE && isMultiSelectMode && selectedSongIds.isNotEmpty(),
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
             modifier = Modifier
@@ -971,11 +1450,12 @@ fun LibraryScreen(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 144.dp)
         ) {
-            val selectedSongsList = remember(selectedSongIds, allLibrarySongs, onlineSavedTracks, recentlyPlayedOnlineTracks) {
-                (allLibrarySongs + onlineSavedTracks + recentlyPlayedOnlineTracks)
+            val selectedSongsList = remember(selectedSongIds, allLibrarySongs, downloadedSongs) {
+                (allLibrarySongs + downloadedSongs)
                     .distinctBy { it.id }
                     .filter { it.id in selectedSongIds }
             }
+            val removableCount = selectedSongsList.count { it.sourceType == "DOWNLOADED" || (!it.isOnline && !it.isDemoTrack) }
             Surface(
                 shape = RoundedCornerShape(26.dp),
                 color = colors.surface,
@@ -1018,12 +1498,21 @@ fun LibraryScreen(
                         colors = colors,
                         onClick = { showBatchPlaylistPicker = true }
                     )
+                    if (removableCount > 0) {
+                        MultiSelectBarAction(
+                            icon = Icons.Rounded.DeleteOutline,
+                            label = "Delete",
+                            colors = colors,
+                            modifier = Modifier.testTag("multiselect_delete_downloads_button"),
+                            onClick = { showBatchDeleteConfirmDialog = true }
+                        )
+                    }
                 }
             }
         }
     }
 
-    // Sort & Filter ModalBottomSheet
+    // --- Offline Library Sort Bottom Sheet ---
     if (showSortSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
@@ -1041,7 +1530,7 @@ fun LibraryScreen(
                     .padding(bottom = 24.dp)
             ) {
                 Text(
-                    text = "Sort Library",
+                    text = "Sort Offline Library",
                     fontFamily = OutfitFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 20.sp,
@@ -1087,7 +1576,7 @@ fun LibraryScreen(
         }
     }
 
-    // Album / Artist / Genre Detail Sheet
+    // --- Offline Album / Artist / Genre / Playlist Detail Sheet ---
     activeDetailCollection?.let { detail ->
         CollectionDetailSheet(
             title = detail.title,
@@ -1114,17 +1603,34 @@ fun LibraryScreen(
         )
     }
 
-    // Song Long-Press / More Menu Sheet
+    // --- Offline Song Long-Press / More Menu Sheet ---
     contextMenuSong?.let { target ->
         MusicContextMenuSheet(
             song = target,
             colors = colors,
+            isDownloaded = viewModel.isSongDownloaded(target),
+            isSavedOnline = target.id in onlineSavedTrackIds,
+            onToggleSaveOnline = if (target.isOnline) {
+                { viewModel.toggleSaveOnlineTrack(target) }
+            } else null,
+            onAddToOnlinePlaylist = if (target.isOnline) {
+                { songForOnlinePlaylistPicker = target }
+            } else null,
+            onDownload = if (target.isOnline) {
+                { viewModel.requestDownloadSong(target) }
+            } else null,
+            onDeleteDownload = if (target.sourceType == "DOWNLOADED") {
+                { singleDownloadedToDelete = target }
+            } else null,
+            onDeleteLocalTrack = if (!target.isOnline && target.sourceType != "DOWNLOADED" && !target.isDemoTrack) {
+                { singleLocalTrackToDelete = target }
+            } else null,
             onDismiss = { contextMenuSong = null },
             onPlayNow = {
-                val pool = if (target.isOnline) {
-                    (onlineSavedTracks + recentlyPlayedOnlineTracks).distinctBy { it.id }.ifEmpty { listOf(target) }
-                } else {
-                    allLibrarySongs
+                val pool = when {
+                    target.isOnline -> (onlineSavedTracks + recentlyPlayedOnlineTracks).distinctBy { it.id }.ifEmpty { listOf(target) }
+                    target.sourceType == "DOWNLOADED" -> downloadedSongs.ifEmpty { listOf(target) }
+                    else -> allLibrarySongs
                 }
                 viewModel.playSong(target, pool)
             },
@@ -1133,7 +1639,7 @@ fun LibraryScreen(
             onAddToPlaylist = { singleSongForPlaylist = target },
             onToggleFavorite = { viewModel.toggleFavorite(target) },
             onViewAlbum = {
-                val albumSongs = allLibrarySongs.filter { it.album == target.album }
+                val albumSongs = (allLibrarySongs + downloadedSongs).filter { it.album == target.album }
                 activeDetailCollection = LibraryDetailCollection(
                     title = target.album,
                     subtitle = target.artist,
@@ -1141,7 +1647,7 @@ fun LibraryScreen(
                 )
             },
             onViewArtist = {
-                val artistSongs = allLibrarySongs.filter { it.artist == target.artist }
+                val artistSongs = (allLibrarySongs + downloadedSongs).filter { it.artist == target.artist }
                 activeDetailCollection = LibraryDetailCollection(
                     title = target.artist,
                     subtitle = "Artist",
@@ -1151,7 +1657,7 @@ fun LibraryScreen(
         )
     }
 
-    // Single song playlist picker
+    // --- Single song local playlist picker ---
     singleSongForPlaylist?.let { s ->
         EditorialPlaylistPickerDialog(
             song = s,
@@ -1168,7 +1674,7 @@ fun LibraryScreen(
         )
     }
 
-    // Batch multi-select playlist picker
+    // --- Batch multi-select local playlist picker ---
     if (showBatchPlaylistPicker) {
         BatchAddToPlaylistDialog(
             selectedCount = selectedSongIds.size,
@@ -1187,7 +1693,7 @@ fun LibraryScreen(
         )
     }
 
-    // Metadata Editor
+    // --- Metadata Editor ---
     songToEdit?.let { s ->
         EditMetadataEditorialDialog(
             song = s,
@@ -1197,6 +1703,440 @@ fun LibraryScreen(
                 viewModel.updateSongMetadata(s.id, newTitle, newArtist, newAlbum, newGenre, lyrics)
                 songToEdit = null
             }
+        )
+    }
+
+    // --- Delete Single Downloaded Track Confirmation ---
+    singleDownloadedToDelete?.let { song ->
+        AlertDialog(
+            onDismissRequest = { singleDownloadedToDelete = null },
+            containerColor = colors.surface,
+            title = {
+                Text(
+                    text = "Delete Downloaded Track?",
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Remove \"${song.title}\" from your downloads folder and Offline Library? Original local device files outside SONORA downloads are never touched.",
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteDownloadedTracks(listOf(song.id))
+                        singleDownloadedToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_single_download")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { singleDownloadedToDelete = null }) {
+                    Text("Cancel", color = colors.textSecondary)
+                }
+            },
+            modifier = Modifier.testTag("confirm_delete_download_dialog")
+        )
+    }
+
+    // --- Delete Single Local Device Track Confirmation ---
+    singleLocalTrackToDelete?.let { song ->
+        AlertDialog(
+            onDismissRequest = { singleLocalTrackToDelete = null },
+            containerColor = colors.surface,
+            title = {
+                Text(
+                    text = "Delete Track From Device?",
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Remove \"${song.title}\" from device storage? Android may ask you to confirm this action.",
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        requestSafeDeleteLocalSongs(listOf(song))
+                        singleLocalTrackToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_single_local_track")
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { singleLocalTrackToDelete = null }) {
+                    Text("Cancel", color = colors.textSecondary)
+                }
+            }
+        )
+    }
+
+    // --- Batch Delete Selected Offline Tracks Confirmation ---
+    if (showBatchDeleteConfirmDialog) {
+        val selectedSongsToDelete = remember(selectedSongIds, allLibrarySongs, downloadedSongs) {
+            (allLibrarySongs + downloadedSongs)
+                .distinctBy { it.id }
+                .filter { it.id in selectedSongIds }
+                .filter { it.sourceType == "DOWNLOADED" || (!it.isOnline && !it.isDemoTrack) }
+        }
+        AlertDialog(
+            onDismissRequest = { showBatchDeleteConfirmDialog = false },
+            containerColor = colors.surface,
+            title = {
+                Text(
+                    text = "Delete ${selectedSongsToDelete.size} Selected Tracks?",
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "This removes the selected offline tracks from storage and your Offline Library.",
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        requestSafeDeleteLocalSongs(selectedSongsToDelete)
+                        showBatchDeleteConfirmDialog = false
+                        isMultiSelectMode = false
+                        selectedSongIds = emptySet()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_batch_delete_downloads")
+                ) {
+                    Text("Delete All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDeleteConfirmDialog = false }) {
+                    Text("Cancel", color = colors.textSecondary)
+                }
+            },
+            modifier = Modifier.testTag("confirm_batch_delete_downloads_dialog")
+        )
+    }
+
+    // --- Online Library Dialogs & Sheets ---
+    if (showOnlineSortSheet) {
+        OnlineLibrarySortSheet(
+            selectedSort = onlineLibrarySortOption,
+            colors = colors,
+            onSelect = { viewModel.setOnlineLibrarySortOption(it) },
+            onDismiss = { showOnlineSortSheet = false }
+        )
+    }
+
+    if (showCreateOnlinePlaylistDialog) {
+        CreateOnlinePlaylistDialog(
+            colors = colors,
+            onDismiss = { showCreateOnlinePlaylistDialog = false },
+            onCreate = { name -> viewModel.createOnlinePlaylist(name) }
+        )
+    }
+
+    val activeOnlinePlaylist = remember(activeOnlinePlaylistId, onlinePlaylists) {
+        activeOnlinePlaylistId?.let { id -> onlinePlaylists.firstOrNull { it.id == id } }
+    }
+    activeOnlinePlaylist?.let { playlist ->
+        OnlinePlaylistDetailSheet(
+            playlist = playlist,
+            currentSongId = currentSong?.id,
+            isPlaying = playbackInfo.isPlaying,
+            colors = colors,
+            onDismiss = { activeOnlinePlaylistId = null },
+            onPlayAll = { shuffle ->
+                if (playlist.tracks.isNotEmpty()) {
+                    viewModel.playCollection(playlist.tracks, shuffle = shuffle)
+                }
+            },
+            onPlaySong = { song ->
+                viewModel.playSong(song, playlist.tracks)
+            },
+            onRemoveSong = { song ->
+                viewModel.removeTrackFromOnlinePlaylist(playlist.id, song.id)
+            },
+            onSongMore = { song ->
+                onlineTrackForOptions = OnlineTrackMapper.toOnlineTrack(song)
+            },
+            onRename = { playlistToRename = playlist },
+            onDeletePlaylist = {
+                playlistToDelete = playlist
+                activeOnlinePlaylistId = null
+            }
+        )
+    }
+
+    playlistToRename?.let { playlist ->
+        RenameOnlinePlaylistDialog(
+            currentName = playlist.name,
+            colors = colors,
+            onDismiss = { playlistToRename = null },
+            onRename = { newName ->
+                viewModel.renameOnlinePlaylist(playlist.id, newName)
+            }
+        )
+    }
+
+    playlistToDelete?.let { playlist ->
+        AlertDialog(
+            onDismissRequest = { playlistToDelete = null },
+            containerColor = colors.surface,
+            title = {
+                Text(
+                    text = "Delete Online Playlist?",
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Remove \"${playlist.name}\" from your Online Library? Your saved songs remain untouched.",
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.textSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteOnlinePlaylist(playlist.id, playlist.name)
+                        playlistToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { playlistToDelete = null }) {
+                    Text("Cancel", color = colors.textSecondary)
+                }
+            }
+        )
+    }
+
+    songForOnlinePlaylistPicker?.let { song ->
+        OnlinePlaylistPickerDialog(
+            song = song,
+            playlists = onlinePlaylists,
+            colors = colors,
+            onDismiss = { songForOnlinePlaylistPicker = null },
+            onSelectPlaylist = { targetPlaylist ->
+                viewModel.addTrackToOnlinePlaylist(targetPlaylist.id, song, targetPlaylist.name)
+            },
+            onCreatePlaylistWithSong = { name ->
+                viewModel.createOnlinePlaylist(name, initialTrack = song)
+            }
+        )
+    }
+
+    videoForOptions?.let { video ->
+        VideoOptionsBottomSheet(
+            video = video,
+            isWatchLater = video.videoId in watchLaterVideoIds,
+            isSaved = video.videoId in savedVideoIds,
+            colors = colors,
+            onPlayNow = { viewModel.videoController.playVideo(video, expandPlayer = true) },
+            onPlayNext = { viewModel.videoController.enqueueVideoNext(video) },
+            onToggleWatchLater = { viewModel.videoController.toggleWatchLater(video) },
+            onToggleSave = { viewModel.videoController.toggleSaveVideo(video) },
+            onAddToPlaylist = { videoForPlaylistPicker = video },
+            onOpenChannel = video.channelUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                { viewModel.videoController.openChannelProfile(url, video.channelName) }
+            },
+            onShare = { shareVideoLink(context, video) },
+            onOpenOfficialApp = { openOfficialExternalUrl(context, video.contentUrl) },
+            onDismiss = { videoForOptions = null }
+        )
+    }
+
+    videoForPlaylistPicker?.let { video ->
+        VideoPlaylistPickerDialog(
+            video = video,
+            playlists = videoPlaylists,
+            colors = colors,
+            onSelectPlaylist = { playlist ->
+                viewModel.videoController.addVideoToPlaylist(playlist.id, playlist.name, video)
+            },
+            onCreatePlaylistWithVideo = { name ->
+                viewModel.videoController.createVideoPlaylist(name, video)
+            },
+            onDismiss = { videoForPlaylistPicker = null }
+        )
+    }
+
+    onlineTrackForOptions?.let { track ->
+        val stableId = OnlineTrackMapper.computeStableId(track.providerKey, track.contentUrl)
+        val matchingSong = remember(track, onlineSavedTracks, onlineFavoriteTracks, recentlyPlayedOnlineTracks) {
+            (onlineSavedTracks + onlineFavoriteTracks + recentlyPlayedOnlineTracks)
+                .firstOrNull { it.id == stableId }
+                ?: OnlineTrackMapper.toUnifiedSong(track)
+        }
+        val artistUrl = if (track.kind == OnlineItemKind.ARTIST) track.contentUrl else track.artistUrl.orEmpty()
+        val isArtistFollowed = remember(track, followedOnlineArtistIds) {
+            artistUrl.isNotBlank() &&
+                OnlineTrackMapper.computeStableId(track.providerKey.ifBlank { "online" }, artistUrl.trim()) in followedOnlineArtistIds
+        }
+        val isCollectionSaved = remember(track, savedOnlineAlbumIds, savedOnlinePlaylistUrls) {
+            when (track.kind) {
+                OnlineItemKind.ALBUM -> stableId in savedOnlineAlbumIds
+                OnlineItemKind.PLAYLIST -> track.contentUrl.trim() in savedOnlinePlaylistUrls
+                else -> false
+            }
+        }
+        OnlineTrackOptionsSheet(
+            track = track,
+            isSaved = stableId in onlineSavedTrackIds,
+            isFavorite = matchingSong.isFavorite,
+            isDownloaded = viewModel.isTrackDownloaded(track),
+            isArtistFollowed = isArtistFollowed,
+            isCollectionSaved = isCollectionSaved,
+            resolvedStream = null,
+            colors = colors,
+            onPlayNow = {
+                if (track.kind == OnlineItemKind.TRACK) {
+                    viewModel.playOnlineTrack(track)
+                } else {
+                    viewModel.openOnlineCollection(track)
+                }
+            },
+            onPlayNext = { viewModel.enqueueOnlineTrackNext(track) },
+            onAddToQueue = { viewModel.addOnlineTrackToQueue(track) },
+            onToggleSave = { viewModel.toggleSaveOnlineTrack(track) },
+            onToggleFavorite = { viewModel.toggleFavorite(matchingSong) },
+            onAddToPlaylist = { singleSongForPlaylist = matchingSong },
+            onAddToOnlinePlaylist = if (track.kind == OnlineItemKind.TRACK) {
+                { songForOnlinePlaylistPicker = matchingSong }
+            } else null,
+            onToggleFollowArtist = if (artistUrl.isNotBlank()) {
+                { viewModel.toggleFollowOnlineArtist(track) }
+            } else null,
+            onToggleSaveCollection = when (track.kind) {
+                OnlineItemKind.ALBUM -> ({ viewModel.toggleSaveOnlineAlbum(track) })
+                OnlineItemKind.PLAYLIST -> ({ viewModel.toggleSaveExternalOnlinePlaylist(track) })
+                else -> null
+            },
+            onDownload = if (track.kind == OnlineItemKind.TRACK) {
+                { viewModel.requestDownloadTrack(track) }
+            } else null,
+            onOpenQualitySettings = { /* handled via player / settings */ },
+            onViewArtistChannel = if (!track.artistUrl.isNullOrBlank()) {
+                {
+                    viewModel.openOnlineCollection(
+                        OnlineTrack(
+                            stableId = OnlineTrackMapper.computeStableId(track.providerKey, track.artistUrl),
+                            providerKey = track.providerKey,
+                            providerName = track.providerName,
+                            serviceId = track.serviceId,
+                            contentUrl = track.artistUrl,
+                            title = track.artist,
+                            artist = track.artist,
+                            artworkUrl = track.artworkUrl,
+                            kind = OnlineItemKind.ARTIST,
+                            artistUrl = track.artistUrl
+                        )
+                    )
+                }
+            } else null,
+            onDismiss = { onlineTrackForOptions = null }
+        )
+    }
+
+    // --- Online Album / Artist / Playlist Collection Sheet ---
+    OnlineCollectionDetailsSheet(
+        state = onlineCollectionState,
+        currentSongId = currentSong?.id,
+        isPlaying = playbackInfo.isPlaying,
+        isBuffering = playbackInfo.isBuffering,
+        savedIds = onlineSavedTrackIds,
+        colors = colors,
+        isTrackDownloaded = { viewModel.isTrackDownloaded(it) },
+        onDownloadTrack = { viewModel.requestDownloadTrack(it) },
+        isCollectionSavedOrFollowed = { source ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in followedOnlineArtistIds
+                OnlineItemKind.ALBUM -> OnlineTrackMapper.computeStableId(source.providerKey.ifBlank { "online" }, source.contentUrl.trim()) in savedOnlineAlbumIds
+                OnlineItemKind.PLAYLIST -> source.contentUrl.trim() in savedOnlinePlaylistUrls
+                else -> false
+            }
+        },
+        onToggleSaveOrFollowCollection = { source, details ->
+            when (source.kind) {
+                OnlineItemKind.ARTIST -> viewModel.toggleFollowOnlineArtist(source, details)
+                OnlineItemKind.ALBUM -> viewModel.toggleSaveOnlineAlbum(source, details)
+                OnlineItemKind.PLAYLIST -> viewModel.toggleSaveExternalOnlinePlaylist(source, details)
+                else -> Unit
+            }
+        },
+        onPlayTrack = { track, allTracks ->
+            viewModel.playOnlineTrack(track, allTracks)
+        },
+        onPlayAll = { tracks, shuffle ->
+            val songs = tracks.map { OnlineTrackMapper.toUnifiedSong(it) }
+            viewModel.playCollection(songs, shuffle = shuffle)
+        },
+        onRetry = { item -> viewModel.openOnlineCollection(item) },
+        onTrackMoreClick = { track -> onlineTrackForOptions = track },
+        onDismiss = { viewModel.dismissOnlineCollection() }
+    )
+
+    AnimatedVisibility(
+        visible = showInternalFolderManagement,
+        enter = SonoraTransitions.pushEnter(motionState),
+        exit = SonoraTransitions.pushExit(motionState)
+    ) {
+        BackHandler { showInternalFolderManagement = false }
+        LibraryFolderManagementScreen(
+            viewModel = viewModel,
+            onBack = { showInternalFolderManagement = false }
+        )
+    }
+
+    AnimatedVisibility(
+        visible = showInternalDownloadManager,
+        enter = SonoraTransitions.pushEnter(motionState),
+        exit = SonoraTransitions.pushExit(motionState)
+    ) {
+        BackHandler { showInternalDownloadManager = false }
+        DownloadManagerScreen(
+            viewModel = viewModel,
+            onBack = { showInternalDownloadManager = false }
         )
     }
 }
@@ -1237,11 +2177,12 @@ private fun MultiSelectBarAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     colors: EditorialColors,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
+        modifier = modifier
             .clip(RoundedCornerShape(14.dp))
             .clickable { onClick() }
             .padding(horizontal = 14.dp, vertical = 6.dp)

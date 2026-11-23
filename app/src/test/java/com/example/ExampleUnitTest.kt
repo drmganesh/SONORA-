@@ -41,16 +41,18 @@ class ExampleUnitTest {
   @Test
   fun testPlayerStyleSystemDefinitions() {
     val styles = com.example.model.PlayerStyle.entries
-    assertEquals(19, styles.size)
+    assertEquals(40, styles.size)
+    assertEquals(30, styles.count { it.isFeaturedInExpandedCollection })
 
-    val expectedIds = listOf(
+    val requiredLegacyIds = listOf(
       "classic", "minimal", "material_you", "glass",
       "editorial", "canvas", "bento", "poster", "polaroid", "vinyl",
       "dial", "morph", "sticker", "waveform", "spectrum", "orbit", "hero", "neon",
       "gesture"
     )
     val actualIds = styles.map { it.id }
-    assertEquals(expectedIds, actualIds)
+    assertTrue(actualIds.containsAll(requiredLegacyIds))
+    assertEquals(styles.size, actualIds.toSet().size)
 
     // Verify lookup by id
     assertEquals(com.example.model.PlayerStyle.BENTO, com.example.model.PlayerStyle.fromId("bento"))
@@ -59,11 +61,13 @@ class ExampleUnitTest {
     assertEquals(com.example.model.PlayerStyle.MATERIAL_YOU, com.example.model.PlayerStyle.fromId("material_you"))
     assertEquals(com.example.model.PlayerStyle.POLAROID, com.example.model.PlayerStyle.fromId("polaroid"))
     assertEquals(com.example.model.PlayerStyle.ORBIT, com.example.model.PlayerStyle.fromId("orbit"))
+    assertEquals(com.example.model.PlayerStyle.CASSETTE, com.example.model.PlayerStyle.fromId("cassette"))
+    assertEquals(com.example.model.PlayerStyle.LYRICS_FOCUS, com.example.model.PlayerStyle.fromId("lyrics_focus"))
     assertEquals(com.example.model.PlayerStyle.CLASSIC, com.example.model.PlayerStyle.fromId("non_existent"))
     assertEquals(com.example.model.PlayerStyle.CLASSIC, com.example.model.PlayerStyle.fromId(null))
 
-    // Verify category filters cover all 19 styles cleanly
-    assertEquals(19, styles.count { it.matchesCategory(com.example.model.PlayerStyleCategory.ALL) })
+    // Verify category filters cover all styles cleanly
+    assertEquals(styles.size, styles.count { it.matchesCategory(com.example.model.PlayerStyleCategory.ALL) })
     assertTrue(com.example.model.PlayerStyle.MINIMAL.matchesCategory(com.example.model.PlayerStyleCategory.MINIMAL))
     assertTrue(com.example.model.PlayerStyle.VINYL.matchesCategory(com.example.model.PlayerStyleCategory.ARTISTIC))
     assertTrue(com.example.model.PlayerStyle.GLASS.matchesCategory(com.example.model.PlayerStyleCategory.IMMERSIVE))
@@ -96,7 +100,7 @@ class ExampleUnitTest {
 
   @Test
   fun testPlayerCustomizationAndGestureDefaults() {
-    assertEquals(4, com.example.model.MiniPlayerStyle.entries.size)
+    assertEquals(20, com.example.model.MiniPlayerStyle.entries.size)
     assertEquals(3, com.example.model.LockScreenStyle.entries.size)
     assertEquals(
       com.example.model.MiniPlayerStyle.WAVE_MINI,

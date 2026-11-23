@@ -7,6 +7,7 @@ import domain.online.AudioQualityPreference
 import domain.online.DiscoverSectionState
 import domain.online.DiscoverSectionType
 import domain.online.OnlineCollectionDetails
+import domain.online.OnlineErrorKind
 import domain.online.OnlineMusicProvider
 import domain.online.OnlineResult
 import domain.online.OnlineSearchFilter
@@ -71,15 +72,53 @@ class OnlineMusicRepository(
         return searchDataSource.loadMore(nextPageToken)
     }
 
-    suspend fun getSearchSuggestions(query: String, provider: OnlineMusicProvider): List<String> {
-        return searchDataSource.getSuggestions(query, provider)
+    suspend fun getSearchSuggestions(
+        query: String,
+        provider: OnlineMusicProvider,
+        countryCode: String = NewPipeInitializer.currentCountryCode()
+    ): List<String> {
+        val raw = searchDataSource.getSuggestions(query, provider)
+        return domain.online.RegionMusicEligibilityFilter.filterSuggestionsForRegion(
+            suggestions = raw,
+            userTypedQuery = query,
+            countryCode = countryCode
+        )
+    }
+
+    /**
+     * Executes a recommendation/discovery/radio search scoped to [countryCode] and filters
+     * returned tracks through [domain.online.RegionMusicEligibilityFilter] at the repository layer.
+     */
+    suspend fun searchRegionRecommendations(
+        query: String,
+        provider: OnlineMusicProvider,
+        filter: OnlineSearchFilter = OnlineSearchFilter.SONGS,
+        countryCode: String = NewPipeInitializer.currentCountryCode(),
+        discoverLanguage: domain.online.DiscoverMusicLanguage = domain.online.DiscoverMusicLanguage.ALL
+    ): OnlineResult<List<OnlineTrack>> {
+        val scopedQuery = domain.online.RegionMusicEligibilityFilter.scopeRecommendationQuery(
+            baseQuery = query,
+            countryCode = countryCode,
+            discoverLanguage = discoverLanguage
+        )
+        return when (val res = searchDataSource.search(scopedQuery, provider, filter)) {
+            is OnlineResult.Success -> {
+                val eligible = domain.online.RegionMusicEligibilityFilter.filterTracksForRegion(
+                    tracks = res.value.items,
+                    countryCode = countryCode
+                )
+                OnlineResult.Success(eligible)
+            }
+            is OnlineResult.Error -> res
+        }
     }
 
     suspend fun fetchDiscoveryFeed(
         provider: OnlineMusicProvider,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        countryCode: String = NewPipeInitializer.currentCountryCode()
     ): OnlineResult<List<OnlineTrack>> {
-        return streamResolver.fetchDiscoveryFeed(provider, forceRefresh)
+        return streamResolver.fetchDiscoveryFeed(provider, forceRefresh, countryCode)
     }
 
     suspend fun fetchDiscoverSection(
@@ -108,13 +147,15 @@ class OnlineMusicRepository(
     suspend fun loadMoreDiscoverSection(
         sectionType: DiscoverSectionType,
         provider: OnlineMusicProvider,
-        previousToken: String
+        previousToken: String,
+        countryCode: String = NewPipeInitializer.currentCountryCode()
     ): OnlineResult<Pair<List<OnlineTrack>, String?>> {
         return streamResolver.loadMoreDiscoverSection(
             sectionType = sectionType,
             provider = provider,
             previousToken = previousToken,
-            searchDataSource = searchDataSource
+            searchDataSource = searchDataSource,
+            countryCode = countryCode
         )
     }
 
@@ -130,7 +171,8 @@ class OnlineMusicRepository(
         song: Song,
         qualityPreference: AudioQualityPreference,
         manualStreamId: String? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        excludedStreamIds: Set<String> = emptySet()
     ): OnlineResult<ResolvedOnlineStreamResult> {
         return streamResolver.resolveStream(
             serviceId = song.serviceId,
@@ -140,10 +182,38 @@ class OnlineMusicRepository(
             qualityPreference = qualityPreference,
             manualStreamId = manualStreamId,
             forceRefresh = forceRefresh,
+            excludedStreamIds = excludedStreamIds,
             trackTitleHint = song.title,
             trackArtistHint = song.artist,
             expectedDurationMs = song.durationMs
         )
+    }
+
+    suspend fun preloadNextTrackStream(
+        song: Song,
+        qualityPreference: AudioQualityPreference
+    ): OnlineResult<ResolvedOnlineStreamResult> {
+        if (!song.isOnline) {
+            return OnlineResult.Error(
+                kind = OnlineErrorKind.UNSUPPORTED,
+                message = "Only online tracks require stream preloading.",
+                isRetryable = false
+            )
+        }
+        return streamResolver.preloadStream(
+            serviceId = song.serviceId,
+            providerKey = song.providerKey.ifBlank { OnlineMusicProvider.KEY_YOUTUBE_MUSIC },
+            providerName = song.providerName.ifBlank { "Online" },
+            contentUrl = song.contentUrl.ifBlank { song.uri.toString() },
+            qualityPreference = qualityPreference,
+            trackTitleHint = song.title,
+            trackArtistHint = song.artist,
+            expectedDurationMs = song.durationMs
+        )
+    }
+
+    fun hasValidCachedStream(contentUrl: String): Boolean {
+        return streamResolver.hasValidCachedStream(contentUrl)
     }
 
     fun invalidateStreamCache(contentUrl: String) {

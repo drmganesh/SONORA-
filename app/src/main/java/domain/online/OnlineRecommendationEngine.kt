@@ -70,28 +70,42 @@ object OnlineRecommendationEngine {
             OnlineRegionCatalog.DEFAULT_LANGUAGE_CODE
         }
 
+        val isIndiaStrict = RegionMusicEligibilityFilter.isIndiaRegion(cleanCountry)
+        val eligibleRecentOnline = RegionMusicEligibilityFilter.filterSongsForRegion(recentlyPlayedOnline, cleanCountry)
+        val eligibleRecentLocal = RegionMusicEligibilityFilter.filterSongsForRegion(recentlyPlayedLocal, cleanCountry)
+        val eligibleOnlineTracks = RegionMusicEligibilityFilter.filterSongsForRegion(onlineTracks, cleanCountry)
+        val eligibleAllSongs = RegionMusicEligibilityFilter.filterSongsForRegion(allSongs, cleanCountry)
+        val eligibleFavArtists = if (isIndiaStrict) {
+            favouriteArtists.filter { RegionMusicEligibilityFilter.isVerifiedIndianMusic(title = it.name, artist = it.name) }
+        } else {
+            favouriteArtists
+        }
+
         // Collect real artist candidates scored by recency, favorites, and play count
         val artistScores = LinkedHashMap<String, Int>()
         fun addArtistCandidate(rawArtist: String?, weight: Int) {
             val clean = rawArtist?.trim().orEmpty()
             if (clean.length < 2) return
             if (clean.lowercase(Locale.US) in PLACEHOLDER_ARTISTS) return
+            if (isIndiaStrict && !RegionMusicEligibilityFilter.isVerifiedIndianMusic(title = clean, artist = clean)) {
+                return
+            }
             artistScores[clean] = (artistScores[clean] ?: 0) + weight
         }
 
-        recentlyPlayedOnline.take(8).forEachIndexed { idx, s ->
+        eligibleRecentOnline.take(8).forEachIndexed { idx, s ->
             addArtistCandidate(s.artist, weight = (12 - idx) + if (s.isFavorite) 6 else 0)
         }
-        recentlyPlayedLocal.take(8).forEachIndexed { idx, s ->
+        eligibleRecentLocal.take(8).forEachIndexed { idx, s ->
             addArtistCandidate(s.artist, weight = (10 - idx) + if (s.isFavorite) 6 else 0)
         }
-        favouriteArtists.take(8).forEachIndexed { idx, a ->
+        eligibleFavArtists.take(8).forEachIndexed { idx, a ->
             addArtistCandidate(a.name, weight = 14 - idx)
         }
-        onlineTracks.filter { it.isFavorite || it.playCount > 0 }.take(12).forEach { s ->
+        eligibleOnlineTracks.filter { it.isFavorite || it.playCount > 0 }.take(12).forEach { s ->
             addArtistCandidate(s.artist, weight = (if (s.isFavorite) 10 else 0) + s.playCount.coerceAtMost(10))
         }
-        allSongs.filter { it.isFavorite || it.playCount > 0 }
+        eligibleAllSongs.filter { it.isFavorite || it.playCount > 0 }
             .sortedByDescending { (if (it.isFavorite) 10 else 0) + it.playCount }
             .take(12)
             .forEach { s ->
@@ -102,30 +116,43 @@ object OnlineRecommendationEngine {
             .sortedByDescending { it.value }
             .map { it.key }
 
-        // Genre & Daily Mix signals from user library
-        val topGenre = (allSongs + onlineTracks)
+        // Genre & Daily Mix signals from region-eligible user library
+        val topGenre = (eligibleAllSongs + eligibleOnlineTracks)
             .asSequence()
             .filter { it.genre.isNotBlank() && !it.genre.equals("Unknown", ignoreCase = true) }
             .groupBy { it.genre.trim() }
             .maxByOrNull { (_, group) -> group.sumOf { (if (it.isFavorite) 5 else 1) + it.playCount } }
             ?.key
 
-        val topMixPreference = dailyMixes.firstOrNull { mix ->
-            mix.subtitle.isNotBlank() &&
-                !mix.subtitle.equals("Heavy Rotation", ignoreCase = true) &&
-                !mix.subtitle.equals("Fresh Discovery", ignoreCase = true)
-        }?.subtitle ?: dailyMixes.firstOrNull()?.title
+        val topMixPreference = dailyMixes
+            .filter { mix ->
+                !isIndiaStrict || mix.songs.any { RegionMusicEligibilityFilter.isVerifiedIndianSong(it) }
+            }
+            .firstOrNull { mix ->
+                mix.subtitle.isNotBlank() &&
+                    !mix.subtitle.equals("Heavy Rotation", ignoreCase = true) &&
+                    !mix.subtitle.equals("Fresh Discovery", ignoreCase = true)
+            }?.subtitle ?: dailyMixes.firstOrNull { mix ->
+                !isIndiaStrict || mix.songs.any { RegionMusicEligibilityFilter.isVerifiedIndianSong(it) }
+            }?.title
 
         val recentSearchSeed = onlineSearchHistory
-            .firstOrNull { it.trim().length >= 3 }
-            ?.trim()
+            .map { it.trim() }
+            .firstOrNull { q ->
+                q.length >= 3 && (!isIndiaStrict || RegionMusicEligibilityFilter.isVerifiedIndianMusic(title = q, artist = q))
+            }
 
         val localeHint = resolveLocaleMusicHint(cleanCountry, cleanLangCode, discoverLanguage)
-        val fallbackQuery = if (localeHint.isNotBlank()) {
+        val rawFallbackQuery = if (localeHint.isNotBlank()) {
             "$localeHint music mix playlist"
         } else {
-            "music mix playlist"
+            "music mix playlist $cleanCountry"
         }
+        val fallbackQuery = RegionMusicEligibilityFilter.scopeRecommendationQuery(
+            baseQuery = rawFallbackQuery,
+            countryCode = cleanCountry,
+            discoverLanguage = discoverLanguage
+        )
 
         // Rotate deterministically by calendar day among top personalization signals so recommendations refresh daily
         val dayRotationIndex = abs(dayKey.hashCode())
@@ -181,11 +208,15 @@ object OnlineRecommendationEngine {
         // If user explicitly picked a regional language filter (e.g., Odia, Tamil, Hindi), honor it directly while incorporating top artist if available
         if (discoverLanguage != DiscoverMusicLanguage.ALL) {
             val artistForLang = rankedArtists.firstOrNull()
-            val query = if (artistForLang != null && dayRotationIndex % 2 == 0) {
-                "${discoverLanguage.searchKeyword} $artistForLang hits mix"
-            } else {
-                "${discoverLanguage.searchKeyword} music playlist mix"
-            }
+            val query = RegionMusicEligibilityFilter.scopeRecommendationQuery(
+                baseQuery = if (artistForLang != null && dayRotationIndex % 2 == 0) {
+                    "${discoverLanguage.searchKeyword} $artistForLang hits mix"
+                } else {
+                    "${discoverLanguage.searchKeyword} music playlist mix"
+                },
+                countryCode = cleanCountry,
+                discoverLanguage = discoverLanguage
+            )
             val reason = if (artistForLang != null) {
                 "${discoverLanguage.label} picks • $artistForLang & Mixes"
             } else {
@@ -207,7 +238,11 @@ object OnlineRecommendationEngine {
             val (artistSeed, query, reason) = picked
             val regionLabel = if (cleanCountry == "IN") "India" else cleanCountry
             OnlineRecommendationProfile(
-                seedQuery = query,
+                seedQuery = RegionMusicEligibilityFilter.scopeRecommendationQuery(
+                    baseQuery = query,
+                    countryCode = cleanCountry,
+                    discoverLanguage = discoverLanguage
+                ),
                 fallbackQuery = fallbackQuery,
                 subtitle = "$reason • $regionLabel",
                 primaryArtistSeed = artistSeed ?: rankedArtists.firstOrNull(),
@@ -217,11 +252,15 @@ object OnlineRecommendationEngine {
             )
         } else {
             val regionLabel = if (cleanCountry == "IN") "India" else cleanCountry
-            val baseQuery = if (localeHint.isNotBlank()) {
-                "$localeHint top music mix playlist"
-            } else {
-                "top music hits mix playlist"
-            }
+            val baseQuery = RegionMusicEligibilityFilter.scopeRecommendationQuery(
+                baseQuery = if (localeHint.isNotBlank()) {
+                    "$localeHint top music mix playlist"
+                } else {
+                    "top music hits mix playlist $cleanCountry"
+                },
+                countryCode = cleanCountry,
+                discoverLanguage = discoverLanguage
+            )
             OnlineRecommendationProfile(
                 seedQuery = baseQuery,
                 fallbackQuery = fallbackQuery,
