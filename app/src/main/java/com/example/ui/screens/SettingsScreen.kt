@@ -36,7 +36,9 @@ import androidx.compose.material.icons.rounded.BluetoothConnected
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.CloudQueue
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.ExpandLess
@@ -152,7 +154,8 @@ fun SettingsScreen(
     val dynamicGradientEnabled by viewModel.dynamicGradientEnabled.collectAsState()
     val homeAnimationLevel by viewModel.homeAnimationLevel.collectAsState()
     val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
-    val snowfallSettings by viewModel.snowfallSettings.collectAsState()
+    val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsState()
+    val weatherFetchState by viewModel.weatherFetchState.collectAsState()
 
     val gaplessEnabled by viewModel.gaplessEnabled.collectAsState()
     val crossfadeSeconds by viewModel.crossfadeSeconds.collectAsState()
@@ -469,14 +472,44 @@ fun SettingsScreen(
                             onClick = { showHomeAnimationSettings = true }
                         )
 
+                        val ambientSubtitle = when (weatherAmbientSettings.mode) {
+                            domain.weather.WeatherEffectMode.OFF ->
+                                "Off • Weather-synced Odisha atmosphere"
+                            domain.weather.WeatherEffectMode.MANUAL ->
+                                "Manual • ${weatherAmbientSettings.manualPreset.label} (Simulated)"
+                            domain.weather.WeatherEffectMode.AUTOMATIC -> {
+                                val snap = weatherFetchState.latestSnapshot
+                                val town = weatherAmbientSettings.selectedLocation.townName
+                                if (snap != null) {
+                                    "Auto • $town • ${snap.temperatureC.toInt()}°C ${snap.conditionLabel}"
+                                } else {
+                                    "Auto • $town • Open-Meteo weather"
+                                }
+                            }
+                        }
+                        val ambientIcon = when (weatherAmbientSettings.mode) {
+                            domain.weather.WeatherEffectMode.OFF -> Icons.Rounded.CloudQueue
+                            domain.weather.WeatherEffectMode.MANUAL ->
+                                ui.components.atmosphereIconForPrimary(
+                                    domain.weather.WeatherAtmosphereEngine.resolvePlan(
+                                        settings = weatherAmbientSettings,
+                                        snapshot = null,
+                                        surfaceRole = domain.weather.WeatherSurfaceRole.SettingsPreview
+                                    ).primary
+                                )
+                            domain.weather.WeatherEffectMode.AUTOMATIC -> {
+                                val snap = weatherFetchState.latestSnapshot
+                                if (snap != null) {
+                                    ui.components.weatherIconForCode(snap.weatherCode, snap.isDay)
+                                } else {
+                                    Icons.Rounded.WbSunny
+                                }
+                            }
+                        }
                         SettingsLinkRow(
-                            icon = Icons.Rounded.AcUnit,
+                            icon = ambientIcon,
                             title = "Ambient Effects",
-                            subtitle = if (snowfallSettings.enabled) {
-                                "Snowfall On • ${snowfallSettings.intensity.label} • ${snowfallSettings.speed.label}"
-                            } else {
-                                "Snowfall Off • Customize Music Home ambience"
-                            },
+                            subtitle = ambientSubtitle,
                             colors = colors,
                             modifier = Modifier.testTag("settings_ambient_effects_row"),
                             onClick = { showAmbientEffectsSettings = true }

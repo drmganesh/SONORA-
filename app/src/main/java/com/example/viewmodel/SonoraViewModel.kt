@@ -380,6 +380,72 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // --- Weather-Synced Ambient Effects Engine (5 Fixed Odisha Locations, Open-Meteo Public API, Zero GPS) ---
+    val weatherRepository = data.weather.WeatherRepository(ambientEffectsPrefs)
+
+    val weatherAmbientSettings: StateFlow<data.preferences.WeatherAmbientSettings> =
+        ambientEffectsPrefs.weatherAmbientSettingsFlow.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = data.preferences.WeatherAmbientSettings.DEFAULT
+        )
+
+    val weatherFetchState: StateFlow<domain.weather.WeatherFetchState> =
+        weatherRepository.selectedWeatherState
+
+    val locationWeatherSummaries: StateFlow<Map<String, domain.weather.WeatherSnapshot>> =
+        weatherRepository.cachedSnapshotsByLocation
+
+    fun selectWeatherLocation(location: domain.weather.OdishaWeatherLocation) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ambientEffectsPrefs.updateWeatherSettings { it.copy(selectedLocation = location) }
+            weatherRepository.selectAndRefreshLocation(location = location, force = false)
+        }
+    }
+
+    fun updateWeatherAmbientSettings(
+        transform: (data.preferences.WeatherAmbientSettings) -> data.preferences.WeatherAmbientSettings
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val previousSettings = weatherAmbientSettings.value
+            val updated = transform(previousSettings)
+            ambientEffectsPrefs.updateWeatherSettings(transform)
+            if (updated.mode == domain.weather.WeatherEffectMode.AUTOMATIC &&
+                (previousSettings.mode != domain.weather.WeatherEffectMode.AUTOMATIC ||
+                    weatherFetchState.value.latestSnapshot == null)
+            ) {
+                weatherRepository.refreshWeather(updated.selectedLocation, force = false)
+            }
+        }
+    }
+
+    fun resetWeatherAmbientSettings() {
+        viewModelScope.launch(Dispatchers.IO) {
+            ambientEffectsPrefs.resetWeatherSettingsToDefaults()
+            weatherRepository.selectAndRefreshLocation(
+                location = domain.weather.OdishaWeatherLocation.DEFAULT,
+                force = false
+            )
+        }
+    }
+
+    fun refreshSelectedWeather(force: Boolean = true) {
+        viewModelScope.launch(Dispatchers.IO) {
+            weatherRepository.refreshWeather(
+                location = weatherAmbientSettings.value.selectedLocation,
+                force = force
+            )
+        }
+    }
+
+    fun prefetchAllOdishaLocationWeather() {
+        viewModelScope.launch(Dispatchers.IO) {
+            weatherRepository.refreshLocationSummariesIfStale(
+                activeLocation = weatherAmbientSettings.value.selectedLocation
+            )
+        }
+    }
+
     // --- Advanced Cache Management (Media3 SimpleCache + DataStore) ---
     val cacheManager: data.cache.SonoraMediaCacheManager =
         data.cache.SonoraMediaCacheManager.getInstance(application)
@@ -2148,6 +2214,25 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 downloadCoordinator.reconcileInterruptedTasks(autoResume = true)
             }.onFailure { e ->
                 Log.w(TAG, "Download reconciliation skipped: ${e.message}")
+            }
+        }
+        // Hydrate cached Odisha weather immediately, perform initial refresh, and schedule 20-min periodic updates
+        viewModelScope.launch(Dispatchers.IO) {
+            val initialSettings = runCatching {
+                ambientEffectsPrefs.weatherAmbientSettingsFlow.first()
+            }.getOrDefault(data.preferences.WeatherAmbientSettings.DEFAULT)
+
+            weatherRepository.hydrateCacheFromDisk(initialSettings.selectedLocation)
+            if (initialSettings.mode == domain.weather.WeatherEffectMode.AUTOMATIC && isNetworkOnline.value) {
+                weatherRepository.refreshWeather(initialSettings.selectedLocation, force = false)
+            }
+
+            while (true) {
+                delay(data.weather.WeatherRepository.PERIODIC_REFRESH_INTERVAL_MS)
+                val currentSettings = weatherAmbientSettings.value
+                if (currentSettings.mode == domain.weather.WeatherEffectMode.AUTOMATIC && isNetworkOnline.value) {
+                    weatherRepository.refreshWeather(currentSettings.selectedLocation, force = true)
+                }
             }
         }
     }

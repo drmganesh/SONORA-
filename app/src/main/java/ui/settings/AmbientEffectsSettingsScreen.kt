@@ -60,7 +60,8 @@ import kotlin.math.roundToInt
 
 /**
  * Settings → Appearance → Ambient Effects
- * Configures SONORA's atmospheric Music Home snowfall effect with live preview and DataStore persistence.
+ * Configures SONORA's Weather-Synced Ambient Effects Engine (5 fixed Odisha locations,
+ * Open-Meteo public weather, Automatic / Manual / Off modes, and visual/performance controls).
  */
 @Composable
 fun AmbientEffectsSettingsScreen(
@@ -69,13 +70,23 @@ fun AmbientEffectsSettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
-    val settings by viewModel.snowfallSettings.collectAsState()
+    val weatherSettings by viewModel.weatherAmbientSettings.collectAsState()
+    val weatherFetchState by viewModel.weatherFetchState.collectAsState()
+    val locationSummaries by viewModel.locationWeatherSummaries.collectAsState()
 
-    AmbientEffectsSettingsContent(
-        settings = settings,
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.prefetchAllOdishaLocationWeather()
+    }
+
+    WeatherAmbientSettingsContent(
+        settings = weatherSettings,
+        fetchState = weatherFetchState,
+        locationSummaries = locationSummaries,
         colors = colors,
-        onUpdateSettings = { transform -> viewModel.updateSnowfallSettings(transform) },
-        onResetSettings = { viewModel.resetSnowfallSettings() },
+        onSelectLocation = { location -> viewModel.selectWeatherLocation(location) },
+        onUpdateSettings = { transform -> viewModel.updateWeatherAmbientSettings(transform) },
+        onRefreshWeather = { viewModel.refreshSelectedWeather(force = true) },
+        onResetSettings = { viewModel.resetWeatherAmbientSettings() },
         onBack = onBack,
         modifier = modifier
     )

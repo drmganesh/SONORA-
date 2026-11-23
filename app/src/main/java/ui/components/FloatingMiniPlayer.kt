@@ -97,6 +97,8 @@ fun FloatingMiniPlayer(
     frequencies: FloatArray = FloatArray(0),
     queue: List<Song> = emptyList(),
     queueIndex: Int = 0,
+    weatherPlan: domain.weather.WeatherAtmospherePlan = domain.weather.WeatherAtmospherePlan.INACTIVE,
+    weatherSettings: data.preferences.WeatherAmbientSettings = data.preferences.WeatherAmbientSettings.DEFAULT,
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
@@ -189,7 +191,23 @@ fun FloatingMiniPlayer(
         color = surfaceColor,
         tonalElevation = 4.dp
     ) {
-        CompositionLocalProvider(LocalMiniSeekController provides miniSeekController) {
+        val showMiniWeatherBackdrop = weatherSettings.enableMiniPlayerEffects &&
+            weatherPlan.isActive &&
+            domain.weather.WeatherAtmosphereEngine.supportsMiniPlayerAtmosphere(miniPlayerStyle)
+        Box(modifier = Modifier.fillMaxWidth()) {
+            if (showMiniWeatherBackdrop) {
+                ui.components.WeatherAtmosphereOverlay(
+                    plan = weatherPlan,
+                    settings = weatherSettings,
+                    colors = colors,
+                    surfaceRole = domain.weather.WeatherSurfaceRole.MiniPlayer(miniPlayerStyle),
+                    isActive = true,
+                    screenVisible = true,
+                    modifier = Modifier.matchParentSize(),
+                    testTagName = "mini_player_weather_atmosphere_overlay"
+                )
+            }
+            CompositionLocalProvider(LocalMiniSeekController provides miniSeekController) {
         when (miniPlayerStyle) {
             MiniPlayerStyle.COMPACT_BAR -> {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -756,6 +774,7 @@ fun FloatingMiniPlayer(
                 )
             }
         }
+            }
         }
     }
     }

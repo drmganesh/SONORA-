@@ -188,7 +188,8 @@ fun HomeScreen(
     val reduceAnimations by viewModel.reduceAnimations.collectAsState()
     val homeAnimationLevel by viewModel.homeAnimationLevel.collectAsState()
     val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
-    val snowfallSettings by viewModel.snowfallSettings.collectAsState()
+    val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsState()
+    val weatherFetchState by viewModel.weatherFetchState.collectAsState()
     val appearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
     val colorIntensity by viewModel.dynamicColorIntensity.collectAsState()
     val playerStyle by viewModel.playerStyle.collectAsState()
@@ -292,18 +293,36 @@ fun HomeScreen(
     val isMixActivelyPlaying = playbackInfo.isPlaying && currentSong != null &&
         yourMixSongs.any { it.id == currentSong?.id }
 
-    val isSnowfallActive = remember(
+    val latestWeatherSnapshot = weatherFetchState.latestSnapshot
+    val isWeatherAtmosphereActive = remember(
         homeMusicMode,
         playbackInfo.isPlaying,
         currentSong?.id,
-        snowfallSettings
+        weatherAmbientSettings,
+        latestWeatherSnapshot != null
     ) {
-        data.preferences.SnowfallSettings.shouldShowSnowfall(
+        domain.weather.WeatherAtmosphereEngine.shouldRenderOnHome(
             homeMusicMode = homeMusicMode,
             isMusicPlaying = playbackInfo.isPlaying,
             hasCurrentSong = currentSong != null,
-            settings = snowfallSettings
+            settings = weatherAmbientSettings,
+            hasWeatherSnapshot = latestWeatherSnapshot != null
         )
+    }
+    val homeWeatherPlan = remember(
+        weatherAmbientSettings,
+        latestWeatherSnapshot,
+        isWeatherAtmosphereActive
+    ) {
+        if (!isWeatherAtmosphereActive) {
+            domain.weather.WeatherAtmospherePlan.INACTIVE
+        } else {
+            domain.weather.WeatherAtmosphereEngine.resolvePlan(
+                settings = weatherAmbientSettings,
+                snapshot = latestWeatherSnapshot,
+                surfaceRole = domain.weather.WeatherSurfaceRole.HomeBackground
+            )
+        }
     }
 
     Box(
@@ -314,14 +333,16 @@ fun HomeScreen(
             .testTag("home_screen"),
         contentAlignment = Alignment.TopCenter
     ) {
-        // Atmospheric background snowfall layer (behind all Home content; non-interactive)
-        ui.components.SnowfallOverlay(
-            isActive = isSnowfallActive,
-            settings = snowfallSettings,
+        // Weather-synced ambient atmosphere layer (behind all Home content; non-interactive; off in Online Video)
+        ui.components.WeatherAtmosphereOverlay(
+            plan = homeWeatherPlan,
+            settings = weatherAmbientSettings,
             colors = colors,
+            surfaceRole = domain.weather.WeatherSurfaceRole.HomeBackground,
+            isActive = isWeatherAtmosphereActive,
             screenVisible = screenVisible,
             modifier = Modifier.fillMaxSize(),
-            testTagName = "home_snowfall_overlay"
+            testTagName = "home_weather_atmosphere_overlay"
         )
 
         Column(

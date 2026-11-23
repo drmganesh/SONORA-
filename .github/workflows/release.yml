@@ -7,15 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. v1.0.0)"
+        description: "Release tag (e.g. v1.3.6)"
         required: true
-        default: "v1.0.0"
+        default: "v1.3.6"
         type: string
       release_name:
         description: "Release title (optional)"
         required: false
-        default: ""
+        default: "SONORA v1.3.6 — Weather-Synced Ambient Effects"
         type: string
+      draft:
+        description: "Create as a Draft release"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -119,12 +124,14 @@ jobs:
           name: sonora-release-apk
           path: ${{ steps.release_vars.outputs.apk_path }}
 
-      - name: Publish GitHub Release
+      - name: Draft GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_vars.outputs.tag_name }}
           name: ${{ steps.release_vars.outputs.release_name }}
-          generate_release_notes: true
+          draft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
           files: ${{ steps.release_vars.outputs.apk_path }}
 
       - name: Clean up temporary keystore

@@ -502,6 +502,24 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                                 val miniQueue by viewModel.queue.collectAsState()
                                 val miniQueueIndex by viewModel.queueIndex.collectAsState()
                                 val miniFreqs by viewModel.visualizerFrequencies.collectAsState()
+                                val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsState()
+                                val weatherFetchState by viewModel.weatherFetchState.collectAsState()
+                                val miniWeatherPlan = remember(
+                                    weatherAmbientSettings,
+                                    weatherFetchState.latestSnapshot,
+                                    miniPlayerStyle,
+                                    isInOnlineVideoExperience
+                                ) {
+                                    if (isInOnlineVideoExperience || !weatherAmbientSettings.enableMiniPlayerEffects) {
+                                        domain.weather.WeatherAtmospherePlan.INACTIVE
+                                    } else {
+                                        domain.weather.WeatherAtmosphereEngine.resolvePlan(
+                                            settings = weatherAmbientSettings,
+                                            snapshot = weatherFetchState.latestSnapshot,
+                                            surfaceRole = domain.weather.WeatherSurfaceRole.MiniPlayer(miniPlayerStyle)
+                                        )
+                                    }
+                                }
                                 FloatingMiniPlayer(
                                     song = currentSong,
                                     playbackInfo = playbackInfo,
@@ -524,7 +542,9 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                                     swipeThresholdDp = motionState.swipeThresholdDp,
                                     frequencies = miniFreqs,
                                     queue = miniQueue,
-                                    queueIndex = miniQueueIndex
+                                    queueIndex = miniQueueIndex,
+                                    weatherPlan = miniWeatherPlan,
+                                    weatherSettings = weatherAmbientSettings
                                 )
                             }
                         }

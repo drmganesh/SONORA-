@@ -196,7 +196,10 @@ fun PlayerScreen(
 
     val playerAppearance by viewModel.playerAppearance.collectAsState()
     val playerGestureConfig by viewModel.playerGestureConfig.collectAsState()
+    val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsState()
+    val weatherFetchState by viewModel.weatherFetchState.collectAsState()
     val gestureController = rememberPlayerGestureController()
+    var resolvedActivePlayerStyle by remember(currentPortraitStyle) { mutableStateOf(currentPortraitStyle) }
 
     val visualizerFrequencies by viewModel.visualizerFrequencies.collectAsState()
     val waveformSamples by viewModel.waveformSamples.collectAsState()
@@ -414,10 +417,39 @@ fun PlayerScreen(
             }
         }
 
+        // Weather-Synced Ambient Atmosphere Layer (behind all player styles, artwork, visualizers, lyrics, and controls)
+        val playerWeatherRole = remember(resolvedActivePlayerStyle) {
+            domain.weather.WeatherSurfaceRole.FullscreenPlayer(resolvedActivePlayerStyle)
+        }
+        val playerWeatherPlan = remember(
+            weatherAmbientSettings,
+            weatherFetchState.latestSnapshot,
+            playerWeatherRole
+        ) {
+            domain.weather.WeatherAtmosphereEngine.resolvePlan(
+                settings = weatherAmbientSettings,
+                snapshot = weatherFetchState.latestSnapshot,
+                surfaceRole = playerWeatherRole
+            )
+        }
+        ui.components.WeatherAtmosphereOverlay(
+            plan = playerWeatherPlan,
+            settings = weatherAmbientSettings,
+            colors = colors,
+            surfaceRole = playerWeatherRole,
+            isActive = playerWeatherPlan.isActive,
+            screenVisible = true,
+            modifier = Modifier.fillMaxSize(),
+            testTagName = "player_weather_atmosphere_overlay"
+        )
+
         Column(modifier = Modifier.fillMaxSize()) {
             androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.weight(1f)) {
                 val isLandscapeContainer = maxWidth > maxHeight && maxWidth >= 560.dp
                 val activeStyle = if (isLandscapeContainer) landscapePlayerStyle else currentPortraitStyle
+                if (resolvedActivePlayerStyle != activeStyle) {
+                    resolvedActivePlayerStyle = activeStyle
+                }
 
                 AnimatedContent(
                     targetState = activeStyle,
