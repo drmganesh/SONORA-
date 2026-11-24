@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.AcUnit
 import androidx.compose.material.icons.rounded.Air
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BatterySaver
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.CloudOff
@@ -107,6 +108,8 @@ fun WeatherAmbientSettingsContent(
     onBack: () -> Unit,
     onOpenFestivalAtmosphere: (() -> Unit)? = null,
     festivalAtmosphereSubtitle: String = "Auto • Pan-India Hindu festival effects",
+    onOpenFestivalCalendar: (() -> Unit)? = null,
+    festivalCalendarSubtitle: String = "Auto daily sync • Public Hindu festival calendar",
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
@@ -264,6 +267,67 @@ fun WeatherAmbientSettingsContent(
                                 Icon(
                                     imageVector = Icons.Rounded.AutoAwesome,
                                     contentDescription = "Open Festival Atmosphere Settings",
+                                    tint = colors.accentStrong,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 1c. Festival Calendar Entry Card (Settings → Ambient Effects → Festival Calendar → Sync Now)
+                if (onOpenFestivalCalendar != null) {
+                    item(key = "festival_calendar_entry") {
+                        Surface(
+                            onClick = onOpenFestivalCalendar,
+                            shape = RoundedCornerShape(22.dp),
+                            color = colors.surface,
+                            border = BorderStroke(0.85.dp, colors.cardBorder),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_festival_calendar_settings")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp, vertical = 15.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = colors.surfaceTinted,
+                                    modifier = Modifier.size(44.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.CalendarMonth,
+                                            contentDescription = null,
+                                            tint = colors.accentStrong,
+                                            modifier = Modifier.size(21.dp)
+                                        )
+                                    }
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Festival Calendar",
+                                        fontFamily = OutfitFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        color = colors.textPrimary
+                                    )
+                                    Text(
+                                        text = festivalCalendarSubtitle,
+                                        fontFamily = PlusJakartaFontFamily,
+                                        fontSize = 12.sp,
+                                        color = colors.textSecondary,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = "Open Festival Calendar & Sync Now",
                                     tint = colors.accentStrong,
                                     modifier = Modifier.size(20.dp)
                                 )

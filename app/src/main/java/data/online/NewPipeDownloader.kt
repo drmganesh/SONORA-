@@ -99,6 +99,7 @@ class NewPipeDownloader(
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
                 .writeTimeout(10, TimeUnit.SECONDS)
+                .callTimeout(25, TimeUnit.SECONDS)
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .retryOnConnectionFailure(true)
@@ -110,6 +111,12 @@ class NewPipeDownloader(
     override fun execute(request: Request): Response {
         val httpMethod = request.httpMethod()
         val url = request.url()
+        val parsedUrl = util.SecureUrlValidator.parseSafeHttpUrl(
+            rawUrl = url,
+            allowHttp = true,
+            allowPrivateHosts = false
+        ) ?: throw IOException("Blocked unsafe or unsupported NewPipe request URL")
+
         val headers = request.headers()
         val dataToSend = request.dataToSend()
 
@@ -130,7 +137,7 @@ class NewPipeDownloader(
         }
 
         val okBuilder = okhttp3.Request.Builder()
-            .url(url)
+            .url(parsedUrl)
             .method(httpMethod, requestBody)
 
         var hasUserAgent = false
@@ -168,8 +175,7 @@ class NewPipeDownloader(
             okBuilder.header("Accept-Language", langHeader)
         }
 
-        val hostForLog = runCatching { okhttp3.HttpUrl.Builder().let { url.substringAfter("://").substringBefore("/") } }
-            .getOrDefault("unknown-host")
+        val hostForLog = parsedUrl.host.ifBlank { "unknown-host" }
 
         okHttpClient.newCall(okBuilder.build()).execute().use { okResponse ->
             val code = okResponse.code
@@ -180,9 +186,15 @@ class NewPipeDownloader(
             }
 
             val bodyString = try {
-                okResponse.body?.string().orEmpty()
+                util.SecureUrlValidator.readBoundedString(
+                    body = okResponse.body,
+                    maxBytes = util.SecureUrlValidator.MAX_NEWPIPE_RESPONSE_BYTES
+                )
             } catch (ioe: IOException) {
-                Log.e(TAG, "Failed reading HTTP response body (code=$code, host=$hostForLog)", ioe)
+                Log.e(
+                    TAG,
+                    "Failed reading HTTP response body (code=$code, host=$hostForLog): ${util.SecureUrlValidator.redactSensitiveForLogs(ioe.message)}"
+                )
                 throw ioe
             }
 

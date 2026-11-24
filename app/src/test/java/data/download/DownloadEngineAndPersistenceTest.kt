@@ -140,7 +140,20 @@ class DownloadEngineAndPersistenceTest {
         helper.close()
 
         val migrated = Room.databaseBuilder(context, SonoraDatabase::class.java, dbFile.absolutePath)
-            .addMigrations(SonoraDatabase.MIGRATION_1_2, SonoraDatabase.MIGRATION_2_3)
+            .addMigrations(
+                SonoraDatabase.MIGRATION_1_2,
+                SonoraDatabase.MIGRATION_2_3,
+                SonoraDatabase.MIGRATION_3_4,
+                SonoraDatabase.MIGRATION_4_5,
+                SonoraDatabase.MIGRATION_5_6,
+                SonoraDatabase.MIGRATION_6_7,
+                SonoraDatabase.MIGRATION_7_8,
+                SonoraDatabase.MIGRATION_8_9,
+                SonoraDatabase.MIGRATION_9_10,
+                SonoraDatabase.MIGRATION_10_11,
+                SonoraDatabase.MIGRATION_11_12,
+                SonoraDatabase.MIGRATION_12_13
+            )
             .allowMainThreadQueries()
             .build()
         try {
@@ -392,6 +405,7 @@ class DownloadEngineAndPersistenceTest {
             dao = dao,
             onlineRepository = onlineRepo,
             storageHelper = storageHelper,
+            allowPrivateHostsForTests = true,
             streamSelector = streamSelector,
             okHttpClient = OkHttpClient(),
             requirePersistedSafPermission = false,
@@ -614,6 +628,7 @@ class DownloadEngineAndPersistenceTest {
             dao = dao,
             onlineRepository = onlineRepo,
             storageHelper = storageHelper,
+            allowPrivateHostsForTests = true,
             streamSelector = streamSelector,
             okHttpClient = OkHttpClient(),
             requirePersistedSafPermission = false,
@@ -744,6 +759,7 @@ class DownloadEngineAndPersistenceTest {
             dao = dao,
             onlineRepository = onlineRepo,
             storageHelper = storageHelper,
+            allowPrivateHostsForTests = true,
             streamSelector = streamSelector,
             okHttpClient = OkHttpClient(),
             requirePersistedSafPermission = false,

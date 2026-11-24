@@ -28,4 +28,22 @@
     <string name="video_notifications_mark_all_read">Mark all read</string>
     <string name="video_notifications_clear_all">Clear all</string>
     <string name="video_notifications_check_now">Check for new uploads</string>
+    <string name="onboarding_welcome_message">Hey there! 💛\n\nWelcome to SONORA!\n\nYour music, your mood, your little world. 🎧\n\nLet\'s make this experience yours. What should we call you?</string>
+    <string name="onboarding_name_label">Profile Name</string>
+    <string name="onboarding_name_placeholder">Enter your name</string>
+    <string name="onboarding_name_error_empty">Please enter a name to continue.</string>
+    <string name="onboarding_name_error_too_long">Keep your name under 32 characters.</string>
+    <string name="onboarding_add_photo">Add Photo</string>
+    <string name="onboarding_change_photo">Change Photo</string>
+    <string name="onboarding_skip_photo">Skip Photo</string>
+    <string name="onboarding_remove_photo">Remove Photo</string>
+    <string name="onboarding_start_listening_cta">Let\'s Start Listening 🎵</string>
+    <string name="onboarding_local_only_hint">Saved privately on this device • No account needed</string>
+    <string name="settings_profile_title">Profile</string>
+    <string name="settings_profile_subtitle">Edit your name, avatar &amp; local identity</string>
+    <string name="settings_profile_restore_default">Restore Default Avatar</string>
+    <string name="settings_app_update_section">APP UPDATE</string>
+    <string name="settings_check_for_updates_title">Check for Updates</string>
+    <string name="settings_check_for_updates_subtitle">Get the latest SONORA updates and announcements.</string>
+    <string name="settings_update_link_unavailable">Could not find Telegram or a browser app to open the SONORA updates channel.</string>
 </resources>

@@ -22,13 +22,48 @@ class SonoraApplication : Application(), ImageLoaderFactory {
         const val CHANNEL_UPLOADS_CHANNEL_ID = "sonora_channel_uploads"
         lateinit var instance: SonoraApplication
             private set
+
+        @Volatile
+        var hadPreExistingInstallationDataOnProcessStart: Boolean = false
+            private set
+
+        /**
+         * Detects whether this device already had SONORA user data from a prior installation
+         * before the current process created databases or preference stores.
+         */
+        fun detectExistingInstallationData(context: Context): Boolean {
+            return runCatching {
+                val dbFile = context.getDatabasePath("sonora_database")
+                if (dbFile != null && dbFile.exists() && dbFile.length() > 0L) {
+                    return true
+                }
+                val appPrefs = context.getSharedPreferences("sonora_app_settings", Context.MODE_PRIVATE)
+                if (appPrefs.all.isNotEmpty()) {
+                    return true
+                }
+                val datastoreDir = java.io.File(context.filesDir, "datastore")
+                if (datastoreDir.exists() && datastoreDir.isDirectory) {
+                    val existingFiles = datastoreDir.listFiles().orEmpty()
+                    val hasOtherPriorStore = existingFiles.any { file ->
+                        file.isFile &&
+                            file.length() > 0L &&
+                            file.name.endsWith(".preferences_pb") &&
+                            file.name != "sonora_user_profile.preferences_pb"
+                    }
+                    if (hasOtherPriorStore) return true
+                }
+                false
+            }.getOrDefault(false)
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        util.SonoraCrashDiagnostics.installIfDebug(this)
+        hadPreExistingInstallationDataOnProcessStart = detectExistingInstallationData(this)
         data.online.NewPipeInitializer.ensureInitialized(this)
-        Log.i(TAG, "SONORA startup initialized (SDK=${Build.VERSION.SDK_INT})")
+        Log.i(TAG, "SONORA startup initialized (SDK=${Build.VERSION.SDK_INT}, existingInstall=$hadPreExistingInstallationDataOnProcessStart)")
         createNotificationChannel()
     }
 

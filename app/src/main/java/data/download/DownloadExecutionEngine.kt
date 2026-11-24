@@ -50,7 +50,8 @@ class DownloadExecutionEngine(
     private val okHttpClient: OkHttpClient = NewPipeInitializer.getDownloader().okHttpClient,
     private val requirePersistedSafPermission: Boolean = true,
     private val streamResolverOverride: (suspend (DownloadTask, Boolean) -> OnlineResult<domain.online.ResolvedOnlineStreamResult>)? = null,
-    private val videoDataSource: OnlineVideoDataSource? = null
+    private val videoDataSource: OnlineVideoDataSource? = null,
+    private val allowPrivateHostsForTests: Boolean = false
 ) {
 
     companion object {
@@ -228,6 +229,7 @@ class DownloadExecutionEngine(
             val stagingFile = workingTask.stagingFilePath
                 ?.takeIf { it.isNotBlank() }
                 ?.let { File(it) }
+                ?.takeIf { storageHelper.isInsideStagingDir(it) }
                 ?: storageHelper.getStagingFile(taskId, selectedCandidate.containerExtension)
             stagingFile.parentFile?.mkdirs()
 
@@ -262,7 +264,18 @@ class DownloadExecutionEngine(
                 .readTimeout(25, TimeUnit.SECONDS)
                 .build()
 
-            val requestBuilder = Request.Builder().url(selectedCandidate.streamUrl)
+            val safeStreamUrl = util.SecureUrlValidator.parseSafeHttpUrl(
+                rawUrl = selectedCandidate.streamUrl,
+                allowHttp = true,
+                allowPrivateHosts = allowPrivateHostsForTests
+            )
+            if (safeStreamUrl == null) {
+                val msg = "Download aborted because stream URL is invalid or unsafe."
+                dao.updateDownloadState(taskId, DownloadState.FAILED.name, msg)
+                return@withContext DownloadExecutionOutcome.Failed(msg, isRetryable = false)
+            }
+
+            val requestBuilder = Request.Builder().url(safeStreamUrl)
             requestHeaders.forEach { entry ->
                 requestBuilder.header(entry.key, entry.value)
             }
@@ -568,14 +581,22 @@ class DownloadExecutionEngine(
     }
 
     private fun fetchRemoteArtworkBytes(client: OkHttpClient, artworkUrl: String?): ByteArray? {
-        if (artworkUrl.isNullOrBlank()) return null
+        val safeUrl = util.SecureUrlValidator.parseSafeHttpUrl(
+            rawUrl = artworkUrl,
+            allowHttp = false,
+            allowPrivateHosts = false
+        ) ?: return null
         return runCatching {
-            val req = Request.Builder().url(artworkUrl).build()
+            val req = Request.Builder().url(safeUrl).build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
-                val len = resp.body?.contentLength() ?: -1L
-                if (len > 4 * 1024 * 1024L) return@use null
-                resp.body?.bytes()?.takeIf { it.isNotEmpty() && it.size <= 4 * 1024 * 1024 }
+                val body = resp.body ?: return@use null
+                val declaredLen = body.contentLength()
+                val maxArtworkBytes = 4L * 1024L * 1024L
+                if (declaredLen > maxArtworkBytes) return@use null
+                body.byteStream().use { input ->
+                    util.SecureUrlValidator.readBoundedBytes(input, maxArtworkBytes)
+                }.takeIf { it.isNotEmpty() }
             }
         }.getOrNull()
     }

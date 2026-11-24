@@ -118,9 +118,16 @@ class SonoraStabilityAuditRobolectricTest {
         })
         service.updateAudioPolicySettings(focusEnabled = true, headsetPauseEnabled = true)
 
-        // Duck -> gain -> transient pause -> noisy pause
+        // When idle (not playing), transient duck does not unnecessarily alter volume;
+        // explicit duck scale & focus gain restoration remain bounded and safe.
         service.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+        assertEquals(1.0f, service.audioEngine.focusDuckScale, 0.02f)
+
+        service.audioEngine.setFocusDuckScale(0.25f)
         assertEquals(0.25f, service.audioEngine.focusDuckScale, 0.02f)
+
+        service.audioEngine.setFocusDuckScale(Float.NaN)
+        assertEquals(1.0f, service.audioEngine.focusDuckScale, 0.02f)
 
         service.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
         assertEquals(1.0f, service.audioEngine.focusDuckScale, 0.02f)

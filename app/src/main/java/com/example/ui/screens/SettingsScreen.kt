@@ -57,6 +57,7 @@ import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.SpatialAudio
 import androidx.compose.material.icons.rounded.Source
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -89,7 +90,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -115,10 +118,14 @@ import ui.settings.DynamicThemeSettingsScreen
 import ui.settings.LibraryFolderManagementScreen
 import ui.settings.MusicExperienceSettingsScreen
 import ui.settings.OnlineVideoPlayerGesturesScreen
+import ui.settings.ProfileSettingsScreen
 import ui.settings.SeekbarStyleScreen
 import ui.settings.SettingsAboutContent
 import ui.settings.VideoExperienceSettingsScreen
 import ui.settings.rememberInstalledAppVersion
+import ui.components.UserProfileAvatar
+import util.SonoraUpdateLinkOpener
+import util.UpdateLinkOpenResult
 import ui.motion.LocalEffectiveMotionState
 import ui.motion.SonoraTransitions
 import ui.theme.EditorialAccentSwatches
@@ -141,6 +148,8 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
+    val context = LocalContext.current
+    val userProfile by viewModel.userProfile.collectAsState()
 
     val homeThemeMode by viewModel.homeThemeMode.collectAsState()
     val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsState()
@@ -196,6 +205,8 @@ fun SettingsScreen(
     val motionConfig by viewModel.motionConfig.collectAsState()
 
     var showMotionGesturesSettings by remember { mutableStateOf(false) }
+    var showProfileSettings by remember { mutableStateOf(false) }
+    var updateLinkFeedbackMessage by remember { mutableStateOf<String?>(null) }
     var showOnlineVideoPlayerGestures by remember { mutableStateOf(false) }
     var showVideoExperienceSettings by remember { mutableStateOf(false) }
     var showMusicExperienceSettings by remember { mutableStateOf(false) }
@@ -214,6 +225,8 @@ fun SettingsScreen(
     var downloadedTrackPendingDelete by remember { mutableStateOf<DownloadedTrack?>(null) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
     var showLicensesDialog by remember { mutableStateOf(false) }
+    var showClearListeningHistoryDialog by remember { mutableStateOf(false) }
+    var listeningHistoryClearedNotice by remember { mutableStateOf(false) }
     var rescanRequested by remember { mutableStateOf(false) }
 
     var appearanceExpanded by remember { mutableStateOf(true) }
@@ -225,6 +238,7 @@ fun SettingsScreen(
     var storageCacheExpanded by remember { mutableStateOf(true) }
     var downloadsExpanded by remember { mutableStateOf(true) }
     var notificationsExpanded by remember { mutableStateOf(true) }
+    var appUpdateExpanded by remember { mutableStateOf(true) }
     var aboutExpanded by remember { mutableStateOf(true) }
     val installedAppVersion = rememberInstalledAppVersion()
     val motionState = LocalEffectiveMotionState.current
@@ -297,6 +311,70 @@ fun SettingsScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 100.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                // 0. PROFILE (Local User Profile)
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = colors.surface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .shadow(4.dp, RoundedCornerShape(24.dp), ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
+                            .border(0.75.dp, colors.cardBorder, RoundedCornerShape(24.dp))
+                            .clip(RoundedCornerShape(24.dp))
+                            .clickable { showProfileSettings = true }
+                            .testTag("settings_profile_row")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            UserProfileAvatar(
+                                userProfile = userProfile,
+                                colors = colors,
+                                size = 54.dp,
+                                borderWidth = 1.5.dp,
+                                shadowElevation = 4.dp,
+                                reduceAnimations = reduceAnimations
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(id = com.example.R.string.settings_profile_title),
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 1.1.sp,
+                                    color = colors.accentStrong
+                                )
+                                Text(
+                                    text = userProfile.displayName,
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = stringResource(id = com.example.R.string.settings_profile_subtitle),
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = "Open Profile settings",
+                                tint = colors.textMuted
+                            )
+                        }
+                    }
+                }
+
                 // 1. APPEARANCE
                 item {
                     ExpandableSettingsSection(
@@ -855,7 +933,8 @@ fun SettingsScreen(
                             subtitle = "Prefer matching artist & genre flow in Automix",
                             checked = matchNextSongEnabled,
                             onCheckedChange = { viewModel.toggleMatchNextSong(it) },
-                            colors = colors
+                            colors = colors,
+                            switchModifier = Modifier.testTag("settings_harmonic_matching_switch")
                         )
                         SettingsSwitchRow(
                             title = "Audio Focus Management",
@@ -1276,7 +1355,45 @@ fun SettingsScreen(
                     }
                 }
 
-                // 6. ABOUT
+                // 8. APP UPDATE
+                item {
+                    val updateUnavailableMsg = stringResource(id = com.example.R.string.settings_update_link_unavailable)
+                    ExpandableSettingsSection(
+                        title = stringResource(id = com.example.R.string.settings_app_update_section),
+                        subtitle = "Telegram channel & release announcements",
+                        expanded = appUpdateExpanded,
+                        onToggle = { appUpdateExpanded = !appUpdateExpanded },
+                        colors = colors
+                    ) {
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.Update,
+                            title = stringResource(id = com.example.R.string.settings_check_for_updates_title),
+                            subtitle = stringResource(id = com.example.R.string.settings_check_for_updates_subtitle),
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_check_for_updates_row"),
+                            onClick = {
+                                val result = SonoraUpdateLinkOpener.openTelegramUpdateChannel(context)
+                                updateLinkFeedbackMessage = if (result == UpdateLinkOpenResult.NO_HANDLER_AVAILABLE) {
+                                    updateUnavailableMsg
+                                } else {
+                                    null
+                                }
+                            }
+                        )
+                        updateLinkFeedbackMessage?.let { feedback ->
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = feedback,
+                                fontFamily = PlusJakartaFontFamily,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("settings_update_link_feedback")
+                            )
+                        }
+                    }
+                }
+
+                // 9. ABOUT
                 item {
                     ExpandableSettingsSection(
                         title = "ABOUT",
@@ -1291,9 +1408,21 @@ fun SettingsScreen(
                             reduceAnimations = reduceAnimations,
                             linksContent = {
                                 SettingsLinkRow(
+                                    icon = Icons.Rounded.DeleteOutline,
+                                    title = "Clear Listening & Search History",
+                                    subtitle = if (listeningHistoryClearedNotice) {
+                                        "Local listening, watch & search history cleared"
+                                    } else {
+                                        "Erase local play counts, analytics, video watch & search logs"
+                                    },
+                                    colors = colors,
+                                    modifier = Modifier.testTag("settings_clear_listening_history_row"),
+                                    onClick = { showClearListeningHistoryDialog = true }
+                                )
+                                SettingsLinkRow(
                                     icon = Icons.Rounded.Policy,
                                     title = "Privacy Policy",
-                                    subtitle = "Zero telemetry • Local playback stays offline",
+                                    subtitle = "Zero telemetry • Local-first storage & network disclosures",
                                     colors = colors,
                                     onClick = { showPrivacyDialog = true }
                                 )
@@ -1312,16 +1441,63 @@ fun SettingsScreen(
         }
     }
 
+    if (showClearListeningHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearListeningHistoryDialog = false },
+            containerColor = colors.surface,
+            title = {
+                Text(
+                    text = "Clear Listening & Search History?",
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "This permanently clears your local listening analytics, track play counts, video watch history, and recent search queries on this device. Your downloaded files, playlists, and favorites remain untouched.",
+                    fontFamily = PlusJakartaFontFamily,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    color = colors.textSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearListeningHistoryDialog = false
+                        viewModel.clearListeningHistory()
+                        listeningHistoryClearedNotice = true
+                    },
+                    modifier = Modifier.testTag("settings_clear_history_confirm_button")
+                ) {
+                    Text("Clear History", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearListeningHistoryDialog = false }) {
+                    Text("Cancel", color = colors.textSecondary, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        )
+    }
+
     if (showPrivacyDialog) {
         AlertDialog(
             onDismissRequest = { showPrivacyDialog = false },
             containerColor = colors.surface,
             title = {
-                Text("Privacy Policy", fontFamily = OutfitFontFamily, fontWeight = FontWeight.Bold, color = colors.textPrimary)
+                Text("Privacy Policy & Network Disclosures", fontFamily = OutfitFontFamily, fontWeight = FontWeight.Bold, color = colors.textPrimary)
             },
             text = {
                 Text(
-                    text = "SONORA collects zero telemetry and requires no accounts. Local library scanning, playlists, equalizer curves, and folder rules never leave your device. When you choose to use Online Music, search and stream metadata requests are sent directly to your selected provider via NewPipe Extractor.",
+                    text = "SONORA collects zero telemetry, uses no advertising or tracking SDKs, never accesses GPS or device identifiers, and stores your profile name, avatar, library, playlists, listening analytics, and equalizer settings locally on your device only.\n\n" +
+                        "Optional third-party network requests occur only when you use online features:\n" +
+                        "• Online Music, Video & Shorts: Direct HTTPS queries via NewPipe Extractor to YouTube / SoundCloud.\n" +
+                        "• Synced Lyrics: Track title & artist lookup via LRCLIB (lrclib.net).\n" +
+                        "• Weather Atmosphere: Optional manual town name lookup via Open-Meteo (no GPS).\n" +
+                        "• Festival Calendar Sync: Public Indian festival JSON via jsDelivr CDN.\n" +
+                        "• Optional YouTube Account Actions: Only if you explicitly connect OAuth; tokens are encrypted via Android Keystore.",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
@@ -1366,6 +1542,23 @@ fun SettingsScreen(
             }
         )
     }
+
+        AnimatedVisibility(
+            visible = showProfileSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            ProfileSettingsScreen(
+                userProfile = userProfile,
+                reduceAnimations = reduceAnimations,
+                onUpdateProfileName = { newName -> viewModel.updateUserProfileNameOnly(newName) },
+                onPickProfilePhoto = { uri -> viewModel.updateUserProfilePhoto(uri) },
+                onRemoveProfilePhoto = { viewModel.removeUserProfilePhoto() },
+                onBack = { showProfileSettings = false },
+                colors = colors,
+                onResetPersonalProfile = { viewModel.resetPersonalProfileData() }
+            )
+        }
 
         AnimatedVisibility(
             visible = showMotionGesturesSettings,
@@ -1781,7 +1974,8 @@ private fun SettingsSwitchRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    colors: EditorialColors
+    colors: EditorialColors,
+    switchModifier: Modifier = Modifier
 ) {
     Row(
         modifier = Modifier
@@ -1811,7 +2005,8 @@ private fun SettingsSwitchRow(
             colors = SwitchDefaults.colors(
                 checkedThumbColor = colors.onAccentStrong,
                 checkedTrackColor = colors.accentStrong
-            )
+            ),
+            modifier = switchModifier
         )
     }
 }

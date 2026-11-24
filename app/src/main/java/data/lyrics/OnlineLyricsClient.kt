@@ -106,18 +106,29 @@ class LrcLibOnlineLyricsClient(
     }
 
     private fun executeGet(url: String): String? {
+        val safeUrl = util.SecureUrlValidator.parseSafeHttpUrl(
+            rawUrl = url,
+            allowHttp = false,
+            allowPrivateHosts = false
+        ) ?: return null
         return try {
             val request = Request.Builder()
-                .url(url)
+                .url(safeUrl)
                 .header("User-Agent", "SONORA/1.0 (Android Music Player)")
                 .header("Accept", "application/json")
                 .get()
                 .build()
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
-                response.body?.string()?.takeIf { it.isNotBlank() }
+                util.SecureUrlValidator.readBoundedString(
+                    body = response.body,
+                    maxBytes = 1024L * 1024L
+                ).takeIf { it.isNotBlank() }
             }
-        } catch (_: Exception) {
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            android.util.Log.w("OnlineLyricsClient", "Lyrics fetch failed: ${e.javaClass.simpleName}")
             null
         }
     }

@@ -11,13 +11,13 @@ import androidx.work.WorkManager
 import domain.festival.ActiveFestivalResolution
 import domain.festival.FestivalDateResolver
 import domain.festival.FestivalRecord
+import domain.festival.FestivalRegionFilter
 import domain.festival.FestivalRegionMode
 import domain.festival.IndianFestivalRegion
 import domain.festival.RegionalObservanceRule
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
@@ -25,38 +25,99 @@ private const val FESTIVAL_REPO_TAG = "FestivalCalendarRepo"
 
 data class FestivalSyncStatus(
     val lastSyncedEpochMs: Long = 0L,
-    val lastSourceSummary: String = "IMD Rashtriya Panchang (Local Cache)",
+    val lastAttemptedEpochMs: Long = 0L,
+    val lastSourceSummary: String = "IMD Rashtriya Panchang (Verified Cache)",
+    val sourceAttribution: String = PublicFestivalCalendarDataSource.FULL_SOURCE_ATTRIBUTION,
+    val datasetVersion: String = "rashtriya-panchang-2026.1",
     val isOfflineFallback: Boolean = false,
     val consecutiveFailures: Int = 0,
-    val recordCount: Int = 0
-)
+    val recordCount: Int = 0,
+    val lastSyncStatusCode: String = "IDLE",
+    val lastErrorMessage: String? = null
+) {
+    /** Separated explicit aliases for sync status clarity. */
+    val lastSuccessfulSyncAt: Long get() = lastSyncedEpochMs
+    val lastAttemptAt: Long get() = lastAttemptedEpochMs
+    val syncStatus: String get() = lastSyncStatusCode
+    val lastSyncError: String? get() = lastErrorMessage
+    val cachedFestivalCount: Int get() = recordCount
+
+    fun isSyncedToday(nowEpochMs: Long = System.currentTimeMillis()): Boolean =
+        FestivalCalendarSyncCoordinator.hasSyncedSuccessfullyToday(lastSyncedEpochMs, nowEpochMs)
+}
 
 /**
  * Single source of truth for SONORA's Pan-India Hindu Festival Calendar:
- * - Persists all current & upcoming festival dates in Room (`festival_calendar_entries`).
- * - Seeds verified Rashtriya Panchang + Regional Panchang catalog on first launch so offline
- *   detection works immediately without fabricating dates.
- * - Refreshes infrequently from MIT-licensed public calendar data only when stale (> 7 days)
- *   or explicitly requested by the user.
- * - Schedules battery-friendly periodic WorkManager sync with exponential backoff.
+ * - Persists festival dates & sync metadata in Room (`festival_calendar_entries`, `festival_sync_meta`).
+ * - Delegates ALL synchronization (automatic daily app-open sync, manual Sync Now, WorkManager) to
+ *   [FestivalCalendarSyncCoordinator] so duplicate network calls are impossible.
+ * - Exposes upcoming cached festivals filtered for the user's selected region.
  */
 class FestivalCalendarRepository(
     private val dao: FestivalCalendarDao,
     private val dataSource: FestivalCalendarDataSource = PublicFestivalCalendarDataSource(),
+    private val isNetworkAvailable: () -> Boolean = { true },
     private val clockEpochMs: () -> Long = { System.currentTimeMillis() }
 ) {
     companion object {
-        /** Calendar cache staleness threshold (7 days). */
-        const val STALE_AFTER_MS = 7L * 24L * 60L * 60L * 1000L
-
-        /** WorkManager periodic sync cadence (7 days, battery-friendly). */
+        /** Single unique WorkManager periodic sync name (no duplicate jobs). */
         const val PERIODIC_SYNC_WORK_NAME = "sonora_festival_calendar_periodic_sync"
+
+        /**
+         * Selects upcoming cached festivals for the user's region starting from [fromDate] (inclusive).
+         * Filters out any invalid or malformed entries safely.
+         */
+        fun filterUpcomingFestivals(
+            records: List<FestivalRecord>,
+            fromDate: LocalDate,
+            regionMode: FestivalRegionMode,
+            selectedState: IndianFestivalRegion,
+            includeRegionalInAllIndia: Boolean,
+            nowEpochMs: Long = System.currentTimeMillis(),
+            limit: Int = 20
+        ): List<FestivalRecord> {
+            return records
+                .asSequence()
+                .filterNot { it.isExpiredAt(nowEpochMs) }
+                .filterNot { PublicFestivalCalendarDataSource.looksLikeRawJsonOrCode(it.canonicalName) }
+                .filter { record ->
+                    FestivalRegionFilter.matches(
+                        record = record,
+                        regionMode = regionMode,
+                        selectedState = selectedState,
+                        includeRegionalInAllIndia = includeRegionalInAllIndia
+                    )
+                }
+                .filter { record ->
+                    val end = record.endDateOrNull() ?: record.startDateOrNull() ?: return@filter false
+                    !end.isBefore(fromDate)
+                }
+                .sortedWith(
+                    compareBy<FestivalRecord> { it.startDateIso }
+                        .thenByDescending { it.sourcePriority.rank }
+                        .thenBy { it.canonicalName }
+                )
+                .distinctBy { "${it.festivalSlug}_${it.startDateIso}" }
+                .take(limit)
+                .toList()
+        }
     }
 
-    private val syncMutex = Mutex()
+    val syncCoordinator = FestivalCalendarSyncCoordinator(
+        dao = dao,
+        dataSource = dataSource,
+        isNetworkAvailable = isNetworkAvailable,
+        clockEpochMs = clockEpochMs
+    )
+
+    val syncUiState: StateFlow<FestivalSyncUiState> = syncCoordinator.syncUiState
 
     val cachedRecordsFlow: Flow<List<FestivalRecord>> =
-        dao.observeAllEntries().map { entities -> entities.map { it.toDomain() } }
+        dao.observeAllEntries().map { entities ->
+            entities
+                .map { it.toDomain() }
+                .filterNot { PublicFestivalCalendarDataSource.looksLikeRawJsonOrCode(it.canonicalName) }
+        }
 
     val syncStatusFlow: Flow<FestivalSyncStatus> =
         dao.observeSyncMeta().map { meta ->
@@ -65,106 +126,63 @@ class FestivalCalendarRepository(
             } else {
                 FestivalSyncStatus(
                     lastSyncedEpochMs = meta.lastSyncedEpochMs,
+                    lastAttemptedEpochMs = meta.lastRemoteAttemptEpochMs,
                     lastSourceSummary = meta.lastSourceSummary,
+                    sourceAttribution = meta.sourceAttribution,
+                    datasetVersion = meta.datasetVersion,
                     isOfflineFallback = meta.isOfflineFallback,
                     consecutiveFailures = meta.consecutiveFailures,
-                    recordCount = meta.recordCount
+                    recordCount = meta.recordCount,
+                    lastSyncStatusCode = meta.lastSyncStatusCode,
+                    // Sanitize persisted error string so legacy raw JSON strings from prior builds never leak
+                    lastErrorMessage = PublicFestivalCalendarDataSource.sanitizeDiagnosticText(meta.lastErrorMessage)
                 )
             }
         }
 
-    /**
-     * Ensures Room has the verified Pan-India Panchang catalog seeded on first launch
-     * without hitting the network synchronously or blocking startup.
-     */
-    suspend fun ensureInitialCacheSeeded() = syncMutex.withLock {
-        val count = dao.countEntries()
-        if (count > 0) return@withLock
-        val now = clockEpochMs()
-        val seed = dataSource.getVerifiedBaseCatalog(now)
-        dao.replaceAllEntries(seed.map(FestivalCalendarEntity::fromDomain))
-        dao.upsertSyncMeta(
-            FestivalSyncMetaEntity(
-                lastSyncedEpochMs = now,
-                lastRemoteAttemptEpochMs = 0L,
-                lastSourceSummary = "IMD Rashtriya Panchang & Regional Panji (Verified)",
-                isOfflineFallback = false,
-                consecutiveFailures = 0,
-                recordCount = seed.size
-            )
-        )
+    suspend fun ensureInitialCacheSeeded() {
+        syncCoordinator.ensureLocalSeedPresent()
     }
 
     /**
-     * Refreshes the Room festival calendar from the public MIT feed ONLY when stale (> 7 days)
-     * or when [force] is true. Gracefully keeps cached Room entries on offline/network errors.
+     * Automatic daily sync when SONORA opens (max once per `Asia/Kolkata` calendar day after success).
      */
-    suspend fun refreshIfStale(force: Boolean = false): Result<FestivalSyncStatus> = syncMutex.withLock {
-        val now = clockEpochMs()
-        val existingMeta = dao.getSyncMetaOnce()
-        val existingCount = dao.countEntries()
+    suspend fun syncOnAppOpenIfNeeded(automaticDailySyncEnabled: Boolean = true): FestivalSyncExecutionResult =
+        syncCoordinator.syncOnAppOpenIfNeeded(automaticDailySyncEnabled = automaticDailySyncEnabled)
 
-        if (existingCount == 0) {
-            val seed = dataSource.getVerifiedBaseCatalog(now)
-            dao.replaceAllEntries(seed.map(FestivalCalendarEntity::fromDomain))
+    /**
+     * Manual "Sync Now" triggered by user.
+     */
+    suspend fun syncNowManually(): FestivalSyncExecutionResult =
+        syncCoordinator.syncNowManually()
+
+    /**
+     * Backward-compatible wrapper delegating to the single sync coordinator.
+     */
+    suspend fun refreshIfStale(force: Boolean = false): Result<FestivalSyncStatus> {
+        val execution = if (force) {
+            syncCoordinator.syncNowManually()
+        } else {
+            syncCoordinator.syncOnAppOpenIfNeeded(automaticDailySyncEnabled = true)
         }
-
-        val isStale = existingMeta == null ||
-            existingMeta.lastRemoteAttemptEpochMs == 0L ||
-            (now - existingMeta.lastSyncedEpochMs) >= STALE_AFTER_MS
-
-        if (!force && !isStale && existingCount > 0) {
-            return@withLock Result.success(
-                FestivalSyncStatus(
-                    lastSyncedEpochMs = existingMeta!!.lastSyncedEpochMs,
-                    lastSourceSummary = existingMeta.lastSourceSummary,
-                    isOfflineFallback = existingMeta.isOfflineFallback,
-                    consecutiveFailures = existingMeta.consecutiveFailures,
-                    recordCount = existingCount
-                )
-            )
-        }
-
-        val fetchResult = dataSource.fetchLatestCatalog(nowEpochMs = now)
-        fetchResult.fold(
-            onSuccess = { payload ->
-                dao.replaceAllEntries(payload.records.map(FestivalCalendarEntity::fromDomain))
-                val meta = FestivalSyncMetaEntity(
-                    lastSyncedEpochMs = now,
-                    lastRemoteAttemptEpochMs = now,
-                    lastSourceSummary = payload.sourceSummary,
-                    isOfflineFallback = false,
-                    consecutiveFailures = 0,
-                    recordCount = payload.records.size
-                )
-                dao.upsertSyncMeta(meta)
-                Result.success(
-                    FestivalSyncStatus(
-                        lastSyncedEpochMs = meta.lastSyncedEpochMs,
-                        lastSourceSummary = meta.lastSourceSummary,
-                        isOfflineFallback = false,
-                        consecutiveFailures = 0,
-                        recordCount = meta.recordCount
-                    )
-                )
-            },
-            onFailure = { error ->
-                Log.w(FESTIVAL_REPO_TAG, "Public festival refresh unavailable; retaining local Room cache: ${error.message}")
-                val countNow = dao.countEntries()
-                val prevSynced = existingMeta?.lastSyncedEpochMs?.takeIf { it > 0L } ?: now
-                val failures = (existingMeta?.consecutiveFailures ?: 0) + 1
-                val meta = FestivalSyncMetaEntity(
-                    lastSyncedEpochMs = prevSynced,
-                    lastRemoteAttemptEpochMs = now,
-                    lastSourceSummary = existingMeta?.lastSourceSummary ?: "IMD Rashtriya Panchang (Offline Cache)",
-                    isOfflineFallback = true,
-                    consecutiveFailures = failures,
-                    recordCount = countNow
-                )
-                dao.upsertSyncMeta(meta)
-                Result.failure(error)
-            }
+        val meta = dao.getSyncMetaOnce()
+        val status = FestivalSyncStatus(
+            lastSyncedEpochMs = meta?.lastSyncedEpochMs ?: 0L,
+            lastAttemptedEpochMs = meta?.lastRemoteAttemptEpochMs ?: 0L,
+            lastSourceSummary = meta?.lastSourceSummary ?: "IMD Rashtriya Panchang (Verified Cache)",
+            sourceAttribution = meta?.sourceAttribution ?: PublicFestivalCalendarDataSource.FULL_SOURCE_ATTRIBUTION,
+            datasetVersion = meta?.datasetVersion ?: "rashtriya-panchang-2026.1",
+            isOfflineFallback = meta?.isOfflineFallback == true,
+            consecutiveFailures = meta?.consecutiveFailures ?: 0,
+            recordCount = meta?.recordCount ?: dao.countEntries(),
+            lastSyncStatusCode = meta?.lastSyncStatusCode ?: execution.uiState.statusCode,
+            lastErrorMessage = PublicFestivalCalendarDataSource.sanitizeDiagnosticText(meta?.lastErrorMessage)
         )
+        return if (execution.uiState.isFailure) {
+            Result.failure(RuntimeException(execution.uiState.message))
+        } else {
+            Result.success(status)
+        }
     }
 
     /**
@@ -177,7 +195,9 @@ class FestivalCalendarRepository(
         includeRegionalInAllIndia: Boolean,
         observanceRule: RegionalObservanceRule = RegionalObservanceRule.DEFAULT
     ): ActiveFestivalResolution {
-        val records = dao.getAllEntriesOnce().map { it.toDomain() }
+        val records = dao.getAllEntriesOnce()
+            .map { it.toDomain() }
+            .filterNot { PublicFestivalCalendarDataSource.looksLikeRawJsonOrCode(it.canonicalName) }
         val meta = dao.getSyncMetaOnce()
         return FestivalDateResolver.resolveForDate(
             records = records,
@@ -193,7 +213,8 @@ class FestivalCalendarRepository(
     }
 
     /**
-     * Schedules an infrequent, battery-safe WorkManager periodic refresh with exponential backoff.
+     * Schedules a single unique WorkManager periodic sync (daily safety fallback when online & battery not low)
+     * with `ExistingPeriodicWorkPolicy.KEEP` so duplicate jobs are never created.
      */
     fun schedulePeriodicRefresh(context: Context) {
         runCatching {
@@ -202,7 +223,7 @@ class FestivalCalendarRepository(
                 .setRequiresBatteryNotLow(true)
                 .build()
 
-            val request = PeriodicWorkRequestBuilder<FestivalCalendarRefreshWorker>(7, TimeUnit.DAYS)
+            val request = PeriodicWorkRequestBuilder<FestivalCalendarRefreshWorker>(1, TimeUnit.DAYS)
                 .setConstraints(constraints)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.MINUTES)
                 .build()

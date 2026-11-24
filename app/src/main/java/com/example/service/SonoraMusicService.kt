@@ -760,7 +760,9 @@ class SonoraMusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         audioDeviceCallback?.let { cb ->
             try {
                 audioManager?.unregisterAudioDeviceCallback(cb)
-            } catch (_: Throwable) {}
+            } catch (e: Throwable) {
+                Log.w(TAG, "AudioDeviceCallback unregister skipped: ${e.message}")
+            }
             audioDeviceCallback = null
         }
         if (isNoisyReceiverRegistered) {

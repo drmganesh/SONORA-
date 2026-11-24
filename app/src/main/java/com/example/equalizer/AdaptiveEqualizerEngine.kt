@@ -62,6 +62,7 @@ class AdaptiveEqualizerEngine private constructor(
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var currentSessionId: Int = 0
     private var externalBypass: Boolean = false
+    private val effectLock = Any()
     private var useSoftwareDsp: Boolean = true
 
     private val _isHardwareEqSupported = MutableStateFlow(true)
@@ -71,18 +72,22 @@ class AdaptiveEqualizerEngine private constructor(
         applySettings(_settings.value, persist = false)
     }
 
-    fun attachToAudioSession(sessionId: Int, softwareDspHandled: Boolean = false) {
+    private fun sanitizeFinite(value: Float, fallback: Float = 0f): Float {
+        return if (value.isFinite()) value else fallback
+    }
+
+    fun attachToAudioSession(sessionId: Int, softwareDspHandled: Boolean = false) = synchronized(effectLock) {
         useSoftwareDsp = softwareDspHandled
         if (softwareDspHandled) {
-            releaseHardwareEffects()
+            releaseHardwareEffectsLocked()
             this.currentSessionId = sessionId
             _isHardwareEqSupported.value = true
-            return
+            return@synchronized
         }
-        if (sessionId == 0) return
+        if (sessionId == 0) return@synchronized
         this.currentSessionId = sessionId
         try {
-            releaseHardwareEffects()
+            releaseHardwareEffectsLocked()
 
             hardwareEqualizer = Equalizer(0, sessionId).apply {
                 enabled = _settings.value.isEnabled && !externalBypass
@@ -90,15 +95,21 @@ class AdaptiveEqualizerEngine private constructor(
             _isHardwareEqSupported.value = true
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                    val boostMb = (_settings.value.volumeBoostDb * 100f).toInt()
-                    setTargetGain(boostMb)
-                    enabled = _settings.value.isEnabled && !externalBypass && boostMb > 0
+                try {
+                    loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
+                        val boostMb = (sanitizeFinite(_settings.value.volumeBoostDb).coerceIn(0f, 10f) * 100f).toInt()
+                        setTargetGain(boostMb)
+                        enabled = _settings.value.isEnabled && !externalBypass && boostMb > 0
+                    }
+                } catch (le: Throwable) {
+                    loudnessEnhancer = null
+                    Log.w(tag, "LoudnessEnhancer unsupported on session $sessionId; keeping Equalizer active: ${le.message}")
                 }
             }
 
             syncToHardware()
         } catch (e: Throwable) {
+            releaseHardwareEffectsLocked()
             _isHardwareEqSupported.value = false
             Log.w(tag, "Failed to initialize hardware equalizer: ${e.message}")
         }
@@ -110,14 +121,24 @@ class AdaptiveEqualizerEngine private constructor(
         applySettings(_settings.value, persist = false)
     }
 
-    fun releaseHardwareEffects() {
+    fun releaseHardwareEffects() = synchronized(effectLock) {
+        releaseHardwareEffectsLocked()
+    }
+
+    private fun releaseHardwareEffectsLocked() {
         try {
             hardwareEqualizer?.release()
-            hardwareEqualizer = null
-            loudnessEnhancer?.release()
-            loudnessEnhancer = null
         } catch (e: Throwable) {
-            Log.w(tag, "Error releasing hardware effects: ${e.message}")
+            Log.w(tag, "Error releasing hardware Equalizer: ${e.message}")
+        } finally {
+            hardwareEqualizer = null
+        }
+        try {
+            loudnessEnhancer?.release()
+        } catch (e: Throwable) {
+            Log.w(tag, "Error releasing hardware LoudnessEnhancer: ${e.message}")
+        } finally {
+            loudnessEnhancer = null
         }
     }
 
@@ -137,8 +158,10 @@ class AdaptiveEqualizerEngine private constructor(
 
     fun setDynamicPad(tilt: Float, contour: Float) {
         val current = _settings.value
-        val clampedTilt = (Math.round(tilt.coerceIn(-1.0f, 1.0f) * 100f) / 100f)
-        val clampedContour = (Math.round(contour.coerceIn(-1.0f, 1.0f) * 100f) / 100f)
+        val safeTilt = sanitizeFinite(tilt, current.tilt).coerceIn(-1.0f, 1.0f)
+        val safeContour = sanitizeFinite(contour, current.contour).coerceIn(-1.0f, 1.0f)
+        val clampedTilt = (Math.round(safeTilt * 100f) / 100f)
+        val clampedContour = (Math.round(safeContour * 100f) / 100f)
         val updated = current.copy(
             tilt = clampedTilt,
             contour = clampedContour,
@@ -157,7 +180,8 @@ class AdaptiveEqualizerEngine private constructor(
     fun setManualBandGain(index: Int, gainDb: Float) {
         if (index !in 0 until 15) return
         val current = _settings.value
-        val clampedGain = (Math.round(gainDb.coerceIn(-12f, 12f) * 10f) / 10f)
+        val safeGain = sanitizeFinite(gainDb, current.manualBands[index]).coerceIn(-12f, 12f)
+        val clampedGain = (Math.round(safeGain * 10f) / 10f)
         val updatedBands = current.manualBands.copyOf()
         updatedBands[index] = clampedGain
         val updated = current.copy(
@@ -169,12 +193,16 @@ class AdaptiveEqualizerEngine private constructor(
 
     fun applyCustomPresetGains(gains: FloatArray, profileId: String, volumeBoostDb: Float? = null) {
         val current = _settings.value
-        val sized = FloatArray(15) { i -> gains.getOrNull(i)?.coerceIn(-12f, 12f) ?: 0f }
+        val sized = FloatArray(15) { i ->
+            val raw = gains.getOrNull(i)
+            if (raw != null && raw.isFinite()) raw.coerceIn(-12f, 12f) else 0f
+        }
+        val safeBoost = volumeBoostDb?.takeIf { it.isFinite() }?.coerceIn(0f, 10f) ?: current.volumeBoostDb
         val updated = current.copy(
             mode = EqualizerMode.MANUAL,
             manualBands = sized,
             selectedProfileId = profileId,
-            volumeBoostDb = volumeBoostDb?.coerceIn(0f, 10f) ?: current.volumeBoostDb
+            volumeBoostDb = safeBoost
         )
         applySettings(updated)
     }
@@ -185,7 +213,7 @@ class AdaptiveEqualizerEngine private constructor(
     fun applyStudioShelf(isBass: Boolean, levelDb: Float) {
         val current = _settings.value
         val base = current.getEffectiveGains().copyOf()
-        val clamped = levelDb.coerceIn(-12f, 12f)
+        val clamped = sanitizeFinite(levelDb, 0f).coerceIn(-12f, 12f)
         if (isBass) {
             base[0] = clamped
             base[1] = clamped * 0.9f
@@ -207,7 +235,8 @@ class AdaptiveEqualizerEngine private constructor(
 
     fun setVolumeBoost(boostDb: Float) {
         val current = _settings.value
-        val clampedBoost = (Math.round(boostDb.coerceIn(0f, 10f) * 10f) / 10f)
+        val safeBoost = sanitizeFinite(boostDb, current.volumeBoostDb).coerceIn(0f, 10f)
+        val clampedBoost = (Math.round(safeBoost * 10f) / 10f)
         if (current.volumeBoostDb == clampedBoost) return
         val updated = current.copy(volumeBoostDb = clampedBoost)
         applySettings(updated)

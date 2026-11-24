@@ -126,16 +126,34 @@ class DownloadStorageHelper(private val context: Context) {
         return dir
     }
 
+    fun isInsideDirectory(candidate: File, parentDir: File): Boolean {
+        return runCatching {
+            val parentCanonical = parentDir.canonicalPath
+            val candidateCanonical = candidate.canonicalPath
+            candidateCanonical.startsWith(parentCanonical + File.separator)
+        }.getOrDefault(false)
+    }
+
+    fun isInsideStagingDir(file: File): Boolean = isInsideDirectory(file, getStagingDir())
+
     fun getStagingFile(taskId: String, extension: String): File {
-        val safeExt = extension.lowercase().replace(Regex("[^a-z0-9]"), "").ifBlank { "m4a" }
-        return File(getStagingDir(), "${taskId}.$safeExt")
+        val safeTaskId = taskId.replace(Regex("[^A-Za-z0-9_-]"), "_").take(96).ifBlank { "task" }
+        val safeExt = extension.lowercase().replace(Regex("[^a-z0-9]"), "").take(10).ifBlank { "m4a" }
+        val stagingDir = getStagingDir()
+        val candidate = File(stagingDir, "${safeTaskId}.$safeExt")
+        if (!isInsideDirectory(candidate, stagingDir)) {
+            throw SecurityException("Rejected staging file path outside staging directory")
+        }
+        return candidate
     }
 
     fun deleteStagingFile(stagingFilePath: String?) {
         if (stagingFilePath.isNullOrBlank()) return
         runCatching {
             val f = File(stagingFilePath)
-            if (f.exists()) f.delete()
+            if (isInsideStagingDir(f) && f.exists()) {
+                f.delete()
+            }
         }
     }
 
@@ -234,13 +252,16 @@ class DownloadStorageHelper(private val context: Context) {
             if (!targetDir.exists() || !targetDir.isDirectory || !targetDir.canWrite()) {
                 throw StorageAccessLostException("Selected download folder is no longer writable.")
             }
-            val ext = task.fileExtension.ifBlank { "m4a" }
+            val ext = task.fileExtension.lowercase().replace(Regex("[^a-z0-9]"), "").take(10).ifBlank { "m4a" }
             val baseName = sanitizeBaseFileName(task.title, task.artist)
             var candidate = File(targetDir, "$baseName.$ext")
             var suffix = 1
             while (candidate.exists()) {
                 candidate = File(targetDir, "$baseName ($suffix).$ext")
                 suffix++
+            }
+            if (!isInsideDirectory(candidate, targetDir)) {
+                throw SecurityException("Rejected destination file path outside selected download folder")
             }
             FileInputStream(stagingFile).use { input ->
                 candidate.outputStream().use { output ->
@@ -262,7 +283,7 @@ class DownloadStorageHelper(private val context: Context) {
         val treeDoc = DocumentFile.fromTreeUri(context, folderUri)
             ?: throw StorageAccessLostException("Cannot access selected download folder.")
 
-        val ext = task.fileExtension.ifBlank { "m4a" }
+        val ext = task.fileExtension.lowercase().replace(Regex("[^a-z0-9]"), "").take(10).ifBlank { "m4a" }
         val baseName = sanitizeBaseFileName(task.title, task.artist)
         var targetName = "$baseName.$ext"
         var suffix = 1
@@ -338,7 +359,8 @@ class DownloadStorageHelper(private val context: Context) {
         if (!artPath.isNullOrBlank()) {
             runCatching {
                 val artFile = File(artPath)
-                if (artFile.exists() && artFile.canonicalPath.startsWith(context.filesDir.canonicalPath)) {
+                val artDir = File(context.filesDir, "downloaded_art")
+                if (artFile.exists() && isInsideDirectory(artFile, artDir)) {
                     artFile.delete()
                 }
             }

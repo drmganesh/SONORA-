@@ -25,6 +25,9 @@ interface SonoraDao {
     @Query("UPDATE song_metadata SET playCount = playCount + 1, lastPlayedTimestamp = :timestamp WHERE id = :id")
     suspend fun incrementPlayCount(id: Long, timestamp: Long = System.currentTimeMillis())
 
+    @Query("UPDATE song_metadata SET playCount = 0, lastPlayedTimestamp = 0")
+    suspend fun clearLocalPlayHistory()
+
     @Transaction
     suspend fun upsertFavorite(id: Long, isFavorite: Boolean) {
         val existing = getMetadata(id)
@@ -132,6 +135,9 @@ interface SonoraDao {
 
     @Query("UPDATE online_tracks SET playCount = playCount + 1, lastPlayedTimestamp = :timestamp WHERE stableId = :stableId")
     suspend fun incrementOnlinePlayCount(stableId: Long, timestamp: Long = System.currentTimeMillis())
+
+    @Query("UPDATE online_tracks SET playCount = 0, lastPlayedTimestamp = 0")
+    suspend fun clearOnlinePlayHistory()
 
     @Query("SELECT * FROM online_search_history ORDER BY timestamp DESC LIMIT :limit")
     fun getOnlineSearchHistoryFlow(limit: Int = 15): Flow<List<OnlineSearchHistoryEntity>>

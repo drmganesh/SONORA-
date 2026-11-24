@@ -56,24 +56,37 @@ class OpenMeteoWeatherService(
         val DAILY_VARIABLES = listOf("sunrise", "sunset")
         val HOURLY_VARIABLES = listOf("temperature_2m", "weather_code", "precipitation", "cloud_cover")
 
-        private fun defaultTransport(): WeatherHttpTransport {
-            val client = OkHttpClient.Builder()
+        private val sharedHttpClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(12, TimeUnit.SECONDS)
                 .callTimeout(15, TimeUnit.SECONDS)
                 .build()
+        }
+
+        private fun defaultTransport(): WeatherHttpTransport {
             return WeatherHttpTransport { url ->
+                val safeUrl = util.SecureUrlValidator.parseSafeHttpUrl(
+                    rawUrl = url,
+                    allowHttp = false,
+                    allowPrivateHosts = false
+                ) ?: throw IOException("Rejected unsafe Open-Meteo URL")
                 val request = Request.Builder()
-                    .url(url)
+                    .url(safeUrl)
                     .header("Accept", "application/json")
                     .header("User-Agent", "SONORA-Android/${com.example.BuildConfig.VERSION_NAME}")
                     .get()
                     .build()
-                client.newCall(request).execute().use { response ->
+                sharedHttpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         throw IOException("Open-Meteo HTTP ${response.code}")
                     }
-                    response.body?.string() ?: throw IOException("Empty Open-Meteo response body")
+                    val text = util.SecureUrlValidator.readBoundedString(
+                        body = response.body,
+                        maxBytes = 512L * 1024L
+                    )
+                    if (text.isBlank()) throw IOException("Empty Open-Meteo response body")
+                    text
                 }
             }
         }

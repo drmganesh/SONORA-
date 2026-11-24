@@ -102,6 +102,15 @@ data class FestivalCalendarEntity(
     }
 }
 
+/**
+ * Persisted synchronization metadata for SONORA's Public Festival Calendar:
+ * - [lastSyncedEpochMs]: timestamp of the last SUCCESSFUL remote synchronization (0L until a real sync succeeds)
+ * - [lastRemoteAttemptEpochMs]: timestamp of the most recent sync attempt (auto or manual)
+ * - [datasetVersion]: validated dataset digest/version identifier
+ * - [remoteEtag] / [remoteLastModified]: conditional HTTP validators for incremental / 304 checks
+ * - [sourceAttribution]: authoritative source and license attribution
+ * - [lastSyncStatusCode] / [lastErrorMessage]: persisted outcome and error details
+ */
 @Entity(tableName = "festival_sync_meta")
 data class FestivalSyncMetaEntity(
     @PrimaryKey val id: Int = 1,
@@ -110,5 +119,11 @@ data class FestivalSyncMetaEntity(
     val lastSourceSummary: String,
     val isOfflineFallback: Boolean,
     val consecutiveFailures: Int,
-    val recordCount: Int
+    val recordCount: Int,
+    val datasetVersion: String = "rashtriya-panchang-2026.1",
+    val remoteEtag: String? = null,
+    val remoteLastModified: String? = null,
+    val sourceAttribution: String = "IMD / PAC Rashtriya Panchang • Regional State Panjis • ganeshsp1/hindu-festivals-api (MIT) • satmargastro.com (CC BY 4.0)",
+    val lastSyncStatusCode: String = "IDLE",
+    val lastErrorMessage: String? = null
 )

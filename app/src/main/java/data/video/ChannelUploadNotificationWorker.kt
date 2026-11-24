@@ -268,19 +268,31 @@ class ChannelUploadNotificationWorker(
     }
 
     private fun loadThumbnailBitmap(urlString: String?): Bitmap? {
-        if (urlString.isNullOrBlank() || !urlString.startsWith("http")) return null
+        val safeUrl = util.SecureUrlValidator.parseSafeHttpUrl(
+            rawUrl = urlString,
+            allowHttp = false,
+            allowPrivateHosts = false
+        ) ?: return null
         return runCatching {
-            val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+            val conn = (URL(safeUrl.toString()).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
                 readTimeout = 5_000
+                instanceFollowRedirects = false
                 doInput = true
                 connect()
             }
             try {
                 if (conn.responseCode in 200..299) {
-                    val bytes = conn.inputStream.use { it.readBytes() }
+                    val contentType = conn.contentType.orEmpty().lowercase()
+                    if (contentType.isNotBlank() && !contentType.startsWith("image/")) {
+                        return@runCatching null
+                    }
+                    val bytes = conn.inputStream.use { input ->
+                        util.SecureUrlValidator.readBoundedBytes(input, util.SecureUrlValidator.MAX_IMAGE_BYTES)
+                    }
                     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
                     var sample = 1
                     while (bounds.outWidth / sample > 640 || bounds.outHeight / sample > 360) {
                         sample *= 2
@@ -296,6 +308,8 @@ class ChannelUploadNotificationWorker(
             } finally {
                 conn.disconnect()
             }
+        }.onFailure { err ->
+            Log.w(TAG, "Thumbnail download skipped: ${err.javaClass.simpleName}")
         }.getOrNull()
     }
 }

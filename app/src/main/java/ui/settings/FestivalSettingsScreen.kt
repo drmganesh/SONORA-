@@ -66,6 +66,7 @@ import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
 import data.festival.FestivalSyncStatus
+import data.festival.FestivalSyncUiState
 import data.preferences.FestivalAtmosphereSettings
 import domain.festival.ActiveFestivalResolution
 import domain.festival.FestivalAtmosphereEngine
@@ -93,21 +94,25 @@ private val FESTIVAL_SYNC_FORMATTER: DateTimeFormatter =
 fun FestivalSettingsScreen(
     viewModel: SonoraViewModel,
     onBack: () -> Unit,
+    onOpenFestivalCalendar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
     val settings by viewModel.festivalAtmosphereSettings.collectAsState()
     val resolution by viewModel.activeFestivalResolution.collectAsState()
     val syncStatus by viewModel.festivalSyncStatus.collectAsState()
+    val syncUiState by viewModel.festivalSyncUiState.collectAsState()
 
     FestivalSettingsContent(
         settings = settings,
         resolution = resolution,
         syncStatus = syncStatus,
+        syncUiState = syncUiState,
         colors = colors,
         onUpdateSettings = { transform -> viewModel.updateFestivalAtmosphereSettings(transform) },
         onRefreshCalendar = { viewModel.refreshFestivalCalendarNow(force = true) },
         onResetSettings = { viewModel.resetFestivalAtmosphereSettings() },
+        onOpenFestivalCalendar = onOpenFestivalCalendar,
         onBack = onBack,
         modifier = modifier
     )
@@ -124,6 +129,8 @@ fun FestivalSettingsContent(
     onRefreshCalendar: () -> Unit,
     onResetSettings: () -> Unit,
     onBack: () -> Unit,
+    syncUiState: FestivalSyncUiState = FestivalSyncUiState.Idle,
+    onOpenFestivalCalendar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
@@ -774,13 +781,16 @@ fun FestivalSettingsContent(
                                         fontSize = 15.5.sp,
                                         color = colors.textPrimary
                                     )
-                                    val updatedLabel = if (syncStatus.lastSyncedEpochMs > 0L) {
-                                        val formatted = Instant.ofEpochMilli(syncStatus.lastSyncedEpochMs)
-                                            .atZone(domain.weather.SolarPositionCalculator.INDIA_ZONE)
-                                            .format(FESTIVAL_SYNC_FORMATTER)
-                                        "${syncStatus.recordCount} entries cached • Updated $formatted IST"
-                                    } else {
-                                        "Local Pan-India Panchang cache active"
+                                    val updatedLabel = when {
+                                        syncUiState is FestivalSyncUiState.Syncing -> syncUiState.message
+                                        syncUiState !is FestivalSyncUiState.Idle -> syncUiState.message
+                                        syncStatus.lastSyncedEpochMs > 0L -> {
+                                            val formatted = Instant.ofEpochMilli(syncStatus.lastSyncedEpochMs)
+                                                .atZone(domain.weather.SolarPositionCalculator.INDIA_ZONE)
+                                                .format(FESTIVAL_SYNC_FORMATTER)
+                                            "Last synced: $formatted IST • ${syncStatus.recordCount} entries"
+                                        }
+                                        else -> "Local Pan-India Panchang cache active (${syncStatus.recordCount} entries)"
                                     }
                                     Text(
                                         text = updatedLabel,
@@ -791,15 +801,57 @@ fun FestivalSettingsContent(
                                 }
                                 TextButton(
                                     onClick = onRefreshCalendar,
+                                    enabled = syncUiState !is FestivalSyncUiState.Syncing,
                                     modifier = Modifier.testTag("festival_calendar_refresh_button")
                                 ) {
                                     Text(
-                                        text = "Sync",
+                                        text = if (syncUiState is FestivalSyncUiState.Syncing) "Syncing..." else "Sync Now",
                                         fontFamily = PlusJakartaFontFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.5.sp,
                                         color = colors.accentStrong
                                     )
+                                }
+                            }
+
+                            if (onOpenFestivalCalendar != null) {
+                                Surface(
+                                    onClick = onOpenFestivalCalendar,
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = colors.surfaceTinted,
+                                    border = BorderStroke(0.75.dp, colors.cardBorder),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .defaultMinSize(minHeight = 48.dp)
+                                        .testTag("festival_open_calendar_screen_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Open Festival Calendar & Sync Schedule",
+                                                fontFamily = OutfitFontFamily,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 13.5.sp,
+                                                color = colors.textPrimary
+                                            )
+                                            Text(
+                                                text = "View upcoming festivals, sync history & automatic daily sync",
+                                                fontFamily = PlusJakartaFontFamily,
+                                                fontSize = 11.5.sp,
+                                                color = colors.textSecondary
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = Icons.Rounded.ChevronRight,
+                                            contentDescription = "Open Festival Calendar",
+                                            tint = colors.accentStrong
+                                        )
+                                    }
                                 }
                             }
 

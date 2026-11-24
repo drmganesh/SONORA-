@@ -36,7 +36,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         data.festival.FestivalCalendarEntity::class,
         data.festival.FestivalSyncMetaEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class SonoraDatabase : RoomDatabase() {
@@ -577,6 +577,17 @@ abstract class SonoraDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `festival_sync_meta` ADD COLUMN `datasetVersion` TEXT NOT NULL DEFAULT 'rashtriya-panchang-2026.1'")
+                db.execSQL("ALTER TABLE `festival_sync_meta` ADD COLUMN `remoteEtag` TEXT")
+                db.execSQL("ALTER TABLE `festival_sync_meta` ADD COLUMN `remoteLastModified` TEXT")
+                db.execSQL("ALTER TABLE `festival_sync_meta` ADD COLUMN `sourceAttribution` TEXT NOT NULL DEFAULT 'IMD / PAC Rashtriya Panchang • Regional State Panjis • ganeshsp1/hindu-festivals-api (MIT) • satmargastro.com (CC BY 4.0)'")
+                db.execSQL("ALTER TABLE `festival_sync_meta` ADD COLUMN `lastSyncStatusCode` TEXT NOT NULL DEFAULT 'IDLE'")
+                db.execSQL("ALTER TABLE `festival_sync_meta` ADD COLUMN `lastErrorMessage` TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): SonoraDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -595,9 +606,10 @@ abstract class SonoraDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
-                        MIGRATION_11_12
+                        MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
-                    .fallbackToDestructiveMigration(dropAllTables = false)
+                    .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = false)
                     .build()
                 INSTANCE = instance
                 instance

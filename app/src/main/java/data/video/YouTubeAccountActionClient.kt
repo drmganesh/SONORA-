@@ -57,23 +57,38 @@ interface VideoAccountActionProvider {
  * Real YouTube Data API v3 implementation using OAuth2 Bearer tokens.
  */
 class YouTubeAccountActionClient(
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build(),
+    private val httpClient: OkHttpClient = sharedHttpClient,
     private val oauthClientConfigured: Boolean = false
 ) : VideoAccountActionProvider {
 
     companion object {
         private const val TAG = "YouTubeAccountClient"
         private const val API_BASE = "https://www.googleapis.com/youtube/v3"
+        private const val MAX_API_RESPONSE_BYTES = 512L * 1024L
         const val SCOPE_YOUTUBE_FORCE_SSL = "https://www.googleapis.com/auth/youtube.force-ssl"
         const val SCOPE_YOUTUBE = "https://www.googleapis.com/auth/youtube"
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
-        fun buildVideoWebUrl(videoId: String): String = "https://www.youtube.com/watch?v=$videoId"
-        fun buildChannelWebUrl(channelId: String, fallbackUrl: String?): String =
-            fallbackUrl?.takeIf { it.startsWith("http") } ?: "https://www.youtube.com/channel/$channelId"
+        private val sharedHttpClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(12, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .callTimeout(20, TimeUnit.SECONDS)
+                .build()
+        }
+
+        fun buildVideoWebUrl(videoId: String): String =
+            "https://www.youtube.com/watch?v=${URLEncoder.encode(videoId.trim(), "UTF-8")}"
+
+        fun buildChannelWebUrl(channelId: String, fallbackUrl: String?): String {
+            val safeFallback = util.SecureUrlValidator.parseSafeHttpUrl(
+                rawUrl = fallbackUrl,
+                allowHttp = false,
+                allowPrivateHosts = false
+            )
+            return safeFallback?.toString()
+                ?: "https://www.youtube.com/channel/${URLEncoder.encode(channelId.trim(), "UTF-8")}"
+        }
     }
 
     /**
@@ -102,7 +117,7 @@ class YouTubeAccountActionClient(
                     .build()
                 httpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use null
-                    val body = response.body?.string().orEmpty()
+                    val body = util.SecureUrlValidator.readBoundedString(response.body, MAX_API_RESPONSE_BYTES)
                     val items = JSONObject(body).optJSONArray("items") ?: return@use null
                     if (items.length() == 0) return@use VideoRatingState.NONE
                     when (items.getJSONObject(0).optString("rating", "none").lowercase()) {
@@ -112,7 +127,7 @@ class YouTubeAccountActionClient(
                     }
                 }
             }.onFailure {
-                Log.w(TAG, "getVideoRating failed for $videoId", it)
+                Log.w(TAG, "getVideoRating failed for $videoId: ${it.javaClass.simpleName}")
             }.getOrNull()
         }
 
@@ -170,9 +185,9 @@ class YouTubeAccountActionClient(
                 }
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "rateVideo failed for $videoId", t)
+            Log.w(TAG, "rateVideo failed for $videoId: ${t.javaClass.simpleName}")
             VideoAccountActionResult.Failed(
-                message = "Could not reach YouTube API: ${t.message ?: "network error"}",
+                message = "Could not reach YouTube API due to a network error. Please try again.",
                 officialWebUrl = webUrl
             )
         }
@@ -194,7 +209,7 @@ class YouTubeAccountActionClient(
                 .build()
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
-                val body = response.body?.string().orEmpty()
+                val body = util.SecureUrlValidator.readBoundedString(response.body, MAX_API_RESPONSE_BYTES)
                 val items = JSONObject(body).optJSONArray("items") ?: return@use null
                 if (items.length() > 0) items.getJSONObject(0).optString("id").takeIf { it.isNotBlank() } else null
             }
@@ -281,9 +296,9 @@ class YouTubeAccountActionClient(
                 }
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "setChannelSubscription failed for $channelId", t)
+            Log.w(TAG, "setChannelSubscription failed for $channelId: ${t.javaClass.simpleName}")
             VideoAccountActionResult.Failed(
-                message = "Could not reach YouTube API: ${t.message ?: "network error"}",
+                message = "Could not reach YouTube API due to a network error. Please try again.",
                 officialWebUrl = webUrl
             )
         }

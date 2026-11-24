@@ -47,6 +47,7 @@ data class FestivalAtmosphereSettings(
     val showHomeIndicator: Boolean = true,
     val reduceMotion: Boolean = false,
     val batterySaver: Boolean = true,
+    val automaticDailySyncEnabled: Boolean = true,
     /** Optional effect selected inside Settings ONLY for live preview; never forces home/player festival when auto is off. */
     val previewEffectId: FestivalEffectId? = null
 ) {
@@ -127,6 +128,7 @@ class FestivalAtmospherePreferences(private val context: Context) {
         val KEY_SHOW_HOME_INDICATOR = booleanPreferencesKey("festival_show_home_indicator")
         val KEY_REDUCE_MOTION = booleanPreferencesKey("festival_reduce_motion")
         val KEY_BATTERY_SAVER = booleanPreferencesKey("festival_battery_saver")
+        val KEY_AUTO_DAILY_SYNC = booleanPreferencesKey("festival_auto_daily_sync")
     }
 
     private val safeData: Flow<Preferences> = context.festivalAtmosphereDataStore.data.catch { e ->
@@ -148,7 +150,9 @@ class FestivalAtmospherePreferences(private val context: Context) {
             particleDensity = FestivalDensityLevel.fromId(prefs[KEY_DENSITY]),
             showHomeIndicator = prefs[KEY_SHOW_HOME_INDICATOR] ?: FestivalAtmosphereSettings.DEFAULT.showHomeIndicator,
             reduceMotion = prefs[KEY_REDUCE_MOTION] ?: FestivalAtmosphereSettings.DEFAULT.reduceMotion,
-            batterySaver = prefs[KEY_BATTERY_SAVER] ?: FestivalAtmosphereSettings.DEFAULT.batterySaver
+            batterySaver = prefs[KEY_BATTERY_SAVER] ?: FestivalAtmosphereSettings.DEFAULT.batterySaver,
+            automaticDailySyncEnabled = prefs[KEY_AUTO_DAILY_SYNC]
+                ?: FestivalAtmosphereSettings.DEFAULT.automaticDailySyncEnabled
         )
     }
 
@@ -170,7 +174,9 @@ class FestivalAtmospherePreferences(private val context: Context) {
                 particleDensity = FestivalDensityLevel.fromId(prefs[KEY_DENSITY]),
                 showHomeIndicator = prefs[KEY_SHOW_HOME_INDICATOR] ?: FestivalAtmosphereSettings.DEFAULT.showHomeIndicator,
                 reduceMotion = prefs[KEY_REDUCE_MOTION] ?: FestivalAtmosphereSettings.DEFAULT.reduceMotion,
-                batterySaver = prefs[KEY_BATTERY_SAVER] ?: FestivalAtmosphereSettings.DEFAULT.batterySaver
+                batterySaver = prefs[KEY_BATTERY_SAVER] ?: FestivalAtmosphereSettings.DEFAULT.batterySaver,
+                automaticDailySyncEnabled = prefs[KEY_AUTO_DAILY_SYNC]
+                    ?: FestivalAtmosphereSettings.DEFAULT.automaticDailySyncEnabled
             )
             val updated = transform(current)
             prefs[KEY_ENABLED] = updated.enabled
@@ -184,6 +190,7 @@ class FestivalAtmospherePreferences(private val context: Context) {
             prefs[KEY_SHOW_HOME_INDICATOR] = updated.showHomeIndicator
             prefs[KEY_REDUCE_MOTION] = updated.reduceMotion
             prefs[KEY_BATTERY_SAVER] = updated.batterySaver
+            prefs[KEY_AUTO_DAILY_SYNC] = updated.automaticDailySyncEnabled
         }
     }
 

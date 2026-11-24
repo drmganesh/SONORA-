@@ -449,8 +449,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     // --- Pan-India Hindu Festival Atmosphere Engine (Coexists with Weather, Zero Personal Permissions) ---
     val festivalAtmospherePrefs = data.preferences.FestivalAtmospherePreferences(application)
     val festivalRepository = data.festival.FestivalCalendarRepository(
-        dao = db.festivalCalendarDao()
+        dao = db.festivalCalendarDao(),
+        isNetworkAvailable = { isNetworkOnline.value }
     )
+
+    val festivalSyncUiState: StateFlow<data.festival.FestivalSyncUiState> =
+        festivalRepository.syncUiState
 
     val festivalAtmosphereSettings: StateFlow<data.preferences.FestivalAtmosphereSettings> =
         festivalAtmospherePrefs.settingsFlow.stateIn(
@@ -494,6 +498,25 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = domain.festival.ActiveFestivalResolution.EMPTY
         )
 
+    val upcomingCachedFestivals: StateFlow<List<domain.festival.FestivalRecord>> =
+        combine(
+            festivalRepository.cachedRecordsFlow,
+            festivalAtmosphereSettings,
+            _festivalReferenceDate
+        ) { records, settings, date ->
+            data.festival.FestivalCalendarRepository.filterUpcomingFestivals(
+                records = records,
+                fromDate = date,
+                regionMode = settings.regionMode,
+                selectedState = settings.selectedState,
+                includeRegionalInAllIndia = settings.includeRegionalInAllIndia
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList()
+        )
+
     fun updateFestivalAtmosphereSettings(
         transform: (data.preferences.FestivalAtmosphereSettings) -> data.preferences.FestivalAtmosphereSettings
     ) {
@@ -508,10 +531,39 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Called when SONORA opens or returns to foreground (`MainActivity.onStart`).
+     * Uses the single [data.festival.FestivalCalendarSyncCoordinator] so:
+     * - If not yet synced successfully on the current `Asia/Kolkata` calendar day, runs automatic daily sync.
+     * - If already synced today, reuses cached Room data without downloading again.
+     * - Never runs repeatedly during Compose recompositions or in-app screen navigation.
+     * - Never interrupts audio playback.
+     */
+    fun onAppForegroundedForFestivalSync() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                _festivalReferenceDate.value = java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
+                val autoEnabled = runCatching {
+                    festivalAtmospherePrefs.settingsFlow.first().automaticDailySyncEnabled
+                }.getOrDefault(true)
+                festivalRepository.syncOnAppOpenIfNeeded(automaticDailySyncEnabled = autoEnabled)
+            }.onFailure { e ->
+                Log.w(TAG, "Automatic daily festival sync skipped: ${e.message}")
+            }
+        }
+    }
+
     fun refreshFestivalCalendarNow(force: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
             _festivalReferenceDate.value = java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
-            festivalRepository.refreshIfStale(force = force)
+            if (force) {
+                festivalRepository.syncNowManually()
+            } else {
+                val autoEnabled = runCatching {
+                    festivalAtmospherePrefs.settingsFlow.first().automaticDailySyncEnabled
+                }.getOrDefault(true)
+                festivalRepository.syncOnAppOpenIfNeeded(automaticDailySyncEnabled = autoEnabled)
+            }
         }
     }
 
@@ -935,7 +987,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _automixEnabled = MutableStateFlow(preferences.automixEnabled)
     val automixEnabled: StateFlow<Boolean> = _automixEnabled.asStateFlow()
 
-    private val _matchNextSongEnabled = MutableStateFlow(preferences.matchNextSongEnabled)
+    private var userUpdatedHarmonicMatching = false
+    private val _matchNextSongEnabled = MutableStateFlow(preferences.getExplicitMatchNextSongPreference() ?: false)
     val matchNextSongEnabled: StateFlow<Boolean> = _matchNextSongEnabled.asStateFlow()
 
     // Player Style System (30 Curated Styles + 10 Preserved Legacy Styles, 20 Mini-Player Styles)
@@ -1228,6 +1281,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     // Dedicated User Profile state & DataStore persistence (strictly separate from song artwork)
     private val userProfilePrefs = data.preferences.UserProfilePreferences(application)
     val userProfile: StateFlow<com.example.model.UserProfile> = userProfilePrefs.userProfile
+    val profileOnboardingState: StateFlow<data.preferences.ProfileOnboardingState> = userProfilePrefs.onboardingState
+
+    suspend fun completeFirstLaunchProfile(
+        displayName: String,
+        pickedAvatarUri: android.net.Uri?
+    ): Result<com.example.model.UserProfile> {
+        return userProfilePrefs.completeFirstLaunchProfile(displayName, pickedAvatarUri)
+    }
+
+    suspend fun updateUserProfileNameOnly(displayName: String): Result<String> {
+        return userProfilePrefs.updateDisplayName(displayName)
+    }
 
     fun updateUserProfileDetails(displayName: String, username: String) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -1244,6 +1309,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     fun removeUserProfilePhoto() {
         viewModelScope.launch(Dispatchers.IO) {
             userProfilePrefs.removeAvatar()
+        }
+    }
+
+    fun resetPersonalProfileData() {
+        viewModelScope.launch(Dispatchers.IO) {
+            userProfilePrefs.resetPersonalProfileData()
         }
     }
 
@@ -2167,6 +2238,21 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 }
         }
         viewModelScope.launch {
+            experiencePreferences.harmonicTrackMatchingFlow {
+                preferences.getExplicitMatchNextSongPreference()
+            }
+                .catch { e -> Log.w(TAG, "Harmonic matching DataStore error", e) }
+                .take(1)
+                .collect { savedEnabled ->
+                    if (!userUpdatedHarmonicMatching) {
+                        _matchNextSongEnabled.value = savedEnabled
+                        if (!savedEnabled) {
+                            _nextMatchedSong.value = null
+                        }
+                    }
+                }
+        }
+        viewModelScope.launch {
             connectivityMonitor.isMeteredConnection.collect { metered ->
                 data.artwork.AlbumArtworkQualityManager.isMeteredOrMobileNetwork = metered
             }
@@ -2305,14 +2391,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _festivalReferenceDate.value = java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
             }
         }
-        // Seed Pan-India Hindu Festival Room cache, schedule infrequent battery-safe WorkManager sync, and refresh if stale
+        // Seed Pan-India Hindu Festival Room cache, register single unique daily WorkManager fallback,
+        // and run automatic daily sync if not yet synced on the current Asia/Kolkata calendar day.
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 festivalRepository.ensureInitialCacheSeeded()
                 festivalRepository.schedulePeriodicRefresh(getApplication())
-                if (isNetworkOnline.value) {
-                    festivalRepository.refreshIfStale(force = false)
-                }
+                val autoEnabled = runCatching {
+                    festivalAtmospherePrefs.settingsFlow.first().automaticDailySyncEnabled
+                }.getOrDefault(true)
+                festivalRepository.syncOnAppOpenIfNeeded(automaticDailySyncEnabled = autoEnabled)
             }.onFailure { e ->
                 Log.w(TAG, "Festival calendar initialization deferred: ${e.message}")
             }
@@ -3080,9 +3168,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
      * Evaluates harmonic compatibility (same artist, matching genre, or key/energy tempo flow).
      */
     private fun findNextMatchedSong(current: Song, currentQueue: List<Song>, currentIndex: Int) {
-        if (!_matchNextSongEnabled.value || currentQueue.size <= 1) {
-            val nextIdx = (currentIndex + 1) % currentQueue.size.coerceAtLeast(1)
-            _nextMatchedSong.value = currentQueue.getOrNull(nextIdx)
+        if (!_matchNextSongEnabled.value) {
+            // Harmonic Track Matching is OFF: do not run track analysis or matching jobs.
+            _nextMatchedSong.value = null
+            return
+        }
+        if (currentQueue.size <= 1) {
+            _nextMatchedSong.value = null
             return
         }
 
@@ -3709,9 +3801,17 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearListeningHistory() {
         listeningTimeTracker.reset()
+        preferences.recentSearches = emptyList()
+        _recentSearches.value = emptyList()
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 listeningAnalyticsRepository.clearListeningHistory()
+                dao.clearLocalPlayHistory()
+                dao.clearOnlinePlayHistory()
+                dao.clearAllVideoHistory()
+                dao.pruneUnreferencedVideos()
+                dao.clearOnlineSearchHistory()
+                dao.clearVideoSearchHistory()
             }.onFailure { e ->
                 Log.w(TAG, "Failed clearing listening history: ${e.message}")
             }
@@ -4400,10 +4500,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleMatchNextSong(enabled: Boolean) {
+        userUpdatedHarmonicMatching = true
         _matchNextSongEnabled.value = enabled
         preferences.matchNextSongEnabled = enabled
-        _currentSong.value?.let { cur ->
-            findNextMatchedSong(cur, _queue.value, _queueIndex.value)
+        viewModelScope.launch(Dispatchers.IO) {
+            experiencePreferences.setHarmonicTrackMatchingEnabled(enabled)
+        }
+        if (enabled) {
+            _currentSong.value?.let { cur ->
+                findNextMatchedSong(cur, _queue.value, _queueIndex.value)
+            }
+        } else {
+            _nextMatchedSong.value = null
         }
     }
 

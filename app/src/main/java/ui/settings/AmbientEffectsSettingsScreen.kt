@@ -59,10 +59,17 @@ import ui.theme.EditorialColors
 import ui.theme.LocalEditorialColors
 import kotlin.math.roundToInt
 
+private enum class AmbientEffectsSubScreen {
+    MAIN,
+    FESTIVAL_ATMOSPHERE,
+    FESTIVAL_CALENDAR
+}
+
 /**
  * Settings → Appearance → Ambient Effects
  * Configures SONORA's Weather-Synced Ambient Effects Engine (5 fixed Odisha locations,
- * Open-Meteo public weather, Automatic / Manual / Off modes, and visual/performance controls).
+ * Open-Meteo public weather, Automatic / Manual / Off modes, visual/performance controls),
+ * Festival Atmosphere, and Public Festival Calendar sync.
  */
 @Composable
 fun AmbientEffectsSettingsScreen(
@@ -77,52 +84,90 @@ fun AmbientEffectsSettingsScreen(
     val locationSummaries by viewModel.locationWeatherSummaries.collectAsState()
     val festivalSettings by viewModel.festivalAtmosphereSettings.collectAsState()
     val activeFestivalResolution by viewModel.activeFestivalResolution.collectAsState()
-    var showFestivalSettings by androidx.compose.runtime.remember(initialOpenFestivalSettings) {
-        androidx.compose.runtime.mutableStateOf(initialOpenFestivalSettings)
+    val festivalSyncStatus by viewModel.festivalSyncStatus.collectAsState()
+    val festivalSyncUiState by viewModel.festivalSyncUiState.collectAsState()
+    var subScreen by androidx.compose.runtime.remember(initialOpenFestivalSettings) {
+        androidx.compose.runtime.mutableStateOf(
+            if (initialOpenFestivalSettings) AmbientEffectsSubScreen.FESTIVAL_ATMOSPHERE else AmbientEffectsSubScreen.MAIN
+        )
     }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.prefetchAllOdishaLocationWeather()
     }
 
-    if (showFestivalSettings) {
-        FestivalSettingsScreen(
-            viewModel = viewModel,
-            onBack = {
-                if (initialOpenFestivalSettings) {
-                    onBack()
-                } else {
-                    showFestivalSettings = false
-                }
-            },
-            modifier = modifier
-        )
-    } else {
-        val festivalSummary = androidx.compose.runtime.remember(festivalSettings, activeFestivalResolution) {
-            when {
-                !festivalSettings.enabled -> "Off • Pan-India Hindu festivals"
-                activeFestivalResolution.primary != null ->
-                    "${activeFestivalResolution.primary!!.record.iconGlyph} ${activeFestivalResolution.primary!!.displayNameForRegion} Active Today"
-                festivalSettings.regionMode == domain.festival.FestivalRegionMode.ALL_INDIA ->
-                    "Auto • All India • Battery Saver ${if (festivalSettings.batterySaver) "On" else "Off"}"
-                else ->
-                    "Auto • ${festivalSettings.selectedState.displayName} • Battery Saver ${if (festivalSettings.batterySaver) "On" else "Off"}"
-            }
+    when (subScreen) {
+        AmbientEffectsSubScreen.FESTIVAL_ATMOSPHERE -> {
+            FestivalSettingsScreen(
+                viewModel = viewModel,
+                onBack = {
+                    if (initialOpenFestivalSettings) {
+                        onBack()
+                    } else {
+                        subScreen = AmbientEffectsSubScreen.MAIN
+                    }
+                },
+                onOpenFestivalCalendar = { subScreen = AmbientEffectsSubScreen.FESTIVAL_CALENDAR },
+                modifier = modifier
+            )
         }
-        WeatherAmbientSettingsContent(
-            settings = weatherSettings,
-            fetchState = weatherFetchState,
-            locationSummaries = locationSummaries,
-            colors = colors,
-            onSelectLocation = { location -> viewModel.selectWeatherLocation(location) },
-            onUpdateSettings = { transform -> viewModel.updateWeatherAmbientSettings(transform) },
-            onRefreshWeather = { viewModel.refreshSelectedWeather(force = true) },
-            onResetSettings = { viewModel.resetWeatherAmbientSettings() },
-            onOpenFestivalAtmosphere = { showFestivalSettings = true },
-            festivalAtmosphereSubtitle = festivalSummary,
-            onBack = onBack,
-            modifier = modifier
-        )
+        AmbientEffectsSubScreen.FESTIVAL_CALENDAR -> {
+            FestivalCalendarScreen(
+                viewModel = viewModel,
+                onBack = { subScreen = AmbientEffectsSubScreen.MAIN },
+                onOpenFestivalAtmosphere = { subScreen = AmbientEffectsSubScreen.FESTIVAL_ATMOSPHERE },
+                modifier = modifier
+            )
+        }
+        AmbientEffectsSubScreen.MAIN -> {
+            val festivalSummary = androidx.compose.runtime.remember(festivalSettings, activeFestivalResolution) {
+                when {
+                    !festivalSettings.enabled -> "Off • Pan-India Hindu festivals"
+                    activeFestivalResolution.primary != null ->
+                        "${activeFestivalResolution.primary!!.record.iconGlyph} ${activeFestivalResolution.primary!!.displayNameForRegion} Active Today"
+                    festivalSettings.regionMode == domain.festival.FestivalRegionMode.ALL_INDIA ->
+                        "Auto • All India • Battery Saver ${if (festivalSettings.batterySaver) "On" else "Off"}"
+                    else ->
+                        "Auto • ${festivalSettings.selectedState.displayName} • Battery Saver ${if (festivalSettings.batterySaver) "On" else "Off"}"
+                }
+            }
+            val festivalCalendarSummary = androidx.compose.runtime.remember(
+                festivalSettings.automaticDailySyncEnabled,
+                festivalSyncStatus,
+                festivalSyncUiState
+            ) {
+                when (festivalSyncUiState) {
+                    is data.festival.FestivalSyncUiState.Syncing -> "Syncing..."
+                    is data.festival.FestivalSyncUiState.NoInternet ->
+                        "Offline • ${festivalSyncStatus.cachedFestivalCount} cached"
+                    is data.festival.FestivalSyncUiState.ServerError,
+                    is data.festival.FestivalSyncUiState.InvalidResponse,
+                    is data.festival.FestivalSyncUiState.DatabaseError ->
+                        "Using cached calendar • ${festivalSyncStatus.cachedFestivalCount} festivals"
+                    else -> {
+                        val dailyLabel = if (festivalSettings.automaticDailySyncEnabled) "Auto daily sync" else "Manual sync"
+                        val syncState = if (festivalSyncStatus.isSyncedToday()) "Synced today" else "${festivalSyncStatus.cachedFestivalCount} cached"
+                        "$dailyLabel • $syncState"
+                    }
+                }
+            }
+            WeatherAmbientSettingsContent(
+                settings = weatherSettings,
+                fetchState = weatherFetchState,
+                locationSummaries = locationSummaries,
+                colors = colors,
+                onSelectLocation = { location -> viewModel.selectWeatherLocation(location) },
+                onUpdateSettings = { transform -> viewModel.updateWeatherAmbientSettings(transform) },
+                onRefreshWeather = { viewModel.refreshSelectedWeather(force = true) },
+                onResetSettings = { viewModel.resetWeatherAmbientSettings() },
+                onOpenFestivalAtmosphere = { subScreen = AmbientEffectsSubScreen.FESTIVAL_ATMOSPHERE },
+                festivalAtmosphereSubtitle = festivalSummary,
+                onOpenFestivalCalendar = { subScreen = AmbientEffectsSubScreen.FESTIVAL_CALENDAR },
+                festivalCalendarSubtitle = festivalCalendarSummary,
+                onBack = onBack,
+                modifier = modifier
+            )
+        }
     }
 }
 

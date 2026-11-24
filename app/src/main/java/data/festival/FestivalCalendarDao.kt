@@ -27,10 +27,26 @@ interface FestivalCalendarDao {
 
     @Transaction
     suspend fun replaceAllEntries(entries: List<FestivalCalendarEntity>) {
+        // Guard against accidentally wiping valid cached data with an empty list
+        if (entries.isEmpty()) return
         clearAllEntries()
+        upsertEntries(entries)
+    }
+
+    /**
+     * Atomically replaces validated calendar entries and records the sync metadata in one
+     * Room database transaction so partial writes can never corrupt cached festivals.
+     */
+    @Transaction
+    suspend fun commitSyncUpdate(
+        entries: List<FestivalCalendarEntity>,
+        meta: FestivalSyncMetaEntity
+    ) {
         if (entries.isNotEmpty()) {
+            clearAllEntries()
             upsertEntries(entries)
         }
+        upsertSyncMeta(meta)
     }
 
     @Query("SELECT * FROM festival_sync_meta WHERE id = 1")

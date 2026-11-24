@@ -67,7 +67,8 @@ class VideoAccountPreferences(private val context: Context) {
     }
 
     val authStateFlow: Flow<ProviderAuthState> = safeData.map { prefs ->
-        val token = prefs[KEY_OAUTH_ACCESS_TOKEN].orEmpty()
+        val storedToken = prefs[KEY_OAUTH_ACCESS_TOKEN].orEmpty()
+        val token = util.LocalTokenCipher.decrypt(storedToken).orEmpty()
         val expiresAt = prefs[KEY_OAUTH_EXPIRES_AT_MS] ?: 0L
         val label = prefs[KEY_OAUTH_ACCOUNT_LABEL].orEmpty()
         val scopes = prefs[KEY_OAUTH_SCOPES].orEmpty()
@@ -112,9 +113,11 @@ class VideoAccountPreferences(private val context: Context) {
         expiresAtMs: Long,
         scopes: Set<String>
     ) {
+        val encryptedToken = util.LocalTokenCipher.encrypt(accessToken)
+            ?: throw IOException("Unable to encrypt OAuth access token locally.")
         context.videoAccountDataStore.edit { prefs ->
-            prefs[KEY_OAUTH_ACCOUNT_LABEL] = accountLabel
-            prefs[KEY_OAUTH_ACCESS_TOKEN] = accessToken
+            prefs[KEY_OAUTH_ACCOUNT_LABEL] = accountLabel.trim()
+            prefs[KEY_OAUTH_ACCESS_TOKEN] = encryptedToken
             prefs[KEY_OAUTH_EXPIRES_AT_MS] = expiresAtMs
             prefs[KEY_OAUTH_SCOPES] = scopes
         }

@@ -1,8 +1,5 @@
 package ui.profile
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -107,19 +104,9 @@ fun UserProfileSheet(
     var usernameInput by remember(userProfile.username) { mutableStateOf(userProfile.formattedUsername) }
     var showSavedBanner by remember { mutableStateOf(false) }
 
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            onPickPhotoUri(uri)
-        }
-    }
-
-    fun launchPhotoPicker() {
-        photoPickerLauncher.launch(
-            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-        )
-    }
+    val launchPhotoPicker = rememberProfilePhotoPickerLauncher(
+        onPhotoSelected = { uri -> onPickPhotoUri(uri) }
+    )
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -337,7 +324,11 @@ fun UserProfileSheet(
 
                     OutlinedTextField(
                         value = displayNameInput,
-                        onValueChange = { displayNameInput = it },
+                        onValueChange = { updated ->
+                            if (updated.length <= data.preferences.UserProfilePreferences.MAX_DISPLAY_NAME_LENGTH) {
+                                displayNameInput = updated
+                            }
+                        },
                         label = { Text("Display Name") },
                         singleLine = true,
                         leadingIcon = {

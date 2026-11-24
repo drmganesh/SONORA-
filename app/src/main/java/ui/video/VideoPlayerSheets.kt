@@ -94,13 +94,16 @@ import domain.video.VideoStreamOption
 import domain.video.VideoSubtitleOption
 import ui.theme.EditorialColors
 
-fun openOfficialExternalUrl(context: Context, url: String) {
-    runCatching {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+fun openOfficialExternalUrl(context: Context, url: String): Boolean {
+    val safeUri = util.SecureUrlValidator.sanitizeExternalBrowseUrl(url) ?: return false
+    return runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, safeUri).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)
-    }
+        true
+    }.getOrDefault(false)
 }
 
 fun shareVideoLink(context: Context, video: OnlineVideoItem) {

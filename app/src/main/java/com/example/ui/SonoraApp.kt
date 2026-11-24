@@ -20,6 +20,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -123,6 +124,7 @@ fun SonoraApp(viewModel: SonoraViewModel) {
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
     val trackDirection by viewModel.trackTransitionDirection.collectAsState()
+    val profileOnboardingState by viewModel.profileOnboardingState.collectAsState()
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
 
     LaunchedEffect(systemDark) {
@@ -230,7 +232,10 @@ fun SonoraApp(viewModel: SonoraViewModel) {
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(profileOnboardingState) {
+        if (profileOnboardingState != data.preferences.ProfileOnboardingState.COMPLETED) {
+            return@LaunchedEffect
+        }
         val neededPermissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -268,6 +273,29 @@ fun SonoraApp(viewModel: SonoraViewModel) {
             editorialColors = editorialColors,
             reduceAnimations = effectiveReduceAnimations
         ) {
+            when (profileOnboardingState) {
+                data.preferences.ProfileOnboardingState.LOADING -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black)
+                            .testTag("onboarding_loading_gate")
+                    )
+                    return@SonoraTheme
+                }
+                data.preferences.ProfileOnboardingState.REQUIRED -> {
+                    ui.onboarding.FirstLaunchProfileOnboardingScreen(
+                        colors = editorialColors,
+                        reduceAnimations = effectiveReduceAnimations,
+                        onCompleteProfile = { name, photoUri ->
+                            viewModel.completeFirstLaunchProfile(name, photoUri)
+                        }
+                    )
+                    return@SonoraTheme
+                }
+                data.preferences.ProfileOnboardingState.COMPLETED -> Unit
+            }
+
             val pushEnter = SonoraTransitions.pushEnter(motionState)
             val pushExit = SonoraTransitions.pushExit(motionState)
             val modalEnter = SonoraTransitions.modalEnter(motionState)

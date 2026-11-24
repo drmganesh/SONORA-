@@ -348,8 +348,20 @@ class SonoraPreferences(context: Context) {
         set(value) = prefs.edit().putBoolean("automix_enabled", value).apply()
 
     var matchNextSongEnabled: Boolean
-        get() = prefs.getBoolean("match_next_song_enabled", true)
+        get() = prefs.getBoolean("match_next_song_enabled", false)
         set(value) = prefs.edit().putBoolean("match_next_song_enabled", value).apply()
+
+    /**
+     * Returns the explicitly persisted Harmonic Track Matching preference if the user
+     * previously toggled it in SharedPreferences, or null when never configured.
+     */
+    fun getExplicitMatchNextSongPreference(): Boolean? {
+        return if (prefs.contains("match_next_song_enabled")) {
+            prefs.getBoolean("match_next_song_enabled", false)
+        } else {
+            null
+        }
+    }
 
     // Daily Listening Analytics (Stores seconds listened per day: key format "analytics_day_YYYY-MM-DD")
     fun addListeningTime(seconds: Int, dateKey: String) {

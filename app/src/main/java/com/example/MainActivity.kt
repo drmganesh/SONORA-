@@ -172,6 +172,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.onAppForegroundedForFestivalSync()
+    }
+
     override fun onStop() {
         super.onStop()
         viewModel.videoController.onAppBackgrounded()

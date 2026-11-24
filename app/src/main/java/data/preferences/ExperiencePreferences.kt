@@ -97,6 +97,7 @@ class ExperiencePreferences(private val context: Context) {
         val KEY_UNLIMITED_QUEUE_ENABLED = booleanPreferencesKey("music_unlimited_queue_enabled")
         val KEY_SWIPE_DOWN_DISMISS_MINI_PLAYER = booleanPreferencesKey("music_swipe_down_dismiss_mini_player")
         val KEY_ALBUM_ARTWORK_QUALITY = stringPreferencesKey("music_album_artwork_quality_mode")
+        val KEY_HARMONIC_TRACK_MATCHING_ENABLED = booleanPreferencesKey("harmonic_track_matching_enabled")
     }
 
     private val safeData: Flow<Preferences> = context.experienceDataStore.data.catch { ex ->
@@ -130,6 +131,19 @@ class ExperiencePreferences(private val context: Context) {
             swipeDownDismissMiniPlayerEnabled = prefs[KEY_SWIPE_DOWN_DISMISS_MINI_PLAYER] ?: true,
             albumArtworkQualityMode = AlbumArtworkQualityMode.fromId(prefs[KEY_ALBUM_ARTWORK_QUALITY])
         )
+    }
+
+    /**
+     * Emits the persisted Harmonic Track Matching preference from DataStore.
+     * Defaults to false on fresh installations while preserving any explicit legacy value.
+     */
+    fun harmonicTrackMatchingFlow(legacyExplicitProvider: () -> Boolean? = { null }): Flow<Boolean> =
+        safeData.map { prefs ->
+            prefs[KEY_HARMONIC_TRACK_MATCHING_ENABLED] ?: legacyExplicitProvider() ?: false
+        }
+
+    suspend fun getHarmonicTrackMatchingEnabled(legacyExplicitValue: Boolean? = null): Boolean {
+        return harmonicTrackMatchingFlow { legacyExplicitValue }.first()
     }
 
     suspend fun getVideoExperience(): VideoExperienceSettings = videoExperienceFlow.first()
@@ -209,5 +223,9 @@ class ExperiencePreferences(private val context: Context) {
 
     suspend fun setAlbumArtworkQualityMode(mode: AlbumArtworkQualityMode) {
         context.experienceDataStore.edit { it[KEY_ALBUM_ARTWORK_QUALITY] = mode.id }
+    }
+
+    suspend fun setHarmonicTrackMatchingEnabled(enabled: Boolean) {
+        context.experienceDataStore.edit { it[KEY_HARMONIC_TRACK_MATCHING_ENABLED] = enabled }
     }
 }

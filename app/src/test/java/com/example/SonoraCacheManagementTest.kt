@@ -580,6 +580,9 @@ class SonoraCacheManagementTest {
                 )
             }
         )
+        meteredManager.setCacheMusicEnabled(true)
+        meteredManager.setMusicCacheLimitBytes(512L * 1024L * 1024L, clearExistingWhenZero = false)
+        meteredManager.setPreloadUpcomingEnabled(true)
         assertEquals(0L, meteredManager.computeAllowedPreloadWindowBytes(SonoraMediaCacheManager.CacheNamespace.VIDEO))
         assertEquals(
             CacheSettings.METERED_MUSIC_PRELOAD_WINDOW_BYTES,

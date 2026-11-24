@@ -265,7 +265,8 @@ class SonoraAudioEngine(private val context: Context) {
     }
 
     fun setFocusDuckScale(scale: Float) {
-        val target = scale.coerceIn(0.15f, 1.0f)
+        val finite = if (scale.isFinite()) scale else 1.0f
+        val target = finite.coerceIn(0.15f, 1.0f)
         if (abs(focusDuckScale - target) < 0.01f) return
         focusDuckScale = target
         pushDspSnapshot()
@@ -817,22 +818,24 @@ class SonoraAudioEngine(private val context: Context) {
     }
 
     fun setPlaybackSpeed(speed: Float, pitch: Float = 1.0f) {
-        currentPlaybackSpeed = speed.coerceIn(0.5f, 2.0f)
+        val safeSpeed = if (speed.isFinite()) speed else 1.0f
+        val safePitch = if (pitch.isFinite()) pitch else 1.0f
+        currentPlaybackSpeed = safeSpeed.coerceIn(0.5f, 2.0f)
         when {
-            usingOnlinePlayer -> onlinePlaybackHandler.setPlaybackSpeed(currentPlaybackSpeed, pitch)
+            usingOnlinePlayer -> onlinePlaybackHandler.setPlaybackSpeed(currentPlaybackSpeed, safePitch.coerceIn(0.5f, 2.0f))
             usingFallbackPlayer -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && _isPreparedState) {
                     try {
                         val params = fallbackMediaPlayer?.playbackParams ?: android.media.PlaybackParams()
                         params.speed = currentPlaybackSpeed
-                        params.pitch = pitch.coerceIn(0.5f, 2.0f)
+                        params.pitch = safePitch.coerceIn(0.5f, 2.0f)
                         fallbackMediaPlayer?.playbackParams = params
                     } catch (e: Exception) {
                         Log.w(tag, "Failed to set playback params: ${e.message}")
                     }
                 }
             }
-            else -> pcmPlayer.setPlaybackSpeed(currentPlaybackSpeed, pitch)
+            else -> pcmPlayer.setPlaybackSpeed(currentPlaybackSpeed, safePitch.coerceIn(0.5f, 2.0f))
         }
     }
 
@@ -857,8 +860,8 @@ class SonoraAudioEngine(private val context: Context) {
 
     fun update8dOrbitConfig(enabled: Boolean, speed: Float, depth: Float) {
         orbit8dEnabled = enabled
-        orbit8dSpeed = speed.coerceIn(0.1f, 2.0f)
-        orbit8dDepth = depth.coerceIn(0.1f, 1.0f)
+        orbit8dSpeed = (if (speed.isFinite()) speed else orbit8dSpeed).coerceIn(0.1f, 2.0f)
+        orbit8dDepth = (if (depth.isFinite()) depth else orbit8dDepth).coerceIn(0.1f, 1.0f)
         pushDspSnapshot()
         if (usingFallbackPlayer) {
             if (enabled && !globalEffectsBypass) {
@@ -893,12 +896,12 @@ class SonoraAudioEngine(private val context: Context) {
 
     fun updateSpatialAudioConfig(config: SpatialAudioConfig) {
         spatialConfig = config.copy(
-            intensity = config.intensity.coerceIn(0f, 1f),
-            soundstageWidth = config.soundstageWidth.coerceIn(0f, 1f),
-            stereoWidening = config.stereoWidening.coerceIn(0f, 1f),
-            channelBalance = config.channelBalance.coerceIn(-1f, 1f),
-            listenerX = config.listenerX.coerceIn(-1f, 1f),
-            listenerY = config.listenerY.coerceIn(-1f, 1f)
+            intensity = (if (config.intensity.isFinite()) config.intensity else spatialConfig.intensity).coerceIn(0f, 1f),
+            soundstageWidth = (if (config.soundstageWidth.isFinite()) config.soundstageWidth else spatialConfig.soundstageWidth).coerceIn(0f, 1f),
+            stereoWidening = (if (config.stereoWidening.isFinite()) config.stereoWidening else spatialConfig.stereoWidening).coerceIn(0f, 1f),
+            channelBalance = (if (config.channelBalance.isFinite()) config.channelBalance else spatialConfig.channelBalance).coerceIn(-1f, 1f),
+            listenerX = (if (config.listenerX.isFinite()) config.listenerX else spatialConfig.listenerX).coerceIn(-1f, 1f),
+            listenerY = (if (config.listenerY.isFinite()) config.listenerY else spatialConfig.listenerY).coerceIn(-1f, 1f)
         )
         pushDspSnapshot()
         if (usingFallbackPlayer) {
@@ -1030,7 +1033,7 @@ class SonoraAudioEngine(private val context: Context) {
                         _waveformSamples.value = decayedWave
                     }
                     if (!freqActive && !waveActive) {
-                        delay(180L)
+                        delay(500L)
                     }
                 }
             }
@@ -1043,7 +1046,8 @@ class SonoraAudioEngine(private val context: Context) {
                 (audioDeviceCallback as? AudioDeviceCallback)?.let { cb ->
                     audioManager?.unregisterAudioDeviceCallback(cb)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.w(tag, "AudioDeviceCallback unregister skipped: ${e.message}")
             }
             audioDeviceCallback = null
         }
