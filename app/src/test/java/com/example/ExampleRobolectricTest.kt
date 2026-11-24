@@ -188,7 +188,6 @@ class ExampleRobolectricTest {
             swipeUpToOpenQueueEnabled = false,
             rightEdgeVolumeEnabled = true,
             leftEdgeBrightnessEnabled = false,
-            miniPlayerGesturesEnabled = true,
             swipeSensitivity = 1.35f,
             swipeThresholdDp = 84,
             hapticFeedbackEnabled = false

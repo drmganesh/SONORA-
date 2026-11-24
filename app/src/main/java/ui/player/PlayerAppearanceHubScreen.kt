@@ -525,8 +525,6 @@ fun PlayerAppearanceHubScreen(
                                             if (currentSong != null) viewModel.seekTo(targetMs)
                                         },
                                         onClick = { livePreviewFullStyle = currentStyle },
-                                        gesturesEnabled = false,
-                                        swipeDownDismissEnabled = false,
                                         miniPlayerStyle = activePreviewMini,
                                         frequencies = visualizerFrequencies,
                                         queue = if (queue.isNotEmpty()) queue else SAMPLE_PREVIEW_QUEUE,

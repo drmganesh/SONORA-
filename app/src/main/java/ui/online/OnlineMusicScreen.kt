@@ -99,7 +99,6 @@ fun OnlineMusicScreen(
     val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
-    val miniPlayerDisplayState by viewModel.miniPlayerDisplayState.collectAsState()
     val collectionState by viewModel.onlineCollectionState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
@@ -159,8 +158,7 @@ fun OnlineMusicScreen(
             contentPadding = PaddingValues(
                 top = 8.dp,
                 bottom = domain.player.MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
-                    isMusicMiniPlayerVisible = currentSong != null &&
-                        miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER,
+                    isMusicMiniPlayerVisible = currentSong != null,
                     isVideoMiniPlayerVisible = false
                 )
             ),
@@ -193,23 +191,6 @@ fun OnlineMusicScreen(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (currentSong != null && miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.DISMISSED) {
-                            IconButton(
-                                onClick = {
-                                    viewModel.restoreMusicMiniPlayer()
-                                },
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .testTag("online_music_restore_now_playing_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MusicNote,
-                                    contentDescription = "Restore mini player",
-                                    tint = colors.accentStrong
-                                )
-                            }
-                        }
-
                         Surface(
                             onClick = { showRegionSheet = true },
                             shape = RoundedCornerShape(18.dp),

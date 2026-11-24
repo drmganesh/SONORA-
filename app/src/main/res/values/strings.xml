@@ -13,13 +13,6 @@
     <string name="developer_credit_name">Dr. M. GANESWAR</string>
     <string name="developer_credit_qualification">BAMS Final Year</string>
     <string name="about_developer_footer">Developed by Dr. M. GANESWAR • BAMS Final Year</string>
-    <string name="mini_player_action_minimize">Minimize to circular player</string>
-    <string name="mini_player_action_dismiss">Dismiss mini player</string>
-    <string name="mini_player_action_expand">Expand mini player</string>
-    <string name="mini_player_action_open_now_playing">Open Now Playing</string>
-    <string name="mini_player_action_next">Next track</string>
-    <string name="mini_player_action_previous">Previous track</string>
-    <string name="mini_player_restore_desc">Restore mini player</string>
     <string name="video_notifications_title">All Notifications</string>
     <string name="video_notifications_bell_desc">Online video notifications</string>
     <string name="video_notifications_empty_title">You\'re all caught up</string>
@@ -42,8 +35,19 @@
     <string name="settings_profile_title">Profile</string>
     <string name="settings_profile_subtitle">Edit your name, avatar &amp; local identity</string>
     <string name="settings_profile_restore_default">Restore Default Avatar</string>
-    <string name="settings_app_update_section">APP UPDATE</string>
-    <string name="settings_check_for_updates_title">Check for Updates</string>
-    <string name="settings_check_for_updates_subtitle">Get the latest SONORA updates and announcements.</string>
-    <string name="settings_update_link_unavailable">Could not find Telegram or a browser app to open the SONORA updates channel.</string>
+    <string name="update_dialog_title">Update Available!</string>
+    <string name="update_download_button">Download Update</string>
+    <string name="update_later_button">Later</string>
+    <string name="update_ready_message">Download complete. Ready to install SONORA?</string>
+    <string name="update_install_now_button">Install Now</string>
+    <string name="update_no_compatible_apk">No compatible APK is available for this release.</string>
+    <string name="update_permission_title">Allow App Installation</string>
+    <string name="update_permission_message">Android requires permission for SONORA to hand the verified update package to the system installer. You can turn this permission off right after updating.</string>
+    <string name="update_open_settings_button">Open Settings</string>
+    <string name="update_complete_title">Installation Complete! 🎉</string>
+    <string name="update_complete_message">SONORA has been successfully updated.\n\nFor better security, you can now turn off the permission that allows SONORA to install unknown apps.\n\nGo to Settings → Apps → Special app access → Install unknown apps → SONORA → Turn off Allow from this source.</string>
+    <string name="update_complete_message_already_off">SONORA has been successfully updated.\n\nYour security setting for installing unknown apps from SONORA is already turned off.</string>
+    <string name="update_tap_anywhere_to_dismiss">Tap anywhere on this notice to dismiss</string>
+    <string name="settings_about_app_updates_title">App Updates</string>
+    <string name="settings_about_check_for_updates">Check for Updates</string>
 </resources>

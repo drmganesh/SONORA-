@@ -3,6 +3,8 @@ package com.example.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +32,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,14 +52,6 @@ import com.example.ui.theme.SonoraTextMuted
 import com.example.ui.theme.SonoraTextPrimary
 import com.example.ui.theme.SonoraTextSecondary
 
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.input.pointer.pointerInput
-
 @Composable
 fun MiniPlayerView(
     song: Song?,
@@ -64,7 +60,6 @@ fun MiniPlayerView(
     onPlayNext: () -> Unit,
     onPlayPrevious: () -> Unit = {},
     onClick: () -> Unit,
-    gesturesEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     if (song == null) return
@@ -74,8 +69,6 @@ fun MiniPlayerView(
     } else 0f
 
     val palette = ui.theme.LocalDynamicColorPalette.current
-    var totalDragX by remember { mutableFloatStateOf(0f) }
-    var totalDragY by remember { mutableFloatStateOf(0f) }
 
     Surface(
         modifier = modifier
@@ -84,46 +77,21 @@ fun MiniPlayerView(
             .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = palette.glowColor.copy(alpha = 0.35f))
             .border(1.dp, palette.cardBorder, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
-            .pointerInput(gesturesEnabled) {
-                if (!gesturesEnabled) return@pointerInput
-
-                detectHorizontalDragGestures(
-                    onDragStart = { totalDragX = 0f },
-                    onDragEnd = {
-                        if (totalDragX < -60f) {
-                            onPlayNext()
-                        } else if (totalDragX > 60f) {
-                            onPlayPrevious()
-                        }
-                        totalDragX = 0f
-                    },
-                    onDragCancel = { totalDragX = 0f },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragX += dragAmount
-                    }
-                )
-            }
-            .pointerInput(gesturesEnabled) {
-                if (!gesturesEnabled) return@pointerInput
-
-                detectVerticalDragGestures(
-                    onDragStart = { totalDragY = 0f },
-                    onDragEnd = {
-                        if (totalDragY < -60f) {
-                            // Swiped UP on mini player -> Expand Now Playing
-                            onClick()
-                        }
-                        totalDragY = 0f
-                    },
-                    onDragCancel = { totalDragY = 0f },
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragY += dragAmount
-                    }
-                )
-            }
             .clickable { onClick() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val touchSlop = viewConfiguration.touchSlop
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if ((change.position - down.position).getDistance() > touchSlop) {
+                            change.consume()
+                        }
+                        if (!change.pressed) break
+                    }
+                }
+            }
             .testTag("mini_player"),
         color = palette.cardBackground,
         tonalElevation = 6.dp

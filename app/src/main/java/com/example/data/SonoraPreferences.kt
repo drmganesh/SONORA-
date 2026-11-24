@@ -307,10 +307,6 @@ class SonoraPreferences(context: Context) {
         get() = prefs.getBoolean("gesture_swipe_down_collapse", true)
         set(value) = prefs.edit().putBoolean("gesture_swipe_down_collapse", value).apply()
 
-    var miniPlayerGestures: Boolean
-        get() = prefs.getBoolean("gesture_mini_player", true)
-        set(value) = prefs.edit().putBoolean("gesture_mini_player", value).apply()
-
     var volumeSlideGesture: Boolean
         get() = prefs.getBoolean("gesture_volume_slide", true)
         set(value) = prefs.edit().putBoolean("gesture_volume_slide", value).apply()
@@ -505,7 +501,6 @@ class SonoraPreferences(context: Context) {
                     swipeArtworkEnabled = swipeArtworkToSkip,
                     doubleTapEnabled = doubleTapToSeek,
                     swipeDownToMinimizeEnabled = swipeDownToCollapse,
-                    miniPlayerGesturesEnabled = miniPlayerGestures,
                     rightEdgeVolumeEnabled = volumeSlideGesture
                 )
             } else {
@@ -519,7 +514,6 @@ class SonoraPreferences(context: Context) {
                 .putBoolean("gesture_swipe_artwork_skip", value.swipeArtworkEnabled)
                 .putBoolean("gesture_double_tap_seek", value.doubleTapEnabled)
                 .putBoolean("gesture_swipe_down_collapse", value.swipeDownToMinimizeEnabled)
-                .putBoolean("gesture_mini_player", value.miniPlayerGesturesEnabled)
                 .putBoolean("gesture_volume_slide", value.rightEdgeVolumeEnabled)
                 .apply()
         }
@@ -605,7 +599,6 @@ class SonoraPreferences(context: Context) {
                 put("swipeUpToOpenQueueEnabled", config.swipeUpToOpenQueueEnabled)
                 put("rightEdgeVolumeEnabled", config.rightEdgeVolumeEnabled)
                 put("leftEdgeBrightnessEnabled", config.leftEdgeBrightnessEnabled)
-                put("miniPlayerGesturesEnabled", config.miniPlayerGesturesEnabled)
                 put("swipeSensitivity", config.swipeSensitivity.toDouble())
                 put("swipeThresholdDp", config.swipeThresholdDp)
                 put("hapticFeedbackEnabled", config.hapticFeedbackEnabled)
@@ -630,7 +623,6 @@ class SonoraPreferences(context: Context) {
                     swipeUpToOpenQueueEnabled = obj.optBoolean("swipeUpToOpenQueueEnabled", true),
                     rightEdgeVolumeEnabled = obj.optBoolean("rightEdgeVolumeEnabled", true),
                     leftEdgeBrightnessEnabled = obj.optBoolean("leftEdgeBrightnessEnabled", true),
-                    miniPlayerGesturesEnabled = obj.optBoolean("miniPlayerGesturesEnabled", true),
                     swipeSensitivity = obj.optDouble("swipeSensitivity", 1.0).toFloat().coerceIn(0.5f, 1.8f),
                     swipeThresholdDp = obj.optInt("swipeThresholdDp", 64).coerceIn(36, 120),
                     hapticFeedbackEnabled = obj.optBoolean("hapticFeedbackEnabled", true)

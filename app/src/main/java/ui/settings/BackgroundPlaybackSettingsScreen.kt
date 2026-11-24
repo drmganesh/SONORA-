@@ -47,14 +47,11 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
-import data.preferences.CircularAnimationIntensity
-import data.preferences.CircularFloatingSide
 import ui.theme.EditorialColors
 import ui.theme.LocalEditorialColors
-import java.util.Locale
 
 /**
- * Settings screen for Background Playback, Circular Mini Player, Phone-Call Resume,
+ * Settings screen for Background Playback, Phone-Call Resume,
  * and Session Management (Restore Queue/Position & Recents App Removal).
  */
 @Composable
@@ -119,7 +116,7 @@ fun BackgroundPlaybackSettingsScreen(
                         color = colors.textPrimary
                     )
                     Text(
-                        text = "Playback continuity, circular player & restore",
+                        text = "Playback continuity & session restore",
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
                         color = colors.textSecondary
@@ -163,60 +160,6 @@ fun BackgroundPlaybackSettingsScreen(
                             colors = colors,
                             tag = "setting_auto_resume_launch_switch"
                         )
-                        LifecycleSwitchRow(
-                            title = "Circular Mini Player",
-                            subtitle = "Swipe down on the mini player to collapse it into a floating circle",
-                            checked = bgSettings.circularMiniPlayerEnabled,
-                            onCheckedChange = { viewModel.setCircularMiniPlayerEnabled(it) },
-                            colors = colors,
-                            tag = "setting_circular_mini_player_switch"
-                        )
-
-                        if (bgSettings.circularMiniPlayerEnabled) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Floating Position",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                color = colors.textPrimary
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                CircularFloatingSide.entries.forEach { side ->
-                                    val selected = bgSettings.circularFloatingSide == side
-                                    ChoiceChipPill(
-                                        label = side.label,
-                                        selected = selected,
-                                        onClick = { viewModel.setCircularFloatingSide(side) },
-                                        colors = colors,
-                                        tag = "setting_circular_side_${side.name.lowercase(Locale.ROOT)}"
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                text = "Circular Player Animation",
-                                fontFamily = OutfitFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                color = colors.textPrimary
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                CircularAnimationIntensity.entries.forEach { intensity ->
-                                    val selected = bgSettings.circularAnimationIntensity == intensity
-                                    ChoiceChipPill(
-                                        label = intensity.label,
-                                        selected = selected,
-                                        onClick = { viewModel.setCircularAnimationIntensity(intensity) },
-                                        colors = colors,
-                                        tag = "setting_circular_anim_${intensity.name.lowercase(Locale.ROOT)}"
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -369,34 +312,6 @@ private fun LifecycleSwitchRow(
                 uncheckedTrackColor = colors.surfaceTinted
             ),
             modifier = Modifier.testTag(tag)
-        )
-    }
-}
-
-@Composable
-private fun ChoiceChipPill(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    colors: EditorialColors,
-    tag: String
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = if (selected) colors.accentStrong else colors.surfaceTinted,
-        border = BorderStroke(1.dp, if (selected) colors.accentStrong else colors.cardBorder),
-        modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .testTag(tag)
-    ) {
-        Text(
-            text = label,
-            fontFamily = PlusJakartaFontFamily,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            fontSize = 12.sp,
-            color = if (selected) Color.White else colors.textPrimary,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
         )
     }
 }

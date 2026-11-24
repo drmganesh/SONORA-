@@ -1,10 +1,7 @@
 package ui.components
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,7 +13,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,26 +31,20 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,7 +56,6 @@ import com.example.model.Song
 import com.example.ui.components.ArtworkAlbumView
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
-import kotlin.math.abs
 import ui.motion.LocalEffectiveMotionState
 import ui.motion.SonoraTransitions
 import ui.motion.rememberMotionAwareHaptic
@@ -74,8 +63,8 @@ import ui.theme.EditorialColors
 
 /**
  * Multi-variant Floating Mini-Player seamlessly aligned above the Floating Bottom Navigation Bar.
- * Supports FLOATING_PILL, COMPACT_BAR, ARTWORK_FOCUS, and WAVE_MINI while preserving
- * swipe-left/right track skip and swipe-up expansion gestures.
+ * Supports all 20 mini-player visual styles with tap-to-open Now Playing, explicit playback controls,
+ * and interactive seek scrubbing.
  */
 @Composable
 fun FloatingMiniPlayer(
@@ -88,12 +77,8 @@ fun FloatingMiniPlayer(
     onClick: () -> Unit,
     onSeekTo: (Long) -> Unit = {},
     onOpenLyrics: (() -> Unit)? = null,
-    gesturesEnabled: Boolean = true,
-    swipeDownDismissEnabled: Boolean = true,
-    onSwipeDownDismiss: () -> Unit = {},
     miniPlayerStyle: MiniPlayerStyle = MiniPlayerStyle.DEFAULT,
     trackDirection: Int = 0,
-    swipeThresholdDp: Int = 64,
     frequencies: FloatArray = FloatArray(0),
     queue: List<Song> = emptyList(),
     queueIndex: Int = 0,
@@ -112,12 +97,11 @@ fun FloatingMiniPlayer(
     } else 0f
 
     val latestOnSeekTo by rememberUpdatedState(onSeekTo)
-    var isScrubbingSeekbar by remember { mutableStateOf(false) }
     val miniSeekController = remember(playbackInfo) {
         MiniSeekController(
             playbackInfo = playbackInfo,
             onSeekTo = { targetMs -> latestOnSeekTo(targetMs) },
-            onScrubbingChanged = { active -> isScrubbingSeekbar = active }
+            onScrubbingChanged = {}
         )
     }
 
@@ -167,17 +151,6 @@ fun FloatingMiniPlayer(
         modifier = Modifier
             .then(if (isCompactFloatingStyle) Modifier else Modifier.fillMaxWidth())
             .padding(horizontal = horizontalPad)
-            .universalMiniPlayerGestures(
-                miniPlayerStyle = miniPlayerStyle,
-                gesturesEnabled = gesturesEnabled,
-                swipeDownEnabled = swipeDownDismissEnabled,
-                swipeThresholdDp = swipeThresholdDp,
-                isScrubbingSeekbar = { isScrubbingSeekbar },
-                onPlayNext = onPlayNext,
-                onPlayPrevious = onPlayPrevious,
-                onExpandNowPlaying = onClick,
-                onSwipeDownMinimize = onSwipeDownDismiss
-            )
             .shadow(
                 elevation = if (miniPlayerStyle == MiniPlayerStyle.COMPACT_BAR) 10.dp else 14.dp,
                 shape = shape,
@@ -187,6 +160,20 @@ fun FloatingMiniPlayer(
             .border(0.75.dp, colors.cardBorder, shape)
             .clip(shape)
             .clickable { onClick() }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val touchSlop = viewConfiguration.touchSlop
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if ((change.position - down.position).getDistance() > touchSlop) {
+                            change.consume()
+                        }
+                        if (!change.pressed) break
+                    }
+                }
+            }
             .testTag("mini_player"),
         color = surfaceColor,
         tonalElevation = 4.dp

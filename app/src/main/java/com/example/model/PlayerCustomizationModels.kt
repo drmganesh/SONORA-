@@ -247,7 +247,6 @@ data class PlayerGestureConfig(
     val swipeUpToOpenQueueEnabled: Boolean = true,
     val rightEdgeVolumeEnabled: Boolean = true,
     val leftEdgeBrightnessEnabled: Boolean = true,
-    val miniPlayerGesturesEnabled: Boolean = true,
     val swipeSensitivity: Float = 1.0f,
     val swipeThresholdDp: Int = 64,
     val hapticFeedbackEnabled: Boolean = true

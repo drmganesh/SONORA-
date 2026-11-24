@@ -366,7 +366,7 @@ fun MusicExperienceSettingsScreen(
 
                 item(key = "music_queue_mini_card") {
                     ExperienceCard(
-                        title = "QUEUE & MINI PLAYER",
+                        title = "QUEUE",
                         colors = colors
                     ) {
                         ExperienceSwitchRow(
@@ -376,15 +376,6 @@ fun MusicExperienceSettingsScreen(
                             onCheckedChange = { viewModel.setUnlimitedQueueEnabled(it) },
                             colors = colors,
                             tag = "setting_unlimited_queue_switch"
-                        )
-                        HorizontalDivider(color = colors.cardBorder, modifier = Modifier.padding(vertical = 6.dp))
-                        ExperienceSwitchRow(
-                            title = "Swipe Down to Dismiss Mini Player",
-                            subtitle = "Hide the bottom mini player UI with a downward swipe while keeping music & foreground service playing",
-                            checked = musicSettings.swipeDownDismissMiniPlayerEnabled,
-                            onCheckedChange = { viewModel.setSwipeDownDismissMiniPlayerEnabled(it) },
-                            colors = colors,
-                            tag = "setting_swipe_dismiss_mini_switch"
                         )
                     }
                 }

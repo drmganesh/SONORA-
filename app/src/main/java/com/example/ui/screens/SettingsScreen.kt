@@ -57,7 +57,6 @@ import androidx.compose.material.icons.rounded.SdStorage
 import androidx.compose.material.icons.rounded.SpatialAudio
 import androidx.compose.material.icons.rounded.Source
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -124,8 +123,6 @@ import ui.settings.SettingsAboutContent
 import ui.settings.VideoExperienceSettingsScreen
 import ui.settings.rememberInstalledAppVersion
 import ui.components.UserProfileAvatar
-import util.SonoraUpdateLinkOpener
-import util.UpdateLinkOpenResult
 import ui.motion.LocalEffectiveMotionState
 import ui.motion.SonoraTransitions
 import ui.theme.EditorialAccentSwatches
@@ -206,7 +203,6 @@ fun SettingsScreen(
 
     var showMotionGesturesSettings by remember { mutableStateOf(false) }
     var showProfileSettings by remember { mutableStateOf(false) }
-    var updateLinkFeedbackMessage by remember { mutableStateOf<String?>(null) }
     var showOnlineVideoPlayerGestures by remember { mutableStateOf(false) }
     var showVideoExperienceSettings by remember { mutableStateOf(false) }
     var showMusicExperienceSettings by remember { mutableStateOf(false) }
@@ -238,9 +234,9 @@ fun SettingsScreen(
     var storageCacheExpanded by remember { mutableStateOf(true) }
     var downloadsExpanded by remember { mutableStateOf(true) }
     var notificationsExpanded by remember { mutableStateOf(true) }
-    var appUpdateExpanded by remember { mutableStateOf(true) }
     var aboutExpanded by remember { mutableStateOf(true) }
     val installedAppVersion = rememberInstalledAppVersion()
+    val appUpdateSummary by viewModel.appUpdateSummaryState.collectAsState()
     val motionState = LocalEffectiveMotionState.current
     val pushEnter = SonoraTransitions.pushEnter(motionState)
     val pushExit = SonoraTransitions.pushExit(motionState)
@@ -625,7 +621,7 @@ fun SettingsScreen(
 
                         SettingsSwitchRow(
                             title = "Player Gestures",
-                            subtitle = "Master switch for artwork, screen edge & mini player gestures",
+                            subtitle = "Master switch for artwork & screen edge player gestures",
                             checked = gestureConfig.gesturesEnabled,
                             onCheckedChange = { enabled ->
                                 viewModel.updatePlayerGestureConfig { it.copy(gesturesEnabled = enabled) }
@@ -769,15 +765,6 @@ fun SettingsScreen(
                                 checked = gestureConfig.leftEdgeBrightnessEnabled,
                                 onCheckedChange = { enabled ->
                                     viewModel.updatePlayerGestureConfig { it.copy(leftEdgeBrightnessEnabled = enabled) }
-                                },
-                                colors = colors
-                            )
-                            SettingsSwitchRow(
-                                title = "Mini-Player Swipes",
-                                subtitle = "Swipe mini-player horizontally to skip or up to expand",
-                                checked = gestureConfig.miniPlayerGesturesEnabled,
-                                onCheckedChange = { enabled ->
-                                    viewModel.updatePlayerGestureConfig { it.copy(miniPlayerGesturesEnabled = enabled) }
                                 },
                                 colors = colors
                             )
@@ -962,7 +949,7 @@ fun SettingsScreen(
                         SettingsLinkRow(
                             icon = Icons.Rounded.PlayCircleOutline,
                             title = "Background Playback & Session",
-                            subtitle = "Circular mini player, phone call resume, restore & Recents",
+                            subtitle = "Background playback, phone call resume, restore & Recents",
                             colors = colors,
                             modifier = Modifier.testTag("settings_open_background_session"),
                             onClick = { showBackgroundPlaybackSettings = true }
@@ -1355,45 +1342,7 @@ fun SettingsScreen(
                     }
                 }
 
-                // 8. APP UPDATE
-                item {
-                    val updateUnavailableMsg = stringResource(id = com.example.R.string.settings_update_link_unavailable)
-                    ExpandableSettingsSection(
-                        title = stringResource(id = com.example.R.string.settings_app_update_section),
-                        subtitle = "Telegram channel & release announcements",
-                        expanded = appUpdateExpanded,
-                        onToggle = { appUpdateExpanded = !appUpdateExpanded },
-                        colors = colors
-                    ) {
-                        SettingsLinkRow(
-                            icon = Icons.Rounded.Update,
-                            title = stringResource(id = com.example.R.string.settings_check_for_updates_title),
-                            subtitle = stringResource(id = com.example.R.string.settings_check_for_updates_subtitle),
-                            colors = colors,
-                            modifier = Modifier.testTag("settings_check_for_updates_row"),
-                            onClick = {
-                                val result = SonoraUpdateLinkOpener.openTelegramUpdateChannel(context)
-                                updateLinkFeedbackMessage = if (result == UpdateLinkOpenResult.NO_HANDLER_AVAILABLE) {
-                                    updateUnavailableMsg
-                                } else {
-                                    null
-                                }
-                            }
-                        )
-                        updateLinkFeedbackMessage?.let { feedback ->
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = feedback,
-                                fontFamily = PlusJakartaFontFamily,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.testTag("settings_update_link_feedback")
-                            )
-                        }
-                    }
-                }
-
-                // 9. ABOUT
+                // 8. ABOUT
                 item {
                     ExpandableSettingsSection(
                         title = "ABOUT",
@@ -1407,6 +1356,13 @@ fun SettingsScreen(
                             colors = colors,
                             reduceAnimations = reduceAnimations,
                             linksContent = {
+                                ui.update.AboutAppUpdatesCard(
+                                    summary = appUpdateSummary,
+                                    colors = colors,
+                                    onCheckForUpdates = { viewModel.checkForAppUpdatesManual() },
+                                    onViewAvailableUpdate = { viewModel.openCachedAvailableUpdate() },
+                                    modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+                                )
                                 SettingsLinkRow(
                                     icon = Icons.Rounded.DeleteOutline,
                                     title = "Clear Listening & Search History",
@@ -1497,6 +1453,7 @@ fun SettingsScreen(
                         "• Synced Lyrics: Track title & artist lookup via LRCLIB (lrclib.net).\n" +
                         "• Weather Atmosphere: Optional manual town name lookup via Open-Meteo (no GPS).\n" +
                         "• Festival Calendar Sync: Public Indian festival JSON via jsDelivr CDN.\n" +
+                        "• App Updates: Checks official public GitHub Releases at github.com/drmganesh/SONORA- over HTTPS (no personal or device IDs sent).\n" +
                         "• Optional YouTube Account Actions: Only if you explicitly connect OAuth; tokens are encrypted via Android Keystore.",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 13.sp,

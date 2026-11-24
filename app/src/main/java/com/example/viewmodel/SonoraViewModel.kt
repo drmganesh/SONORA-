@@ -228,17 +228,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _queueIndex = MutableStateFlow(preferences.lastQueueIndex)
     val queueIndex: StateFlow<Int> = _queueIndex.asStateFlow()
 
-    private val _miniPlayerDisplayState = MutableStateFlow(domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER)
-    val miniPlayerDisplayState: StateFlow<domain.player.MiniPlayerDisplayState> = _miniPlayerDisplayState.asStateFlow()
-
-    val isMusicMiniPlayerDismissed: StateFlow<Boolean> = _miniPlayerDisplayState
-        .map { it == domain.player.MiniPlayerDisplayState.DISMISSED }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
-
-    val isMusicMiniPlayerCollapsedToCircle: StateFlow<Boolean> = _miniPlayerDisplayState
-        .map { it == domain.player.MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
-
     val playbackLifecyclePreferences = data.preferences.PlaybackLifecyclePreferences(application)
     val backgroundPlaybackSettings: StateFlow<data.preferences.BackgroundPlaybackSettings> =
         playbackLifecyclePreferences.backgroundSettingsFlow
@@ -980,9 +969,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _swipeDownToCollapse = MutableStateFlow(preferences.swipeDownToCollapse)
     val swipeDownToCollapse: StateFlow<Boolean> = _swipeDownToCollapse.asStateFlow()
 
-    private val _miniPlayerGestures = MutableStateFlow(preferences.miniPlayerGestures)
-    val miniPlayerGestures: StateFlow<Boolean> = _miniPlayerGestures.asStateFlow()
-
     // Automix & Song Matching State (Restored from preferences)
     private val _automixEnabled = MutableStateFlow(preferences.automixEnabled)
     val automixEnabled: StateFlow<Boolean> = _automixEnabled.asStateFlow()
@@ -1116,7 +1102,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _swipeArtworkToSkip.value = updated.swipeArtworkEnabled
         _doubleTapToSeek.value = updated.doubleTapEnabled
         _swipeDownToCollapse.value = updated.swipeDownToMinimizeEnabled
-        _miniPlayerGestures.value = updated.miniPlayerGesturesEnabled
         preferences.playerGestureConfig = updated
         viewModelScope.launch(Dispatchers.IO) {
             playerStylePrefs.setGestureConfig(updated)
@@ -2338,16 +2323,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
         observeOnlineRecommendationProfile()
         viewModelScope.launch {
-            runCatching {
-                val persisted = playbackLifecyclePreferences.miniPlayerDisplayStateFlow.first()
-                if (_miniPlayerDisplayState.value == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER &&
-                    persisted != domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER
-                ) {
-                    _miniPlayerDisplayState.value = persisted
-                }
-            }
-        }
-        viewModelScope.launch {
             combine(backgroundPlaybackSettings, sessionManagementSettings) { bg, sess -> bg to sess }
                 .collect { (bg, sess) ->
                     musicService?.updateLifecycleSettings(
@@ -2355,13 +2330,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         resumeAfterPhoneCall = bg.resumeAfterPhoneCall,
                         stopOnTaskRemoved = sess.stopPlaybackOnTaskRemoved
                     )
-                    val reconciled = domain.player.MiniPlayerGestureController.onCircularModeSettingChanged(
-                        currentState = _miniPlayerDisplayState.value,
-                        circularEnabled = bg.circularMiniPlayerEnabled
-                    )
-                    if (reconciled != _miniPlayerDisplayState.value) {
-                        updateMiniPlayerDisplayState(reconciled)
-                    }
                 }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -2746,7 +2714,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         syncQueuedItemsFromQueue(q)
         _queueIndex.value = idx
         _currentSong.value = hydratedSong
-        updateMiniPlayerDisplayState(domain.player.MiniPlayerGestureController.onNewPlaybackSessionStarted())
         if (_songRadioSession.value.isActive) {
             activePlaybackContextType = "RADIO"
             activePlaybackContextLabel = _songRadioSession.value.seedLabel
@@ -3880,50 +3847,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- Universal Two-Stage Mini-Player Gestures (Single Visual State; Playback Always Continues) ---
-
-    private fun updateMiniPlayerDisplayState(next: domain.player.MiniPlayerDisplayState) {
-        if (_miniPlayerDisplayState.value == next) return
-        _miniPlayerDisplayState.value = next
-        viewModelScope.launch {
-            runCatching { playbackLifecyclePreferences.setMiniPlayerDisplayState(next) }
-        }
-    }
-
-    /**
-     * Universal downward swipe handler shared across ALL 20 mini-player styles and the floating circle:
-     * Stage 1: EXPANDED_MINI_PLAYER -> CIRCULAR_MINI_PLAYER (or DISMISSED if circular disabled)
-     * Stage 2: CIRCULAR_MINI_PLAYER -> DISMISSED
-     * Playback, queue, position, and SonoraMusicService continue completely uninterrupted.
-     */
-    fun onMiniPlayerSwipeDown() {
-        val next = domain.player.MiniPlayerGestureController.onSwipeDown(
-            currentState = _miniPlayerDisplayState.value,
-            circularMiniPlayerEnabled = backgroundPlaybackSettings.value.circularMiniPlayerEnabled,
-            swipeDownDismissEnabled = musicExperienceSettings.value.swipeDownDismissMiniPlayerEnabled
-        )
-        updateMiniPlayerDisplayState(next)
-    }
-
-    fun collapseOrDismissMusicMiniPlayer() {
-        onMiniPlayerSwipeDown()
-    }
-
-    fun expandCircularMiniPlayer() {
-        val next = domain.player.MiniPlayerGestureController.onTapCircularPlayer(_miniPlayerDisplayState.value)
-        updateMiniPlayerDisplayState(next)
-    }
-
-    fun dismissMusicMiniPlayer() {
-        if (!musicExperienceSettings.value.swipeDownDismissMiniPlayerEnabled) return
-        updateMiniPlayerDisplayState(domain.player.MiniPlayerDisplayState.DISMISSED)
-    }
-
-    fun restoreMusicMiniPlayer() {
-        updateMiniPlayerDisplayState(domain.player.MiniPlayerGestureController.onRestoreMiniPlayer())
-    }
-
-    // --- Background Playback, Circular Mini Player & Session Management Settings ---
+    // --- Background Playback & Session Management Settings ---
 
     fun setBackgroundPlaybackEnabled(enabled: Boolean) {
         viewModelScope.launch { playbackLifecyclePreferences.setBackgroundPlaybackEnabled(enabled) }
@@ -3935,25 +3859,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setAutoResumeOnAppLaunch(enabled: Boolean) {
         viewModelScope.launch { playbackLifecyclePreferences.setAutoResumeOnAppLaunch(enabled) }
-    }
-
-    fun setCircularMiniPlayerEnabled(enabled: Boolean) {
-        viewModelScope.launch { playbackLifecyclePreferences.setCircularMiniPlayerEnabled(enabled) }
-    }
-
-    fun setCircularFloatingSide(side: data.preferences.CircularFloatingSide) {
-        viewModelScope.launch { playbackLifecyclePreferences.setCircularFloatingSide(side) }
-    }
-
-    fun setCircularAnimationIntensity(intensity: data.preferences.CircularAnimationIntensity) {
-        viewModelScope.launch { playbackLifecyclePreferences.setCircularAnimationIntensity(intensity) }
-    }
-
-    fun updateCircularMiniPlayerPosition(
-        side: data.preferences.CircularFloatingSide,
-        verticalBias: Float
-    ) {
-        viewModelScope.launch { playbackLifecyclePreferences.setCircularPosition(side, verticalBias) }
     }
 
     fun setRestorePreviousQueue(enabled: Boolean) {
@@ -4012,15 +3917,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setUnlimitedQueueEnabled(enabled: Boolean) {
         viewModelScope.launch { experiencePreferences.setUnlimitedQueueEnabled(enabled) }
-    }
-
-    fun setSwipeDownDismissMiniPlayerEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            experiencePreferences.setSwipeDownDismissMiniPlayerEnabled(enabled)
-            if (!enabled && _miniPlayerDisplayState.value == domain.player.MiniPlayerDisplayState.DISMISSED) {
-                updateMiniPlayerDisplayState(domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER)
-            }
-        }
     }
 
     fun setAlbumArtworkQualityMode(mode: data.preferences.AlbumArtworkQualityMode) {
@@ -4486,10 +4382,6 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleSwipeDownToCollapse(enabled: Boolean) {
         updatePlayerGestureConfig { it.copy(swipeDownToMinimizeEnabled = enabled) }
-    }
-
-    fun toggleMiniPlayerGestures(enabled: Boolean) {
-        updatePlayerGestureConfig { it.copy(miniPlayerGesturesEnabled = enabled) }
     }
 
     // --- Automix & Song Matching Controls ---
@@ -6108,6 +6000,78 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         } catch (_: Exception) {
             null
         }
+    }
+
+    // =========================================================================
+    // GITHUB RELEASES IN-APP UPDATE & POST-UPDATE SECURITY REMINDER
+    // =========================================================================
+
+    val appUpdateManager: data.update.AppUpdateManager by lazy {
+        data.update.AppUpdateManager(
+            context = getApplication(),
+            scope = viewModelScope
+        )
+    }
+
+    val appUpdateSummaryState: StateFlow<domain.update.AppUpdateSummaryState>
+        get() = appUpdateManager.summaryState
+
+    val appUpdateDialogState: StateFlow<domain.update.AppUpdateDialogState>
+        get() = appUpdateManager.dialogState
+
+    val postUpdateReminder: StateFlow<domain.update.PostUpdateReminderState?>
+        get() = appUpdateManager.postUpdateReminder
+
+    fun triggerAppUpdateLaunchFlow() {
+        appUpdateManager.triggerAutomaticLaunchCheckIfNeeded()
+    }
+
+    fun checkForAppUpdatesManual() {
+        appUpdateManager.checkForUpdatesManual()
+    }
+
+    fun openCachedAvailableUpdate() {
+        appUpdateManager.openCachedAvailableUpdateDialog()
+    }
+
+    fun deferAppUpdateLater() {
+        appUpdateManager.deferUpdateLater()
+    }
+
+    fun startAppUpdateDownload(release: domain.update.GitHubReleaseInfo) {
+        appUpdateManager.startDownloadForRelease(release)
+    }
+
+    fun cancelAppUpdateDownload() {
+        appUpdateManager.cancelActiveDownload()
+    }
+
+    suspend fun prepareInstallVerifiedUpdate(
+        release: domain.update.GitHubReleaseInfo,
+        verifiedApk: domain.update.VerifiedApkInfo
+    ): data.update.InstallPreparationResult {
+        return appUpdateManager.prepareInstallNow(release, verifiedApk)
+    }
+
+    suspend fun onReturnedFromUnknownAppSourcesSettings(): data.update.InstallPreparationResult {
+        appUpdateManager.refreshPostUpdateReminderPermissionState()
+        return appUpdateManager.onReturnedFromUnknownSourcesSettings()
+    }
+
+    fun onPackageInstallerReturnedWithoutUpgrade(wasCancelled: Boolean) {
+        appUpdateManager.onPackageInstallerReturnedWithoutUpgrade(wasCancelled)
+    }
+
+    fun dismissAppUpdateDialog() {
+        appUpdateManager.dismissDialog()
+    }
+
+    fun dismissPostUpdateReminder() {
+        appUpdateManager.dismissPostUpdateReminder()
+    }
+
+    fun buildManageUnknownAppSourcesIntent(): Intent? {
+        return appUpdateManager.installerLauncher.buildManageUnknownAppSourcesIntent()
     }
 
     override fun onCleared() {

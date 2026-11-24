@@ -1,11 +1,7 @@
 package com.example
 
-import android.content.ActivityNotFoundException
 import android.content.Context
-import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
 import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
@@ -34,13 +30,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import ui.onboarding.FirstLaunchProfileOnboardingScreen
 import ui.theme.EditorialColors
-import ui.theme.HomeThemeMode
-import util.SonoraUpdateLinkOpener
-import util.UpdateLinkOpenResult
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
@@ -118,11 +110,6 @@ class SonoraFirstLaunchProfileAndSettingsTest {
             "Hey there! 💛\n\nWelcome to SONORA!\n\nYour music, your mood, your little world. 🎧\n\nLet's make this experience yours. What should we call you?"
         assertEquals(expectedWelcome, context.getString(R.string.onboarding_welcome_message))
         assertEquals("Let's Start Listening 🎵", context.getString(R.string.onboarding_start_listening_cta))
-        assertEquals("Check for Updates", context.getString(R.string.settings_check_for_updates_title))
-        assertEquals(
-            "Get the latest SONORA updates and announcements.",
-            context.getString(R.string.settings_check_for_updates_subtitle)
-        )
     }
 
     @Test
@@ -340,53 +327,17 @@ class SonoraFirstLaunchProfileAndSettingsTest {
     }
 
     // =========================================================================
-    // 3. APP UPDATE CHECK: EXACT TELEGRAM URL, TELEGRAM PREFERENCE & FALLBACK
+    // 3. APP UPDATE & TELEGRAM COMPLETELY REMOVED
     // =========================================================================
 
     @Test
-    fun appUpdateCheck_opensExactTelegramUrl_preferringTelegramWhenInstalled() {
-        assertEquals("https://t.me/+9OhSS3Wt1oEyOTVl", SonoraUpdateLinkOpener.SONORA_TELEGRAM_UPDATE_URL)
-
-        val shadowPm = Shadows.shadowOf(context.packageManager)
-        val telegramIntent = SonoraUpdateLinkOpener.buildTelegramIntent("org.telegram.messenger")
-        val resolveInfo = ResolveInfo().apply {
-            activityInfo = ActivityInfo().apply {
-                packageName = "org.telegram.messenger"
-                name = "org.telegram.ui.LaunchActivity"
-            }
-        }
-        shadowPm.addResolveInfoForIntent(telegramIntent, resolveInfo)
-
-        var launchedIntent: Intent? = null
-        val result = SonoraUpdateLinkOpener.openTelegramUpdateChannel(context) { intent ->
-            launchedIntent = intent
-        }
-
-        assertEquals(UpdateLinkOpenResult.OPENED_IN_TELEGRAM, result)
-        assertNotNull(launchedIntent)
-        assertEquals(Intent.ACTION_VIEW, launchedIntent?.action)
-        assertEquals("https://t.me/+9OhSS3Wt1oEyOTVl", launchedIntent?.dataString)
-        assertEquals("org.telegram.messenger", launchedIntent?.`package`)
-    }
-
-    @Test
-    fun appUpdateCheck_fallsBackToBrowserWhenTelegramNotInstalled_andHandlesMissingAppsSafely() {
-        // No Telegram packages registered -> falls back to generic browser ACTION_VIEW
-        var capturedIntent: Intent? = null
-        val browserResult = SonoraUpdateLinkOpener.openTelegramUpdateChannel(context) { intent ->
-            capturedIntent = intent
-        }
-        assertEquals(UpdateLinkOpenResult.OPENED_IN_BROWSER, browserResult)
-        assertNotNull(capturedIntent)
-        assertEquals(Intent.ACTION_VIEW, capturedIntent?.action)
-        assertEquals("https://t.me/+9OhSS3Wt1oEyOTVl", capturedIntent?.dataString)
-        assertNull("Browser fallback intent should not lock to a Telegram package", capturedIntent?.`package`)
-
-        // Missing browser / ActivityNotFoundException must NOT crash
-        val noHandlerResult = SonoraUpdateLinkOpener.openTelegramUpdateChannel(context) {
-            throw ActivityNotFoundException("No browser installed")
-        }
-        assertEquals(UpdateLinkOpenResult.NO_HANDLER_AVAILABLE, noHandlerResult)
+    fun appUpdateAndTelegramResources_areCompletelyRemoved() {
+        val res = context.resources
+        val pkg = context.packageName
+        assertEquals(0, res.getIdentifier("settings_app_update_section", "string", pkg))
+        assertEquals(0, res.getIdentifier("settings_check_for_updates_title", "string", pkg))
+        assertEquals(0, res.getIdentifier("settings_check_for_updates_subtitle", "string", pkg))
+        assertEquals(0, res.getIdentifier("settings_update_link_unavailable", "string", pkg))
     }
 
     // =========================================================================
@@ -417,7 +368,7 @@ class SonoraFirstLaunchProfileAndSettingsTest {
 
     @Test
     @Config(sdk = [26])
-    fun api26Compatibility_profileHarmonicAndUpdateLinkWorkCleanlyOnAndroid8() = runBlocking {
+    fun api26Compatibility_profileAndHarmonicWorkCleanlyOnAndroid8() = runBlocking {
         val prefs = SonoraPreferences(context)
         assertFalse("Harmonic matching defaults to false on API 26", prefs.matchNextSongEnabled)
 
@@ -428,12 +379,5 @@ class SonoraFirstLaunchProfileAndSettingsTest {
         assertEquals(ProfileOnboardingState.REQUIRED, profilePrefs.resolveInitialOnboardingState())
         assertTrue(profilePrefs.completeFirstLaunchProfile("API26 Listener", null).isSuccess)
         assertEquals("API26 Listener", profilePrefs.userProfileFlow.first().displayName)
-
-        var openedUrl: String? = null
-        val linkResult = SonoraUpdateLinkOpener.openTelegramUpdateChannel(context) { intent ->
-            openedUrl = intent.dataString
-        }
-        assertEquals(UpdateLinkOpenResult.OPENED_IN_BROWSER, linkResult)
-        assertEquals("https://t.me/+9OhSS3Wt1oEyOTVl", openedUrl)
     }
 }

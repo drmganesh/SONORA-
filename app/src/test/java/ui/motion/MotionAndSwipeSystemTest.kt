@@ -78,6 +78,7 @@ class MotionAndSwipeSystemTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         MotionPreferences(app).resetToDefaults()
         HomeModePreferences(app).setHomeMusicMode(HomeMusicMode.OFFLINE)
+        com.example.data.SonoraPreferences(app).reduceAnimations = false
     }
 
     @Test
@@ -219,13 +220,14 @@ class MotionAndSwipeSystemTest {
     }
 
     @Test
-    fun `FloatingMiniPlayer horizontal and vertical swipe gestures trigger track skip and expand`() {
+    fun `FloatingMiniPlayer ignores swipe gestures while tap and playback buttons remain functional`() {
         val colors = editorialColorsFor(
             mode = HomeThemeMode.WARM_CREAM,
             customAccentArgb = null,
             dynamicPalette = DynamicColorPalette.default()
         )
         val song = testSong()
+        var playPauseCount = 0
         var nextCount = 0
         var prevCount = 0
         var clickCount = 0
@@ -239,29 +241,33 @@ class MotionAndSwipeSystemTest {
                     song = song,
                     playbackInfo = PlaybackInfo(isPlaying = true, durationMs = 200_000L, currentPositionMs = 45_000L),
                     colors = colors,
-                    onTogglePlayPause = {},
+                    onTogglePlayPause = { playPauseCount++ },
                     onPlayNext = { nextCount++ },
                     onPlayPrevious = { prevCount++ },
                     onClick = { clickCount++ },
-                    gesturesEnabled = true,
                     miniPlayerStyle = MiniPlayerStyle.COMPACT_BAR,
-                    trackDirection = 1,
-                    swipeThresholdDp = 48
+                    trackDirection = 1
                 )
             }
         }
         composeRule.waitForIdle()
 
+        // Horizontal and vertical swipes on mini player must NOT trigger skip or expand
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeLeft() }
-        composeRule.waitForIdle()
-        assertEquals(1, nextCount)
-
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeRight() }
-        composeRule.waitForIdle()
-        assertEquals(1, prevCount)
-
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeUp() }
         composeRule.waitForIdle()
+        assertEquals(0, nextCount)
+        assertEquals(0, prevCount)
+        assertEquals(0, clickCount)
+
+        // Normal tap-to-open and explicit Play/Pause + Next buttons must work
+        composeRule.onNodeWithTag("mini_play_pause_button").performClick()
+        composeRule.onNodeWithTag("mini_skip_next_button").performClick()
+        composeRule.onNodeWithTag("mini_player").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, playPauseCount)
+        assertEquals(1, nextCount)
         assertEquals(1, clickCount)
     }
 
@@ -269,6 +275,7 @@ class MotionAndSwipeSystemTest {
     fun `HomeScreen horizontal swipe switches between Offline and Online Home modes`() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val vm = SonoraViewModel(app)
+        vm.setReduceAnimations(true)
         val colors = editorialColorsFor(
             mode = HomeThemeMode.WARM_CREAM,
             customAccentArgb = null,

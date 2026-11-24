@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Strictly confines FileProvider exposure to SONORA's private update APK cache directory. -->
+    <cache-path
+        name="app_updates"
+        path="app_updates/" />
+</paths>

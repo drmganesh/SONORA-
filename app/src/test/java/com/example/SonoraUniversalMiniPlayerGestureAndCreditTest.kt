@@ -1,39 +1,66 @@
 package com.example
 
+import android.app.Application
 import android.content.Context
 import android.net.Uri
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.example.model.MiniPlayerStyle
+import com.example.model.PlaybackInfo
 import com.example.model.Song
 import com.example.service.SonoraMusicService
-import data.preferences.PlaybackLifecyclePreferences
+import com.example.ui.components.MiniPlayerView
+import com.example.ui.screens.SettingsScreen
+import com.example.viewmodel.SonoraViewModel
 import domain.home.HomeMusicMode
 import domain.library.LibrarySectionMode
-import domain.player.CircularMiniPlayerGestureOutcome
-import domain.player.ExpandedMiniPlayerGestureOutcome
-import domain.player.MiniPlayerDisplayState
-import domain.player.MiniPlayerGestureAxis
-import domain.player.MiniPlayerGestureController
+import domain.motion.GlobalMotionConfig
+import domain.motion.resolveEffectiveMotionState
 import domain.player.MiniPlayerVisualState
 import domain.player.MusicMiniPlayerVisibilityPolicy
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import ui.components.FloatingMiniPlayer
+import ui.motion.LocalEffectiveMotionState
+import ui.settings.BackgroundPlaybackSettingsScreen
+import ui.settings.MusicExperienceSettingsScreen
+import ui.theme.DynamicColorPalette
+import ui.theme.EditorialColors
+import ui.theme.LocalDynamicColorPalette
+import ui.theme.LocalEditorialColors
+import ui.theme.LocalReduceAnimations
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class SonoraUniversalMiniPlayerGestureAndCreditTest {
+
+    @get:Rule
+    val composeRule = createComposeRule()
 
     private lateinit var context: Context
 
@@ -64,11 +91,11 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
     )
 
     // =========================================================================
-    // PART 1: DEVELOPER CREDIT IN APP INTRO & ABOUT SONORA
+    // PART 1: DEVELOPER CREDIT & REMOVED RESOURCES
     // =========================================================================
 
     @Test
-    fun developerCredit_resourcesMatchExactSpecification() {
+    fun developerCredit_preserved_andRemovedMiniPlayerSwipeAndUpdateStringsAbsent() {
         assertEquals("SONORA", context.getString(R.string.app_name))
         assertEquals(
             "A Music Experience Beyond Listening",
@@ -81,418 +108,146 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
         val aboutFooter = context.getString(R.string.about_developer_footer)
         assertTrue(aboutFooter.contains("Dr. M. GANESWAR"))
         assertTrue(aboutFooter.contains("BAMS Final Year"))
-        assertTrue(context.getString(R.string.about_developer_name).contains("Dr. M. GANESWAR"))
-        assertTrue(context.getString(R.string.about_developer_qualification).contains("BAMS Final Year"))
 
-        // Accessibility action strings exist and are non-blank
-        assertTrue(context.getString(R.string.mini_player_action_minimize).isNotBlank())
-        assertTrue(context.getString(R.string.mini_player_action_dismiss).isNotBlank())
-        assertTrue(context.getString(R.string.mini_player_action_expand).isNotBlank())
+        val res = context.resources
+        val pkg = context.packageName
+        // Removed mini-player swipe / circular / dismiss string resources
+        assertEquals(0, res.getIdentifier("mini_player_action_minimize", "string", pkg))
+        assertEquals(0, res.getIdentifier("mini_player_action_dismiss", "string", pkg))
+        assertEquals(0, res.getIdentifier("mini_player_action_expand", "string", pkg))
+        assertEquals(0, res.getIdentifier("mini_player_restore_desc", "string", pkg))
+        // Removed app update / Telegram string resources
+        assertEquals(0, res.getIdentifier("settings_app_update_section", "string", pkg))
+        assertEquals(0, res.getIdentifier("settings_check_for_updates_title", "string", pkg))
+        assertEquals(0, res.getIdentifier("settings_check_for_updates_subtitle", "string", pkg))
+        assertEquals(0, res.getIdentifier("settings_update_link_unavailable", "string", pkg))
     }
 
     // =========================================================================
-    // PARTS 2 & 3: UNIVERSAL TWO-STAGE GESTURE ACROSS ALL 20 MINI-PLAYER STYLES
+    // PART 2: MINI-PLAYER SWIPES REMOVED; TAP-TO-OPEN & BUTTONS PRESERVED
     // =========================================================================
 
     @Test
-    fun universalTwoStageSwipeDown_worksIdenticallyAcrossAll20MiniPlayerStyles() {
-        val styles = MiniPlayerStyle.entries
-        assertEquals("Expected all 20 MiniPlayerStyle designs", 20, styles.size)
+    fun floatingMiniPlayer_swipesDoNothing_whileTapAndExplicitButtonsWork() {
+        val song = sampleSong(101L, "Kun Faya Kun", isOnline = false)
+        var playPauseClicks = 0
+        var nextClicks = 0
+        var prevClicks = 0
+        var openFullPlayerClicks = 0
+        var activeStyle by mutableStateOf(MiniPlayerStyle.FLOATING_PILL)
 
-        val touchSlop = 24f
-        val swipeThreshold = 160f
-        val velocityThreshold = 1200f
-        val verticalExpand = 72f
-        val verticalDismiss = 104f
-        val circularDismissDistance = 220f
-        val circularDismissVelocity = 1700f
-
-        for (style in styles) {
-            var state = MiniPlayerDisplayState.EXPANDED_MINI_PLAYER
-
-            // Stage 1: Downward swipe on expanded mini player -> Floating Circular Player
-            val axis = MiniPlayerGestureController.lockGestureAxis(
-                accumX = 6f,
-                accumY = 128f,
-                touchSlopPx = touchSlop
-            )
-            assertEquals("Style ${style.name} must lock vertical axis", MiniPlayerGestureAxis.VERTICAL, axis)
-
-            val stage1Outcome = MiniPlayerGestureController.classifyExpandedGesture(
-                lockedAxis = axis,
-                dragX = 6f,
-                dragY = 128f,
-                velocityX = 20f,
-                velocityY = 1100f,
-                swipeThresholdPx = swipeThreshold,
-                velocityThresholdPx = velocityThreshold,
-                verticalExpandPx = verticalExpand,
-                verticalDismissPx = verticalDismiss,
-                touchSlopPx = touchSlop,
-                horizontalGesturesEnabled = true,
-                swipeDownEnabled = true,
-                style = style
-            )
-            assertEquals(
-                "Style ${style.name} must trigger Stage 1 SWIPE_DOWN_MINIMIZE",
-                ExpandedMiniPlayerGestureOutcome.SWIPE_DOWN_MINIMIZE,
-                stage1Outcome
-            )
-
-            state = MiniPlayerGestureController.onSwipeDown(
-                currentState = state,
-                circularMiniPlayerEnabled = true,
-                swipeDownDismissEnabled = true
-            )
-            assertEquals(
-                "Style ${style.name} Stage 1 must transition to CIRCULAR_MINI_PLAYER",
-                MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER,
-                state
-            )
-
-            // Stage 2: Downward swipe on circular floating player -> Completely Dismissed
-            val stage2Outcome = MiniPlayerGestureController.classifyCircularGesture(
-                dragX = 14f,
-                dragY = 260f,
-                velocityX = 30f,
-                velocityY = 1950f,
-                dismissDistancePx = circularDismissDistance,
-                dismissVelocityPx = circularDismissVelocity,
-                touchSlopPx = touchSlop,
-                swipeDownDismissEnabled = true
-            )
-            assertEquals(
-                "Style ${style.name} must trigger Stage 2 SWIPE_DOWN_DISMISS",
-                CircularMiniPlayerGestureOutcome.SWIPE_DOWN_DISMISS,
-                stage2Outcome
-            )
-
-            state = MiniPlayerGestureController.onSwipeDown(
-                currentState = state,
-                circularMiniPlayerEnabled = true,
-                swipeDownDismissEnabled = true
-            )
-            assertEquals(
-                "Style ${style.name} Stage 2 must transition to DISMISSED",
-                MiniPlayerDisplayState.DISMISSED,
-                state
-            )
-
-            // Subsequent swipe down while already dismissed stays safely DISMISSED
-            state = MiniPlayerGestureController.onSwipeDown(
-                currentState = state,
-                circularMiniPlayerEnabled = true,
-                swipeDownDismissEnabled = true
-            )
-            assertEquals(MiniPlayerDisplayState.DISMISSED, state)
-
-            // Restoration returns to EXPANDED_MINI_PLAYER
-            state = MiniPlayerGestureController.onRestoreMiniPlayer()
-            assertEquals(MiniPlayerDisplayState.EXPANDED_MINI_PLAYER, state)
-        }
-    }
-
-    // =========================================================================
-    // PARTS 4 & 5: GESTURE DISAMBIGUATION (HORIZONTAL, UPWARD, TAPS, DRAG VS DISMISS)
-    // =========================================================================
-
-    @Test
-    fun expandedMiniPlayer_distinguishesHorizontalSwipesUpwardExpandAndAccidentalTaps() {
-        val touchSlop = 24f
-        val swipeThreshold = 160f
-        val velocityThreshold = 1200f
-        val verticalExpand = 72f
-        val verticalDismiss = 104f
-
-        // 1. Ordinary tap / micro-jitter -> NONE (never minimizes or skips)
-        val tapAxis = MiniPlayerGestureController.lockGestureAxis(4f, 6f, touchSlop)
-        assertEquals(MiniPlayerGestureAxis.UNDECIDED, tapAxis)
-        assertEquals(
-            ExpandedMiniPlayerGestureOutcome.NONE,
-            MiniPlayerGestureController.classifyExpandedGesture(
-                lockedAxis = tapAxis,
-                dragX = 4f,
-                dragY = 6f,
-                velocityX = 0f,
-                velocityY = 0f,
-                swipeThresholdPx = swipeThreshold,
-                velocityThresholdPx = velocityThreshold,
-                verticalExpandPx = verticalExpand,
-                verticalDismissPx = verticalDismiss,
-                touchSlopPx = touchSlop,
-                horizontalGesturesEnabled = true,
-                swipeDownEnabled = true
-            )
-        )
-
-        // 2. Horizontal swipe left -> SWIPE_NEXT (does NOT dismiss)
-        val leftAxis = MiniPlayerGestureController.lockGestureAxis(-190f, 18f, touchSlop)
-        assertEquals(MiniPlayerGestureAxis.HORIZONTAL, leftAxis)
-        assertEquals(
-            ExpandedMiniPlayerGestureOutcome.SWIPE_NEXT,
-            MiniPlayerGestureController.classifyExpandedGesture(
-                lockedAxis = leftAxis,
-                dragX = -190f,
-                dragY = 18f,
-                velocityX = -1500f,
-                velocityY = 40f,
-                swipeThresholdPx = swipeThreshold,
-                velocityThresholdPx = velocityThreshold,
-                verticalExpandPx = verticalExpand,
-                verticalDismissPx = verticalDismiss,
-                touchSlopPx = touchSlop,
-                horizontalGesturesEnabled = true,
-                swipeDownEnabled = true
-            )
-        )
-
-        // 3. Horizontal swipe right -> SWIPE_PREVIOUS (does NOT dismiss)
-        val rightAxis = MiniPlayerGestureController.lockGestureAxis(185f, 22f, touchSlop)
-        assertEquals(MiniPlayerGestureAxis.HORIZONTAL, rightAxis)
-        assertEquals(
-            ExpandedMiniPlayerGestureOutcome.SWIPE_PREVIOUS,
-            MiniPlayerGestureController.classifyExpandedGesture(
-                lockedAxis = rightAxis,
-                dragX = 185f,
-                dragY = 22f,
-                velocityX = 1400f,
-                velocityY = 30f,
-                swipeThresholdPx = swipeThreshold,
-                velocityThresholdPx = velocityThreshold,
-                verticalExpandPx = verticalExpand,
-                verticalDismissPx = verticalDismiss,
-                touchSlopPx = touchSlop,
-                horizontalGesturesEnabled = true,
-                swipeDownEnabled = true
-            )
-        )
-
-        // 4. Upward swipe -> SWIPE_UP_EXPAND
-        val upAxis = MiniPlayerGestureController.lockGestureAxis(8f, -110f, touchSlop)
-        assertEquals(MiniPlayerGestureAxis.VERTICAL, upAxis)
-        assertEquals(
-            ExpandedMiniPlayerGestureOutcome.SWIPE_UP_EXPAND,
-            MiniPlayerGestureController.classifyExpandedGesture(
-                lockedAxis = upAxis,
-                dragX = 8f,
-                dragY = -110f,
-                velocityX = 10f,
-                velocityY = -1100f,
-                swipeThresholdPx = swipeThreshold,
-                velocityThresholdPx = velocityThreshold,
-                verticalExpandPx = verticalExpand,
-                verticalDismissPx = verticalDismiss,
-                touchSlopPx = touchSlop,
-                horizontalGesturesEnabled = true,
-                swipeDownEnabled = true
-            )
-        )
-
-        // 5. Short downward nudge below threshold & velocity -> NONE
-        val shortDownAxis = MiniPlayerGestureController.lockGestureAxis(2f, 40f, touchSlop)
-        assertEquals(
-            ExpandedMiniPlayerGestureOutcome.NONE,
-            MiniPlayerGestureController.classifyExpandedGesture(
-                lockedAxis = shortDownAxis,
-                dragX = 2f,
-                dragY = 40f,
-                velocityX = 0f,
-                velocityY = 120f,
-                swipeThresholdPx = swipeThreshold,
-                velocityThresholdPx = velocityThreshold,
-                verticalExpandPx = verticalExpand,
-                verticalDismissPx = verticalDismiss,
-                touchSlopPx = touchSlop,
-                horizontalGesturesEnabled = true,
-                swipeDownEnabled = true
-            )
-        )
-    }
-
-    @Test
-    fun circularMiniPlayer_distinguishesRepositionDragTapAndStage2DownwardDismiss() {
-        val touchSlop = 24f
-        val dismissDist = 220f
-        val dismissVel = 1700f
-
-        // 1. Ordinary tap (< touchSlop) -> NONE (lets clickable expand the mini player)
-        assertEquals(
-            CircularMiniPlayerGestureOutcome.NONE,
-            MiniPlayerGestureController.classifyCircularGesture(
-                dragX = 5f,
-                dragY = 8f,
-                velocityX = 0f,
-                velocityY = 0f,
-                dismissDistancePx = dismissDist,
-                dismissVelocityPx = dismissVel,
-                touchSlopPx = touchSlop
-            )
-        )
-
-        // 2. Horizontal reposition drag across screen -> REPOSITION_DRAG (never dismisses)
-        assertEquals(
-            CircularMiniPlayerGestureOutcome.REPOSITION_DRAG,
-            MiniPlayerGestureController.classifyCircularGesture(
-                dragX = -380f,
-                dragY = 40f,
-                velocityX = -600f,
-                velocityY = 120f,
-                dismissDistancePx = dismissDist,
-                dismissVelocityPx = dismissVel,
-                touchSlopPx = touchSlop
-            )
-        )
-        assertEquals(
-            0f,
-            MiniPlayerGestureController.circularDismissPreviewProgress(-380f, 40f, dismissDist, touchSlop),
-            0.001f
-        )
-
-        // 3. Upward reposition drag -> REPOSITION_DRAG (never dismisses)
-        assertEquals(
-            CircularMiniPlayerGestureOutcome.REPOSITION_DRAG,
-            MiniPlayerGestureController.classifyCircularGesture(
-                dragX = 12f,
-                dragY = -280f,
-                velocityX = 20f,
-                velocityY = -900f,
-                dismissDistancePx = dismissDist,
-                dismissVelocityPx = dismissVel,
-                touchSlopPx = touchSlop
-            )
-        )
-
-        // 4. Diagonal side drag -> REPOSITION_DRAG (never dismisses)
-        assertEquals(
-            CircularMiniPlayerGestureOutcome.REPOSITION_DRAG,
-            MiniPlayerGestureController.classifyCircularGesture(
-                dragX = 210f,
-                dragY = 230f,
-                velocityX = 500f,
-                velocityY = 500f,
-                dismissDistancePx = dismissDist,
-                dismissVelocityPx = dismissVel,
-                touchSlopPx = touchSlop
-            )
-        )
-
-        // 5. Downward drag cancelled by pulling back upward at release -> REPOSITION_DRAG
-        assertEquals(
-            CircularMiniPlayerGestureOutcome.REPOSITION_DRAG,
-            MiniPlayerGestureController.classifyCircularGesture(
-                dragX = 8f,
-                dragY = 240f,
-                velocityX = 0f,
-                velocityY = -520f,
-                dismissDistancePx = dismissDist,
-                dismissVelocityPx = dismissVel,
-                touchSlopPx = touchSlop
-            )
-        )
-
-        // 6. Fast downward flick -> SWIPE_DOWN_DISMISS
-        assertEquals(
-            CircularMiniPlayerGestureOutcome.SWIPE_DOWN_DISMISS,
-            MiniPlayerGestureController.classifyCircularGesture(
-                dragX = 10f,
-                dragY = 110f,
-                velocityX = 40f,
-                velocityY = 2100f,
-                dismissDistancePx = dismissDist,
-                dismissVelocityPx = dismissVel,
-                touchSlopPx = touchSlop
-            )
-        )
-
-        // 7. Deliberate downward swipe past dismiss distance -> SWIPE_DOWN_DISMISS
-        assertEquals(
-            CircularMiniPlayerGestureOutcome.SWIPE_DOWN_DISMISS,
-            MiniPlayerGestureController.classifyCircularGesture(
-                dragX = 18f,
-                dragY = 250f,
-                velocityX = 10f,
-                velocityY = 420f,
-                dismissDistancePx = dismissDist,
-                dismissVelocityPx = dismissVel,
-                touchSlopPx = touchSlop
-            )
-        )
-        assertTrue(
-            MiniPlayerGestureController.circularDismissPreviewProgress(18f, 250f, dismissDist, touchSlop) >= 0.9f
-        )
-    }
-
-    // =========================================================================
-    // PARTS 6 & 7: PLAYBACK CONTINUITY, RESTORATION & ONLINE VIDEO ISOLATION
-    // =========================================================================
-
-    @Test
-    fun offlineAndOnlinePlayback_continuesUninterruptedThroughStage1AndStage2Dismiss() {
-        val controller = Robolectric.buildService(SonoraMusicService::class.java).create()
-        val service = controller.get()
-        assertNotNull(service)
-        val initialSession = service.mediaSession
-        assertNotNull(initialSession)
-
-        val tracks = listOf(
-            sampleSong(101L, "Kun Faya Kun", isOnline = false),
-            sampleSong(202L, "Agar Tum Saath Ho", isOnline = true)
-        )
-
-        for (track in tracks) {
-            service.updateQueueSnapshot(listOf(track), 0)
-            service.updateForegroundNotification(track, isPlaying = true)
-            assertTrue(service.notificationManager.isForegroundNotificationActive)
-            assertTrue(service.mediaSession?.isActive == true)
-
-            var displayState = MiniPlayerDisplayState.EXPANDED_MINI_PLAYER
-
-            // Stage 1: Minimize to circle
-            displayState = MiniPlayerGestureController.onSwipeDown(
-                currentState = displayState,
-                circularMiniPlayerEnabled = true
-            )
-            assertEquals(MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER, displayState)
-            // Foreground playback service, MediaSession, and queue remain singular and active
-            assertSame(initialSession, service.mediaSession)
-            assertTrue(service.notificationManager.isForegroundNotificationActive)
-            assertEquals(1, service.currentQueueSnapshot.size)
-            assertEquals(track.id, service.currentQueueSnapshot.first().id)
-
-            // Stage 2: Dismiss completely
-            displayState = MiniPlayerGestureController.onSwipeDown(
-                currentState = displayState,
-                circularMiniPlayerEnabled = true
-            )
-            assertEquals(MiniPlayerDisplayState.DISMISSED, displayState)
-            assertSame(initialSession, service.mediaSession)
-            assertTrue(service.notificationManager.isForegroundNotificationActive)
-            assertEquals(1, service.currentQueueSnapshot.size)
-            assertEquals(track.id, service.currentQueueSnapshot.first().id)
-
-            // No empty reserved bottom space when dismissed or circular
-            assertEquals(
-                104.dp,
-                MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
-                    isMusicMiniPlayerVisible = false,
-                    isVideoMiniPlayerVisible = false
+        composeRule.setContent {
+            CompositionLocalProvider(
+                LocalEditorialColors provides EditorialColors.default(),
+                LocalDynamicColorPalette provides DynamicColorPalette.default(),
+                LocalEffectiveMotionState provides resolveEffectiveMotionState(GlobalMotionConfig.DEFAULT),
+                LocalReduceAnimations provides true
+            ) {
+                FloatingMiniPlayer(
+                    song = song,
+                    playbackInfo = PlaybackInfo(
+                        isPlaying = true,
+                        currentPositionMs = 45_000L,
+                        durationMs = song.durationMs
+                    ),
+                    colors = EditorialColors.default(),
+                    onTogglePlayPause = { playPauseClicks++ },
+                    onPlayNext = { nextClicks++ },
+                    onPlayPrevious = { prevClicks++ },
+                    onClick = { openFullPlayerClicks++ },
+                    miniPlayerStyle = activeStyle,
+                    queue = listOf(song),
+                    queueIndex = 0
                 )
-            )
-            // Persistent header restore entry available in Music mode
-            assertTrue(
-                MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                    hasCurrentSong = true,
-                    displayState = displayState,
-                    isInOnlineVideoExperience = false
-                )
-            )
+            }
         }
 
-        controller.destroy()
+        // Swiping left, right, up, or down on FloatingMiniPlayer must NOT skip, expand, collapse, or dismiss
+        composeRule.onNodeWithTag("mini_player").assertIsDisplayed()
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeLeft() }
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeRight() }
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeUp() }
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeDown() }
+        composeRule.waitForIdle()
+
+        assertEquals("Horizontal swipe left must NOT trigger next", 0, nextClicks)
+        assertEquals("Horizontal swipe right must NOT trigger previous", 0, prevClicks)
+        assertEquals("Vertical swipe up/down must NOT open full player", 0, openFullPlayerClicks)
+        composeRule.onNodeWithTag("mini_player").assertIsDisplayed()
+
+        // Explicit buttons and normal tap-to-open must still work
+        composeRule.onNodeWithTag("mini_play_pause_button").performClick()
+        composeRule.onNodeWithTag("mini_skip_next_button").performClick()
+        composeRule.onNodeWithTag("mini_player").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(1, playPauseClicks)
+        assertEquals(1, nextClicks)
+        assertEquals(1, openFullPlayerClicks)
+
+        // Verify Previous button works on a style that exposes explicit Previous button
+        activeStyle = MiniPlayerStyle.EDGE_TO_EDGE_MINI
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("mini_skip_prev_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, prevClicks)
     }
 
     @Test
-    fun onlineVideoMode_hidesBothExpandedAndCircularPlayers_andPreservesExactStateOnReturn() {
+    fun legacyMiniPlayerView_swipesDoNothing_whileTapAndButtonsWork() {
+        val song = sampleSong(202L, "Agar Tum Saath Ho", isOnline = true)
+        var playPauseClicks = 0
+        var nextClicks = 0
+        var prevClicks = 0
+        var openFullPlayerClicks = 0
+
+        composeRule.setContent {
+            CompositionLocalProvider(
+                LocalDynamicColorPalette provides DynamicColorPalette.default()
+            ) {
+                MiniPlayerView(
+                    song = song,
+                    playbackInfo = PlaybackInfo(isPlaying = true, currentPositionMs = 30_000L, durationMs = 200_000L),
+                    onTogglePlayPause = { playPauseClicks++ },
+                    onPlayNext = { nextClicks++ },
+                    onPlayPrevious = { prevClicks++ },
+                    onClick = { openFullPlayerClicks++ }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeLeft() }
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeRight() }
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeUp() }
+        composeRule.onNodeWithTag("mini_player").performTouchInput { swipeDown() }
+        composeRule.waitForIdle()
+
+        assertEquals(0, nextClicks)
+        assertEquals(0, prevClicks)
+        assertEquals(0, openFullPlayerClicks)
+
+        composeRule.onNodeWithTag("mini_play_pause_button").performClick()
+        composeRule.onNodeWithTag("mini_skip_next_button").performClick()
+        composeRule.onNodeWithTag("mini_player").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(1, playPauseClicks)
+        assertEquals(1, nextClicks)
+        assertEquals(1, openFullPlayerClicks)
+    }
+
+    // =========================================================================
+    // PART 3: NORMAL VISIBILITY, ONLINE VIDEO ISOLATION & PLAYBACK SERVICE
+    // =========================================================================
+
+    @Test
+    fun visibilityPolicy_preservesNormalVisibilityAndOnlineVideoIsolation_withNoCircularState() {
+        assertEquals(
+            setOf(MiniPlayerVisualState.EXPANDED_BAR, MiniPlayerVisualState.HIDDEN),
+            MiniPlayerVisualState.entries.toSet()
+        )
+        assertEquals(20, MiniPlayerStyle.entries.size)
+
         val inOnlineVideo = MusicMiniPlayerVisibilityPolicy.isInOnlineVideoExperience(
             currentTab = 0,
             homeMusicMode = HomeMusicMode.ONLINE_VIDEO,
@@ -513,121 +268,123 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
         )
         assertFalse(inOfflineMusic)
 
-        // 1. Expanded state hidden in Online Video, restored on return
-        assertEquals(
-            MiniPlayerVisualState.HIDDEN,
-            MusicMiniPlayerVisibilityPolicy.resolveVisualState(
-                hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.EXPANDED_MINI_PLAYER,
-                circularMiniPlayerEnabled = true,
-                isInOnlineVideoExperience = inOnlineVideo
-            )
-        )
         assertEquals(
             MiniPlayerVisualState.EXPANDED_BAR,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
                 hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.EXPANDED_MINI_PLAYER,
-                circularMiniPlayerEnabled = true,
                 isInOnlineVideoExperience = inOfflineMusic
             )
         )
-
-        // 2. Circular state hidden in Online Video, returns to circular on Music return
         assertEquals(
             MiniPlayerVisualState.HIDDEN,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
-                hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER,
-                circularMiniPlayerEnabled = true,
-                isInOnlineVideoExperience = inOnlineVideo
-            )
-        )
-        assertEquals(
-            MiniPlayerVisualState.CIRCULAR_FLOATING,
-            MusicMiniPlayerVisibilityPolicy.resolveVisualState(
-                hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER,
-                circularMiniPlayerEnabled = true,
+                hasCurrentSong = false,
                 isInOnlineVideoExperience = inOfflineMusic
-            )
-        )
-
-        // 3. Dismissed state stays hidden in Online Video (no header restore icon) AND stays dismissed on return
-        assertEquals(
-            MiniPlayerVisualState.HIDDEN,
-            MusicMiniPlayerVisibilityPolicy.resolveVisualState(
-                hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.DISMISSED,
-                circularMiniPlayerEnabled = true,
-                isInOnlineVideoExperience = inOnlineVideo
-            )
-        )
-        assertFalse(
-            MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.DISMISSED,
-                isInOnlineVideoExperience = inOnlineVideo
             )
         )
         assertEquals(
             MiniPlayerVisualState.HIDDEN,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
                 hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.DISMISSED,
-                circularMiniPlayerEnabled = true,
-                isInOnlineVideoExperience = inOfflineMusic
+                isInOnlineVideoExperience = inOnlineVideo
             )
         )
-        assertTrue(
-            MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                hasCurrentSong = true,
-                displayState = MiniPlayerDisplayState.DISMISSED,
-                isInOnlineVideoExperience = inOfflineMusic
+        assertEquals(
+            184.dp,
+            MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
+                isMusicMiniPlayerVisible = true,
+                isVideoMiniPlayerVisible = false
+            )
+        )
+        assertEquals(
+            104.dp,
+            MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
+                isMusicMiniPlayerVisible = false,
+                isVideoMiniPlayerVisible = false
             )
         )
     }
 
     @Test
-    fun miniPlayerDisplayState_persistsInDataStore_andReconcilesCircularToggleSafely() = runBlocking {
-        val prefs = PlaybackLifecyclePreferences(context)
+    fun playbackService_mediaSessionAndForegroundNotificationRemainIntact() {
+        val controller = Robolectric.buildService(SonoraMusicService::class.java).create()
+        val service = controller.get()
+        assertNotNull(service)
+        val initialSession = service.mediaSession
+        assertNotNull(initialSession)
 
-        // Default is EXPANDED_MINI_PLAYER
-        assertEquals(MiniPlayerDisplayState.EXPANDED_MINI_PLAYER, prefs.miniPlayerDisplayStateFlow.first())
-
-        // Persist CIRCULAR_MINI_PLAYER
-        prefs.setMiniPlayerDisplayState(MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER)
-        assertEquals(MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER, prefs.miniPlayerDisplayStateFlow.first())
-
-        // Tap circular expands back
-        assertEquals(
-            MiniPlayerDisplayState.EXPANDED_MINI_PLAYER,
-            MiniPlayerGestureController.onTapCircularPlayer(MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER)
+        val tracks = listOf(
+            sampleSong(101L, "Kun Faya Kun", isOnline = false),
+            sampleSong(202L, "Agar Tum Saath Ho", isOnline = true)
         )
 
-        // Persist DISMISSED
-        prefs.setMiniPlayerDisplayState(MiniPlayerDisplayState.DISMISSED)
-        assertEquals(MiniPlayerDisplayState.DISMISSED, prefs.miniPlayerDisplayStateFlow.first())
+        for (track in tracks) {
+            service.updateQueueSnapshot(listOf(track), 0)
+            service.updateForegroundNotification(track, isPlaying = true)
+            assertSame(initialSession, service.mediaSession)
+            assertTrue(service.notificationManager.isForegroundNotificationActive)
+            assertTrue(service.mediaSession?.isActive == true)
+            assertEquals(track.id, service.currentQueueSnapshot.first().id)
+        }
 
-        // Disabling circular setting must NOT wipe out an intentionally DISMISSED state
-        assertEquals(
-            MiniPlayerDisplayState.DISMISSED,
-            MiniPlayerGestureController.onCircularModeSettingChanged(
-                currentState = MiniPlayerDisplayState.DISMISSED,
-                circularEnabled = false
-            )
-        )
-        // Disabling circular setting while in CIRCULAR_MINI_PLAYER expands back cleanly
-        assertEquals(
-            MiniPlayerDisplayState.EXPANDED_MINI_PLAYER,
-            MiniPlayerGestureController.onCircularModeSettingChanged(
-                currentState = MiniPlayerDisplayState.CIRCULAR_MINI_PLAYER,
-                circularEnabled = false
-            )
-        )
+        controller.destroy()
+    }
 
-        // Reset back to EXPANDED_MINI_PLAYER
-        prefs.setMiniPlayerDisplayState(MiniPlayerDisplayState.EXPANDED_MINI_PLAYER)
-        assertEquals(MiniPlayerDisplayState.EXPANDED_MINI_PLAYER, prefs.miniPlayerDisplayStateFlow.first())
+    // =========================================================================
+    // PART 4: SETTINGS UI CONFIRMS ZERO UPDATE/TELEGRAM/CIRCULAR/DISMISS ITEMS
+    // =========================================================================
+
+    @Test
+    fun settingsScreens_containNoUpdateTelegramCircularOrSwipeDismissControls() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = SonoraViewModel(app)
+
+        composeRule.setContent {
+            CompositionLocalProvider(
+                LocalEditorialColors provides EditorialColors.default(),
+                LocalEffectiveMotionState provides resolveEffectiveMotionState(GlobalMotionConfig.DEFAULT)
+            ) {
+                SettingsScreen(viewModel = vm)
+            }
+        }
+        composeRule.waitForIdle()
+
+        assertTrue(composeRule.onAllNodesWithTag("settings_check_for_updates_row").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Check for Updates", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Telegram", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Mini-Player Swipes", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Circular mini player", substring = true).fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun backgroundAndMusicExperienceSettings_containNoCircularOrSwipeDismissControls() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val vm = SonoraViewModel(app)
+        var screenMode by mutableStateOf(0)
+
+        composeRule.setContent {
+            CompositionLocalProvider(
+                LocalEditorialColors provides EditorialColors.default()
+            ) {
+                if (screenMode == 0) {
+                    BackgroundPlaybackSettingsScreen(viewModel = vm, onBack = {})
+                } else {
+                    MusicExperienceSettingsScreen(viewModel = vm, onBack = {})
+                }
+            }
+        }
+        composeRule.waitForIdle()
+
+        // Background playback switches remain, circular mini player switches are gone
+        composeRule.onNodeWithTag("setting_background_playback_switch").assertIsDisplayed()
+        assertTrue(composeRule.onAllNodesWithTag("setting_circular_mini_player_switch").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Circular Mini Player", substring = true).fetchSemanticsNodes().isEmpty())
+
+        // Switch to Music Experience settings
+        screenMode = 1
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("setting_unlimited_queue_switch").assertIsDisplayed()
+        assertTrue(composeRule.onAllNodesWithTag("setting_swipe_dismiss_mini_switch").fetchSemanticsNodes().isEmpty())
+        assertTrue(composeRule.onAllNodesWithText("Swipe Down to Dismiss", substring = true).fetchSemanticsNodes().isEmpty())
     }
 }

@@ -168,7 +168,6 @@ fun HomeScreen(
     val allSongs by viewModel.allSongs.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
     val playbackInfo by viewModel.playbackInfo.collectAsState()
-    val miniPlayerDisplayState by viewModel.miniPlayerDisplayState.collectAsState()
     val favorites by viewModel.favoriteSongs.collectAsState()
     val mostPlayed by viewModel.mostPlayedSongs.collectAsState()
     val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
@@ -360,11 +359,6 @@ fun HomeScreen(
                 .fillMaxSize()
         ) {
             // Persistent Top Greeting Header with Offline / Online Mode Switcher
-            val showHeaderRestoreNowPlaying = domain.player.MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                hasCurrentSong = currentSong != null,
-                displayState = miniPlayerDisplayState,
-                isInOnlineVideoExperience = homeMusicMode == HomeMusicMode.ONLINE_VIDEO || videoPlayerState.hasActiveVideo
-            )
             GreetingHeader(
                 greeting = greeting,
                 userProfile = userProfile,
@@ -374,12 +368,6 @@ fun HomeScreen(
                 unreadVideoNotificationsCount = unreadVideoNotificationCount,
                 onVideoNotificationsClick = if (homeMusicMode == HomeMusicMode.ONLINE_VIDEO) {
                     { showVideoNotificationsSheet = true }
-                } else null,
-                showRestoreNowPlayingIcon = showHeaderRestoreNowPlaying,
-                onRestoreNowPlayingClick = if (showHeaderRestoreNowPlaying) {
-                    {
-                        viewModel.restoreMusicMiniPlayer()
-                    }
                 } else null,
                 onAvatarClick = { showProfileSheet = true },
                 onDiscoveryClick = { showModeSwitcherSheet = true },
@@ -462,7 +450,6 @@ fun HomeScreen(
                                         top = 4.dp,
                                         bottom = domain.player.MusicMiniPlayerVisibilityPolicy.listBottomContentPadding(
                                             isMusicMiniPlayerVisible = currentSong != null &&
-                                                miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER &&
                                                 !videoPlayerState.hasActiveVideo,
                                             isVideoMiniPlayerVisible = videoPlayerState.hasActiveVideo && !videoPlayerState.isPlayerExpanded
                                         )
@@ -838,8 +825,7 @@ fun HomeScreen(
                                     onDismissPlaybackError = { viewModel.clearPlaybackError() },
                                     onOpenPlaylistsScreen = onOpenPlaylists,
                                     onOpenViewAllOnline = onOpenOnlineMusic,
-                                    hasMusicMiniPlayer = currentSong != null &&
-                                        miniPlayerDisplayState == domain.player.MiniPlayerDisplayState.EXPANDED_MINI_PLAYER
+                                    hasMusicMiniPlayer = currentSong != null
                                 )
                             }
                         }

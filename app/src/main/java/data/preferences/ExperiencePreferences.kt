@@ -70,7 +70,6 @@ data class MusicExperienceSettings(
     val musicRecommendationsEnabled: Boolean = true,
     val autoSongRadioEnabled: Boolean = true,
     val unlimitedQueueEnabled: Boolean = true,
-    val swipeDownDismissMiniPlayerEnabled: Boolean = true,
     val albumArtworkQualityMode: AlbumArtworkQualityMode = AlbumArtworkQualityMode.AUTO
 )
 
@@ -95,7 +94,6 @@ class ExperiencePreferences(private val context: Context) {
         val KEY_MUSIC_RECOMMENDATIONS_ENABLED = booleanPreferencesKey("music_recommendations_enabled")
         val KEY_AUTO_SONG_RADIO_ENABLED = booleanPreferencesKey("music_auto_song_radio_enabled")
         val KEY_UNLIMITED_QUEUE_ENABLED = booleanPreferencesKey("music_unlimited_queue_enabled")
-        val KEY_SWIPE_DOWN_DISMISS_MINI_PLAYER = booleanPreferencesKey("music_swipe_down_dismiss_mini_player")
         val KEY_ALBUM_ARTWORK_QUALITY = stringPreferencesKey("music_album_artwork_quality_mode")
         val KEY_HARMONIC_TRACK_MATCHING_ENABLED = booleanPreferencesKey("harmonic_track_matching_enabled")
     }
@@ -128,7 +126,6 @@ class ExperiencePreferences(private val context: Context) {
             musicRecommendationsEnabled = prefs[KEY_MUSIC_RECOMMENDATIONS_ENABLED] ?: true,
             autoSongRadioEnabled = prefs[KEY_AUTO_SONG_RADIO_ENABLED] ?: true,
             unlimitedQueueEnabled = prefs[KEY_UNLIMITED_QUEUE_ENABLED] ?: true,
-            swipeDownDismissMiniPlayerEnabled = prefs[KEY_SWIPE_DOWN_DISMISS_MINI_PLAYER] ?: true,
             albumArtworkQualityMode = AlbumArtworkQualityMode.fromId(prefs[KEY_ALBUM_ARTWORK_QUALITY])
         )
     }
@@ -215,10 +212,6 @@ class ExperiencePreferences(private val context: Context) {
 
     suspend fun setUnlimitedQueueEnabled(enabled: Boolean) {
         context.experienceDataStore.edit { it[KEY_UNLIMITED_QUEUE_ENABLED] = enabled }
-    }
-
-    suspend fun setSwipeDownDismissMiniPlayerEnabled(enabled: Boolean) {
-        context.experienceDataStore.edit { it[KEY_SWIPE_DOWN_DISMISS_MINI_PLAYER] = enabled }
     }
 
     suspend fun setAlbumArtworkQualityMode(mode: AlbumArtworkQualityMode) {

@@ -17,8 +17,6 @@ import data.analytics.ListeningAnalyticsRepository
 import data.analytics.ListeningEventEntity
 import data.analytics.PlaybackSessionSnapshotEntity
 import data.download.DownloadedTrackEntity
-import data.preferences.CircularAnimationIntensity
-import data.preferences.CircularFloatingSide
 import data.preferences.PlaybackLifecyclePreferences
 import data.queue.MusicQueueRepository
 import domain.analytics.AnalyticsTimeRange
@@ -93,58 +91,30 @@ class SonoraBackgroundCircularAnalyticsRestoreTest {
         genre = genre
     )
 
-    // --- PART 2: Circular Mini Player & Online Video Isolation ---
+    // --- PART 2: Normal Mini-Player Visibility & Online Video Isolation ---
 
     @Test
-    fun circularMiniPlayer_swipeDownCollapsesToCircle_andTapExpandsBack() {
-        // Default music mode -> expanded bar
+    fun musicMiniPlayer_visibleInMusicMode_andHiddenWhenNoSongOrInOnlineVideoMode() {
+        // Default music mode with song -> expanded bar
         assertEquals(
             MiniPlayerVisualState.EXPANDED_BAR,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
                 hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
-                isCollapsedToCircle = false,
-                circularMiniPlayerEnabled = true,
                 isInOnlineVideoExperience = false
             )
         )
-
-        // Swipe down with circular mode enabled -> circular floating player
-        assertEquals(
-            MiniPlayerVisualState.CIRCULAR_FLOATING,
-            MusicMiniPlayerVisibilityPolicy.resolveVisualState(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
-                isCollapsedToCircle = true,
-                circularMiniPlayerEnabled = true,
-                isInOnlineVideoExperience = false
-            )
-        )
-
-        // Circular mode disabled -> falls back to dismissed hidden state with header restore entry
+        // No current song -> hidden
         assertEquals(
             MiniPlayerVisualState.HIDDEN,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = true,
-                isCollapsedToCircle = false,
-                circularMiniPlayerEnabled = false,
+                hasCurrentSong = false,
                 isInOnlineVideoExperience = false
-            )
-        )
-        assertTrue(
-            MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = true,
-                isInOnlineVideoExperience = false,
-                isCollapsedToCircle = false,
-                circularMiniPlayerEnabled = false
             )
         )
     }
 
     @Test
-    fun onlineVideoMode_hidesBothExpandedAndCircularMusicMiniPlayers() {
+    fun onlineVideoMode_hidesMusicMiniPlayer() {
         val inVideoHome = MusicMiniPlayerVisibilityPolicy.isInOnlineVideoExperience(
             currentTab = 0,
             homeMusicMode = HomeMusicMode.ONLINE_VIDEO,
@@ -155,33 +125,16 @@ class SonoraBackgroundCircularAnalyticsRestoreTest {
         )
         assertTrue(inVideoHome)
 
-        // Expanded bar must be hidden in Online Video mode
         assertEquals(
             MiniPlayerVisualState.HIDDEN,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
                 hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
-                isCollapsedToCircle = false,
-                circularMiniPlayerEnabled = true,
-                isInOnlineVideoExperience = inVideoHome
-            )
-        )
-        // Circular floating player must ALSO be completely hidden in Online Video mode
-        assertEquals(
-            MiniPlayerVisualState.HIDDEN,
-            MusicMiniPlayerVisibilityPolicy.resolveVisualState(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
-                isCollapsedToCircle = true,
-                circularMiniPlayerEnabled = true,
                 isInOnlineVideoExperience = inVideoHome
             )
         )
         assertFalse(
-            MusicMiniPlayerVisibilityPolicy.shouldShowCircularMiniPlayer(
+            MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
                 hasCurrentSong = true,
-                isCollapsedToCircle = true,
-                circularMiniPlayerEnabled = true,
                 isInOnlineVideoExperience = inVideoHome
             )
         )
@@ -551,7 +504,7 @@ class SonoraBackgroundCircularAnalyticsRestoreTest {
     // --- PART 7: Persistent Settings in DataStore ---
 
     @Test
-    fun playbackLifecyclePreferences_persistsAllBackgroundCircularAndSessionSettings() = runBlocking {
+    fun playbackLifecyclePreferences_persistsAllBackgroundAndSessionSettings() = runBlocking {
         val prefs = PlaybackLifecyclePreferences(context)
 
         // Verify defaults (Auto Resume on App Launch MUST default to Off!)
@@ -560,9 +513,6 @@ class SonoraBackgroundCircularAnalyticsRestoreTest {
         assertTrue(defaultBg.backgroundPlaybackEnabled)
         assertTrue(defaultBg.resumeAfterPhoneCall)
         assertFalse(defaultBg.autoResumeOnAppLaunch)
-        assertTrue(defaultBg.circularMiniPlayerEnabled)
-        assertEquals(CircularFloatingSide.RIGHT, defaultBg.circularFloatingSide)
-        assertEquals(CircularAnimationIntensity.SUBTLE, defaultBg.circularAnimationIntensity)
         assertTrue(defaultSess.restorePreviousQueue)
         assertTrue(defaultSess.restorePlaybackPosition)
         assertTrue(defaultSess.stopPlaybackOnTaskRemoved)
@@ -571,9 +521,6 @@ class SonoraBackgroundCircularAnalyticsRestoreTest {
         prefs.setBackgroundPlaybackEnabled(false)
         prefs.setResumeAfterPhoneCall(false)
         prefs.setAutoResumeOnAppLaunch(true)
-        prefs.setCircularMiniPlayerEnabled(true)
-        prefs.setCircularPosition(CircularFloatingSide.LEFT, 0.42f)
-        prefs.setCircularAnimationIntensity(CircularAnimationIntensity.BALANCED)
         prefs.setRestorePreviousQueue(false)
         prefs.setRestorePlaybackPosition(false)
         prefs.setStopPlaybackOnTaskRemoved(false)
@@ -583,9 +530,6 @@ class SonoraBackgroundCircularAnalyticsRestoreTest {
         assertFalse(updatedBg.backgroundPlaybackEnabled)
         assertFalse(updatedBg.resumeAfterPhoneCall)
         assertTrue(updatedBg.autoResumeOnAppLaunch)
-        assertEquals(CircularFloatingSide.LEFT, updatedBg.circularFloatingSide)
-        assertEquals(0.42f, updatedBg.circularVerticalBias, 0.001f)
-        assertEquals(CircularAnimationIntensity.BALANCED, updatedBg.circularAnimationIntensity)
         assertFalse(updatedSess.restorePreviousQueue)
         assertFalse(updatedSess.restorePlaybackPosition)
         assertFalse(updatedSess.stopPlaybackOnTaskRemoved)

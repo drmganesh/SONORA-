@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -55,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
@@ -77,6 +79,7 @@ import com.example.ui.theme.SonoraTheme
 import com.example.viewmodel.DownloadFlowUiState
 import com.example.viewmodel.SonoraViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import ui.audiostudio.AudioEffectsStudioScreen
 import ui.components.FloatingMiniPlayer
 import ui.downloads.ChooseDownloadLocationDialog
@@ -151,13 +154,13 @@ fun SonoraApp(viewModel: SonoraViewModel) {
     val downloadFeedbackMessage by viewModel.downloadFeedbackMessage.collectAsState()
     val libraryFeedbackMessage by viewModel.libraryFeedbackMessage.collectAsState()
     val sessionRestoreNotice by viewModel.sessionRestoreNotice.collectAsState()
-    val musicExperienceSettings by viewModel.musicExperienceSettings.collectAsState()
-    val backgroundPlaybackSettings by viewModel.backgroundPlaybackSettings.collectAsState()
-    val miniPlayerDisplayState by viewModel.miniPlayerDisplayState.collectAsState()
     val homeMusicMode by viewModel.homeMusicMode.collectAsState()
     val librarySectionMode by viewModel.librarySectionMode.collectAsState()
     val pendingVideoDownload by viewModel.pendingVideoDownload.collectAsState()
     val downloadLocationConfig by viewModel.downloadLocationConfig.collectAsState()
+    val appUpdateDialogState by viewModel.appUpdateDialogState.collectAsState()
+    val postUpdateReminder by viewModel.postUpdateReminder.collectAsState()
+    val appScope = rememberCoroutineScope()
 
     val videoPlayerState by viewModel.videoController.playerState.collectAsStateWithLifecycle()
     val videoChannelState by viewModel.videoController.channelState.collectAsStateWithLifecycle()
@@ -232,10 +235,33 @@ fun SonoraApp(viewModel: SonoraViewModel) {
         }
     }
 
+    val apkInstallerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        viewModel.onPackageInstallerReturnedWithoutUpgrade(
+            wasCancelled = result.resultCode == Activity.RESULT_CANCELED
+        )
+    }
+
+    val unknownSourcesSettingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        appScope.launch {
+            when (val prep = viewModel.onReturnedFromUnknownAppSourcesSettings()) {
+                is data.update.InstallPreparationResult.LaunchInstaller -> {
+                    runCatching { apkInstallerLauncher.launch(prep.installIntent) }
+                        .onFailure { viewModel.onPackageInstallerReturnedWithoutUpgrade(wasCancelled = false) }
+                }
+                else -> Unit
+            }
+        }
+    }
+
     LaunchedEffect(profileOnboardingState) {
         if (profileOnboardingState != data.preferences.ProfileOnboardingState.COMPLETED) {
             return@LaunchedEffect
         }
+        viewModel.triggerAppUpdateLaunchFlow()
         val neededPermissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -404,7 +430,6 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                             onNavigateToLibrary = { currentTab = 2 },
                             onOpenOnlineMusic = { currentTab = 3 },
                             onOpenNowPlaying = {
-                                viewModel.restoreMusicMiniPlayer()
                                 isNowPlayingExpanded = true
                             },
                             onOpenEqualizer = { showEqualizerScreen = true },
@@ -446,7 +471,6 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                             onInitialSearchConsumed = { launchOnlineSearch = false },
                             onOpenSettings = { showSettingsScreen = true },
                             onOpenNowPlaying = {
-                                viewModel.restoreMusicMiniPlayer()
                                 isNowPlayingExpanded = true
                             }
                         )
@@ -463,14 +487,10 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                     isVideoMiniPlayerVisible = showVideoMiniPlayer,
                     isChannelDetailOpen = isChannelDetailOpen
                 )
-                val miniPlayerVisualState = domain.player.MusicMiniPlayerVisibilityPolicy.resolveVisualState(
+                val showMusicMiniPlayer = domain.player.MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
                     hasCurrentSong = currentSong != null,
-                    displayState = miniPlayerDisplayState,
-                    circularMiniPlayerEnabled = backgroundPlaybackSettings.circularMiniPlayerEnabled,
                     isInOnlineVideoExperience = isInOnlineVideoExperience
                 )
-                val showMusicMiniPlayer = miniPlayerVisualState == domain.player.MiniPlayerVisualState.EXPANDED_BAR
-                val showCircularMiniPlayer = miniPlayerVisualState == domain.player.MiniPlayerVisualState.CIRCULAR_FLOATING
 
                 // 2. Persistent Floating Mini-Player (Audio or Video) + Floating Pill Bottom Navigation
                 if (showBottomChrome) {
@@ -524,8 +544,6 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                                     fadeOut(snap())
                                 }
                             ) {
-                                val gesturesEnabled by viewModel.gesturesEnabled.collectAsState()
-                                val miniPlayerGestures by viewModel.miniPlayerGestures.collectAsState()
                                 val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsState()
                                 val miniQueue by viewModel.queue.collectAsState()
                                 val miniQueueIndex by viewModel.queueIndex.collectAsState()
@@ -557,17 +575,11 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                                     onPlayPrevious = { viewModel.playPrevious() },
                                     onSeekTo = { viewModel.seekTo(it) },
                                     onClick = {
-                                        viewModel.restoreMusicMiniPlayer()
                                         isNowPlayingExpanded = true
                                     },
                                     onOpenLyrics = { showLyricsScreen = true },
-                                    gesturesEnabled = gesturesEnabled && miniPlayerGestures,
-                                    swipeDownDismissEnabled = backgroundPlaybackSettings.circularMiniPlayerEnabled ||
-                                        musicExperienceSettings.swipeDownDismissMiniPlayerEnabled,
-                                    onSwipeDownDismiss = { viewModel.onMiniPlayerSwipeDown() },
                                     miniPlayerStyle = miniPlayerStyle,
                                     trackDirection = trackDirection,
-                                    swipeThresholdDp = motionState.swipeThresholdDp,
                                     frequencies = miniFreqs,
                                     queue = miniQueue,
                                     queueIndex = miniQueueIndex,
@@ -581,50 +593,6 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                             selectedIndex = currentTab,
                             colors = editorialColors,
                             onSelectTab = { currentTab = it }
-                        )
-                    }
-                }
-
-                // 2b. Draggable Circular Floating Music Mini Player (Stage 1 -> Stage 2 Dismiss; Hidden in Online Video)
-                AnimatedVisibility(
-                    visible = showBottomChrome && showCircularMiniPlayer && currentSong != null,
-                    enter = if (motionState.animationsEnabled) {
-                        fadeIn(tween(durationMillis = 220, easing = FastOutSlowInEasing)) +
-                            scaleIn(
-                                initialScale = 0.68f,
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                    stiffness = Spring.StiffnessMedium
-                                )
-                            )
-                    } else {
-                        fadeIn(snap())
-                    },
-                    exit = if (motionState.animationsEnabled) {
-                        fadeOut(tween(durationMillis = 170, easing = FastOutSlowInEasing)) +
-                            scaleOut(
-                                targetScale = 0.72f,
-                                animationSpec = tween(durationMillis = 170, easing = FastOutSlowInEasing)
-                            )
-                    } else {
-                        fadeOut(snap())
-                    }
-                ) {
-                    currentSong?.let { activeSong ->
-                        ui.components.CircularFloatingMiniPlayer(
-                            song = activeSong,
-                            playbackInfo = playbackInfo,
-                            colors = editorialColors,
-                            floatingSide = backgroundPlaybackSettings.circularFloatingSide,
-                            verticalBias = backgroundPlaybackSettings.circularVerticalBias,
-                            animationIntensity = backgroundPlaybackSettings.circularAnimationIntensity,
-                            onExpandToMiniPlayer = { viewModel.expandCircularMiniPlayer() },
-                            onTogglePlayPause = { viewModel.togglePlayPause() },
-                            onPositionCommitted = { side, bias ->
-                                viewModel.updateCircularMiniPlayerPosition(side, bias)
-                            },
-                            swipeDownDismissEnabled = musicExperienceSettings.swipeDownDismissMiniPlayerEnabled,
-                            onSwipeDownDismiss = { viewModel.onMiniPlayerSwipeDown() }
                         )
                     }
                 }
@@ -1326,6 +1294,48 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                         onDismiss = { viewModel.dismissDownloadFlow() }
                     )
                 }
+            }
+
+            // Official GitHub Release Update Dialogs (Available, Downloading, Verifying, Ready, Permission, Error)
+            ui.update.SonoraAppUpdateDialogHost(
+                dialogState = appUpdateDialogState,
+                colors = editorialColors,
+                onDownloadUpdate = { release -> viewModel.startAppUpdateDownload(release) },
+                onLater = { viewModel.deferAppUpdateLater() },
+                onCancelDownload = { viewModel.cancelAppUpdateDownload() },
+                onInstallNow = { release, verifiedApk ->
+                    appScope.launch {
+                        when (val prep = viewModel.prepareInstallVerifiedUpdate(release, verifiedApk)) {
+                            is data.update.InstallPreparationResult.LaunchInstaller -> {
+                                runCatching { apkInstallerLauncher.launch(prep.installIntent) }
+                                    .onFailure { viewModel.onPackageInstallerReturnedWithoutUpgrade(wasCancelled = false) }
+                            }
+                            else -> Unit
+                        }
+                    }
+                },
+                onOpenUnknownSourcesSettings = {
+                    val settingsIntent = viewModel.buildManageUnknownAppSourcesIntent()
+                    if (settingsIntent != null) {
+                        runCatching { unknownSourcesSettingsLauncher.launch(settingsIntent) }
+                    }
+                },
+                onDismiss = { viewModel.dismissAppUpdateDialog() }
+            )
+
+            // One-time Post-Update Security Reminder (shown once after verified successful update)
+            postUpdateReminder?.let { reminder ->
+                ui.update.PostUpdateSecurityReminderDialog(
+                    state = reminder,
+                    colors = editorialColors,
+                    onOpenSettings = {
+                        val settingsIntent = viewModel.buildManageUnknownAppSourcesIntent()
+                        if (settingsIntent != null) {
+                            runCatching { unknownSourcesSettingsLauncher.launch(settingsIntent) }
+                        }
+                    },
+                    onDismiss = { viewModel.dismissPostUpdateReminder() }
+                )
             }
         }
     }

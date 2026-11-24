@@ -83,8 +83,6 @@ fun GreetingHeader(
     reduceAnimations: Boolean = false,
     unreadVideoNotificationsCount: Int = 0,
     onVideoNotificationsClick: (() -> Unit)? = null,
-    showRestoreNowPlayingIcon: Boolean = false,
-    onRestoreNowPlayingClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
@@ -269,41 +267,6 @@ fun GreetingHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                // Persistent header Now Playing restore entry — strictly ONLY in Music modes when mini player was swiped away
-                if (activeMode != HomeMusicMode.ONLINE_VIDEO &&
-                    showRestoreNowPlayingIcon &&
-                    onRestoreNowPlayingClick != null
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .clickable {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onRestoreNowPlayingClick()
-                            }
-                            .semantics { contentDescription = "Open Now Playing and restore mini player" }
-                            .testTag("header_restore_now_playing_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(colors.accentPill)
-                                .border(1.dp, colors.accentStrong.copy(alpha = 0.45f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MusicNote,
-                                contentDescription = null,
-                                tint = colors.onAccentPill,
-                                modifier = Modifier.size(19.dp)
-                            )
-                        }
-                    }
-                }
-
                 // Global Online Video Notification Bell — strictly visible ONLY in Online Video mode
                 if (activeMode == HomeMusicMode.ONLINE_VIDEO && onVideoNotificationsClick != null) {
                     val hasUnread = unreadVideoNotificationsCount > 0

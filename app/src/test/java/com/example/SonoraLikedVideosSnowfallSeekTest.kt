@@ -700,8 +700,6 @@ class SonoraLikedVideosSnowfallSeekTest {
                     onPlayPrevious = { skipPrevCount++ },
                     onClick = { openFullPlayerCount++ },
                     onSeekTo = { seekCalls.add(it) },
-                    gesturesEnabled = true,
-                    swipeDownDismissEnabled = true,
                     miniPlayerStyle = activeMiniStyle,
                     queue = listOf(offlineSong, onlineSong),
                     queueIndex = 0

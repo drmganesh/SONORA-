@@ -62,15 +62,6 @@ class SonoraVideoMiniPlayerAndIndiaRecsTest {
         assertFalse(
             MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
                 hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
-                isInOnlineVideoExperience = true
-            )
-        )
-        // Header restore entry must ALSO never appear in Online Video mode
-        assertFalse(
-            MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = true,
                 isInOnlineVideoExperience = true
             )
         )
@@ -181,8 +172,8 @@ class SonoraVideoMiniPlayerAndIndiaRecsTest {
     }
 
     @Test
-    fun scenario3And4And5_swipeDownDismissRemovesUiPreservesPlaybackAndRestoresOnlyIfNotDismissed() {
-        // Music mode (Offline or Online) with active song & not dismissed -> visible
+    fun scenario3And4And5_musicMiniPlayerVisibleInMusicModesAndRestoredOnReturnFromOnlineVideo() {
+        // Music mode (Offline or Online) with active song -> visible
         val inMusicMode = MusicMiniPlayerVisibilityPolicy.isInOnlineVideoExperience(
             currentTab = 0,
             homeMusicMode = HomeMusicMode.ONLINE,
@@ -195,48 +186,28 @@ class SonoraVideoMiniPlayerAndIndiaRecsTest {
         assertTrue(
             MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
                 hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
-                isInOnlineVideoExperience = inMusicMode
-            )
-        )
-        assertFalse(
-            MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
                 isInOnlineVideoExperience = inMusicMode
             )
         )
 
-        // Swipe down dismiss -> UI completely hidden (no collapsed bottom bar), header restore entry available in music mode
+        // No active song -> hidden
         assertFalse(
             MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = true,
-                isInOnlineVideoExperience = inMusicMode
-            )
-        )
-        assertTrue(
-            MusicMiniPlayerVisibilityPolicy.shouldShowHeaderRestoreEntry(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = true,
+                hasCurrentSong = false,
                 isInOnlineVideoExperience = inMusicMode
             )
         )
 
-        // Switch Online Video -> back to Music:
-        // Case A: NOT manually dismissed -> restores automatically when returning to Music mode
-        assertTrue(
-            MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
-                hasCurrentSong = true,
-                isMiniPlayerDismissed = false,
-                isInOnlineVideoExperience = false
-            )
-        )
-        // Case B: Manually dismissed -> stays dismissed when returning to Music mode until user restores it
+        // Switch Online Video -> back to Music: mini player is visible again when returning to Music mode
         assertFalse(
             MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
                 hasCurrentSong = true,
-                isMiniPlayerDismissed = true,
+                isInOnlineVideoExperience = true
+            )
+        )
+        assertTrue(
+            MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
+                hasCurrentSong = true,
                 isInOnlineVideoExperience = false
             )
         )
