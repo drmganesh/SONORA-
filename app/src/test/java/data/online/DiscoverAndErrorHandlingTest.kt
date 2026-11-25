@@ -513,6 +513,21 @@ class DiscoverAndErrorHandlingTest {
                 forceRefresh = true
             )
             assertTrue("Popular Songs should succeed: $songsState", songsState is DiscoverSectionState.Success)
+
+            // fetchDiscoveryFeed also recovers cleanly via search fallback when kiosk fails
+            val discoveryFeedResult = resolver.fetchDiscoveryFeed(
+                provider = ytMusic,
+                forceRefresh = true,
+                countryCode = "US",
+                searchDataSource = searchDataSource
+            )
+            assertTrue(
+                "fetchDiscoveryFeed must recover via search fallback when Trending kiosk fails: $discoveryFeedResult",
+                discoveryFeedResult is OnlineResult.Success
+            )
+            val feedTracks = (discoveryFeedResult as OnlineResult.Success).value
+            assertTrue("Expected recovered tracks from search fallback", feedTracks.isNotEmpty())
+            assertEquals("Recovered Trending Track", feedTracks.first().title)
         } finally {
             NewPipe.init(previousDownloader, previousLoc, previousCountry)
         }

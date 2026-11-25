@@ -3,6 +3,7 @@ package domain.online
 import com.example.model.Artist
 import com.example.model.DailyMix
 import com.example.model.Song
+import domain.onboarding.MusicTasteProfile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,7 +62,8 @@ object OnlineRecommendationEngine {
         countryCode: String,
         languageCode: String,
         discoverLanguage: DiscoverMusicLanguage,
-        dayKey: String = currentDayKey()
+        dayKey: String = currentDayKey(),
+        musicTasteProfile: MusicTasteProfile = MusicTasteProfile()
     ): OnlineRecommendationProfile {
         val cleanCountry = countryCode.trim().uppercase(Locale.US).ifBlank {
             OnlineRegionCatalog.DEFAULT_COUNTRY_CODE
@@ -112,17 +114,25 @@ object OnlineRecommendationEngine {
                 addArtistCandidate(s.artist, weight = (if (s.isFavorite) 8 else 0) + s.playCount.coerceAtMost(8))
             }
 
+        musicTasteProfile.selectedArtists.take(10).forEachIndexed { idx, artist ->
+            addArtistCandidate(artist.name, weight = (15 - idx).coerceAtLeast(6))
+        }
+        musicTasteProfile.likedDiscoveryTracks.take(12).forEach { track ->
+            addArtistCandidate(track.artist, weight = 9)
+        }
+
         val rankedArtists = artistScores.entries
             .sortedByDescending { it.value }
             .map { it.key }
 
-        // Genre & Daily Mix signals from region-eligible user library
-        val topGenre = (eligibleAllSongs + eligibleOnlineTracks)
-            .asSequence()
-            .filter { it.genre.isNotBlank() && !it.genre.equals("Unknown", ignoreCase = true) }
-            .groupBy { it.genre.trim() }
-            .maxByOrNull { (_, group) -> group.sumOf { (if (it.isFavorite) 5 else 1) + it.playCount } }
-            ?.key
+        // Genre & Daily Mix signals from region-eligible user library + selected Music Taste genres
+        val topGenre = musicTasteProfile.selectedGenres.firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: (eligibleAllSongs + eligibleOnlineTracks)
+                .asSequence()
+                .filter { it.genre.isNotBlank() && !it.genre.equals("Unknown", ignoreCase = true) }
+                .groupBy { it.genre.trim() }
+                .maxByOrNull { (_, group) -> group.sumOf { (if (it.isFavorite) 5 else 1) + it.playCount } }
+                ?.key
 
         val topMixPreference = dailyMixes
             .filter { mix ->

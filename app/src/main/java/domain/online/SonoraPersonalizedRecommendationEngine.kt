@@ -6,6 +6,8 @@ import com.example.model.Song
 import data.analytics.ListeningEventEntity
 import domain.library.FollowedOnlineArtist
 import domain.library.OnlinePlaylist
+import domain.onboarding.MusicTasteCatalog
+import domain.onboarding.MusicTasteProfile
 import util.SecureUrlValidator
 import java.text.Normalizer
 import java.util.Locale
@@ -209,7 +211,8 @@ object SonoraPersonalizedRecommendationEngine {
         discoverLanguage: DiscoverMusicLanguage,
         strictIndiaOnly: Boolean = RegionMusicEligibilityFilter.isIndiaRegion(countryCode),
         weights: SonoraRecommendWeights = SonoraRecommendWeights(),
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        musicTasteProfile: MusicTasteProfile = MusicTasteProfile()
     ): SonoraUserTasteProfile {
         val cleanCountry = countryCode.trim().uppercase(Locale.US)
             .ifBlank { OnlineRegionCatalog.DEFAULT_COUNTRY_CODE }
@@ -434,24 +437,84 @@ object SonoraPersonalizedRecommendationEngine {
             addScore(languages, discoverLanguage.label, 3.0)
         }
 
+        // --- Signal F: Music Taste Onboarding & Profile -> Music Taste Preferences ---
+        // Gradually tapers as real listening history accumulates so recommendations adapt naturally over time.
+        val onboardingAdaptationFactor = 1.0 / (1.0 + meaningfulHistoryCount * 0.06)
+        val onboardingArtists = LinkedHashMap<String, Double>()
+        val onboardingLikedTrackUrls = LinkedHashSet<String>()
+        val onboardingPassedTrackUrls = LinkedHashSet<String>()
+        val onboardingPassedArtistCounts = LinkedHashMap<String, Int>()
+
+        musicTasteProfile.selectedArtists.forEachIndexed { idx, artist ->
+            if (isValidArtistName(artist.name)) {
+                recordDisplayArtist(artist.name)?.let { normArtist ->
+                    val positionWeight = (3.4 - (idx * 0.12).coerceAtMost(1.2)) * onboardingAdaptationFactor
+                    addScore(onboardingArtists, normArtist, positionWeight)
+                }
+                detectIndianLanguage(artist.name, artist.name)?.let { lang ->
+                    addScore(languages, lang, 2.2 * onboardingAdaptationFactor)
+                }
+            }
+        }
+        musicTasteProfile.selectedGenres.forEach { genre ->
+            val normGenre = normalizeKey(genre)
+            if (normGenre.isNotBlank()) {
+                addScore(genres, normGenre, 2.8 * onboardingAdaptationFactor)
+                MusicTasteCatalog.REGIONAL_GENRE_TO_LANGUAGE[normGenre]?.let { mappedLang ->
+                    addScore(languages, mappedLang, 2.8 * onboardingAdaptationFactor)
+                }
+            }
+        }
+        musicTasteProfile.likedDiscoveryTracks.forEach { track ->
+            val urlKey = normalizeTrackUrl(track.contentUrl)
+            if (urlKey.isNotBlank()) onboardingLikedTrackUrls.add(urlKey)
+            if (isValidArtistName(track.artist)) {
+                recordDisplayArtist(track.artist)?.let { normArtist ->
+                    addScore(onboardingArtists, normArtist, 2.0 * onboardingAdaptationFactor)
+                }
+            }
+            recordLanguageAndGenre(track.title, track.artist, track.album, "", weight = 1.6 * onboardingAdaptationFactor)
+        }
+        musicTasteProfile.passedDiscoveryTracks.forEach { track ->
+            val urlKey = normalizeTrackUrl(track.contentUrl)
+            if (urlKey.isNotBlank()) onboardingPassedTrackUrls.add(urlKey)
+            val normArtist = normalizeKey(track.artist)
+            if (normArtist.isNotBlank()) {
+                onboardingPassedArtistCounts[normArtist] = (onboardingPassedArtistCounts[normArtist] ?: 0) + 1
+            }
+        }
+
         val hasPersonalizationSignals = allLiked.isNotEmpty() ||
             followedOnlineArtists.isNotEmpty() ||
             favouriteLocalArtists.isNotEmpty() ||
             playlistTrackTotal > 0 ||
             meaningfulHistoryCount > 0 ||
-            interactions.hasAnyPositiveSignals
+            interactions.hasAnyPositiveSignals ||
+            musicTasteProfile.hasAnyPreferences
 
         // Combine weighted artist affinities to derive top seed queries
-        val allArtistKeys = (followedArtists.keys + likedArtists.keys + playlistArtists.keys + historyArtists.keys + recentArtists.keys)
+        val allArtistKeys = (
+            followedArtists.keys +
+                likedArtists.keys +
+                playlistArtists.keys +
+                historyArtists.keys +
+                recentArtists.keys +
+                onboardingArtists.keys
+            )
         val combinedArtistPriority = allArtistKeys.associateWith { key ->
             val positive = (followedArtists[key] ?: 0.0) * weights.followedArtistWeight +
                 (likedArtists[key] ?: 0.0) * weights.likedSongsSimilarityWeight +
                 (playlistArtists[key] ?: 0.0) * weights.playlistSimilarityWeight +
                 (historyArtists[key] ?: 0.0) * weights.listeningHistoryWeight +
-                (recentArtists[key] ?: 0.0) * weights.recentListeningWeight
+                (recentArtists[key] ?: 0.0) * weights.recentListeningWeight +
+                (onboardingArtists[key] ?: 0.0) * weights.onboardingArtistWeight
             val dislikeHits = interactions.dislikedArtistCounts[key] ?: 0
+            val passedHits = onboardingPassedArtistCounts[key] ?: 0
             val skipHits = interactions.skippedArtistCounts[key] ?: 0
-            positive + (dislikeHits * weights.dislikeArtistPenalty) + (skipHits * weights.skipPenalty * 0.5)
+            positive +
+                (dislikeHits * weights.dislikeArtistPenalty) +
+                (passedHits * weights.onboardingPassedArtistPenalty) +
+                (skipHits * weights.skipPenalty * 0.5)
         }.filterValues { it > 0.25 }
 
         val topArtistKeys = combinedArtistPriority.entries
@@ -511,7 +574,11 @@ object SonoraPersonalizedRecommendationEngine {
             familiarFavoriteKeys = familiarKeys,
             topDisplayArtists = topDisplayArtists,
             seedQueries = seedQueries,
-            summarySubtitle = summarySubtitle
+            summarySubtitle = summarySubtitle,
+            onboardingArtistScores = onboardingArtists,
+            onboardingLikedTrackUrls = onboardingLikedTrackUrls,
+            onboardingPassedTrackUrls = onboardingPassedTrackUrls,
+            onboardingPassedArtistCounts = onboardingPassedArtistCounts
         )
     }
 
@@ -657,10 +724,13 @@ object SonoraPersonalizedRecommendationEngine {
         if (candidates.isEmpty()) return emptyList()
 
         val normalizedUnavailable = unavailableTrackUrls.map { normalizeTrackUrl(it) }.toSet()
-        val normalizedDislikedUrls = interactions.dislikedTrackUrls.map { normalizeTrackUrl(it) }.toSet()
+        val normalizedDislikedUrls = (
+            interactions.dislikedTrackUrls.map { normalizeTrackUrl(it) } +
+                profile.onboardingPassedTrackUrls
+            ).toSet()
         val recentlyShownSet = interactions.recentlyShownTrackUrls.map { normalizeTrackUrl(it) }.toSet()
 
-        // 1. Validate playable metadata & exclude unavailable/explicitly disliked tracks
+        // 1. Validate playable metadata & exclude unavailable/explicitly disliked/passed tracks
         val validCandidates = candidates.filter { track ->
             if (!isCandidateMetadataPlayable(track)) return@filter false
             val normUrl = normalizeTrackUrl(track.contentUrl)
@@ -704,6 +774,7 @@ object SonoraPersonalizedRecommendationEngine {
         val maxRecent = profile.recentArtistScores.values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
         val maxLang = profile.preferredLanguages.values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
         val maxGenre = profile.preferredGenres.values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
+        val maxOnboardingArtist = profile.onboardingArtistScores.values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
 
         val scored = regionEligible.map { track ->
             val normArtist = normalizeKey(track.artist)
@@ -803,8 +874,21 @@ object SonoraPersonalizedRecommendationEngine {
                 0.0
             }
 
+            val onboardingArtistScore = ((profile.onboardingArtistScores[normArtist] ?: 0.0) / maxOnboardingArtist) *
+                weights.onboardingArtistWeight
+            val onboardingLikedBoost = if (normUrl in profile.onboardingLikedTrackUrls) {
+                weights.onboardingLikedTrackBoost
+            } else {
+                0.0
+            }
+            val onboardingPassedHits = profile.onboardingPassedArtistCounts[normArtist] ?: 0
+            if (onboardingPassedHits > 0) {
+                interactionScore += onboardingPassedHits.coerceAtMost(3) * weights.onboardingPassedArtistPenalty
+            }
+
             val totalScore = followedScore + likedArtistSim + albumSim + playlistSim +
                 historyScore + recentScore + langScore + genreMatch + moodMatch +
+                onboardingArtistScore + onboardingLikedBoost +
                 freshnessScore + interactionScore + alreadyLikedAdj + repeatShownAdj + rotationJitter
 
             val reasonLabel = resolveReasonLabel(
@@ -812,7 +896,7 @@ object SonoraPersonalizedRecommendationEngine {
                 normArtist = normArtist,
                 displayArtist = track.artist,
                 followedScore = followedScore,
-                likedScore = likedArtistSim + albumSim,
+                likedScore = likedArtistSim + albumSim + onboardingArtistScore,
                 playlistScore = playlistSim,
                 historyScore = historyScore + recentScore,
                 detectedLang = detectedLang,

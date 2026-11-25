@@ -1,6 +1,8 @@
 package data.online
 
 import com.example.model.Song
+import domain.onboarding.MusicTasteArtist
+import domain.onboarding.MusicTasteProfile
 import domain.online.DiscoverMusicLanguage
 import domain.online.OnlineRegionCatalog
 import domain.online.OnlineTrack
@@ -88,14 +90,17 @@ object MusicDiscoveryAndRadioEngine {
         recentSongs: List<Song>,
         favoriteSongs: List<Song>,
         countryCode: String,
-        discoverLanguage: DiscoverMusicLanguage
+        discoverLanguage: DiscoverMusicLanguage,
+        musicTasteProfile: MusicTasteProfile = MusicTasteProfile()
     ): List<PersonalizedMusicMixCard> {
         val eligibleRecent = RegionMusicEligibilityFilter.filterSongsForRegion(recentSongs, countryCode)
         val eligibleFavs = RegionMusicEligibilityFilter.filterSongsForRegion(favoriteSongs, countryCode)
         val topArtist = (eligibleFavs + eligibleRecent)
             .map { it.artist.trim() }
             .firstOrNull { isValidArtist(it) }
-        val langHint = if (discoverLanguage != DiscoverMusicLanguage.ALL) discoverLanguage.label else {
+            ?: musicTasteProfile.selectedArtists.firstOrNull()?.name?.takeIf { isValidArtist(it) }
+        val topTasteGenre = musicTasteProfile.selectedGenres.firstOrNull()?.takeIf { it.isNotBlank() }
+        val langHint = topTasteGenre ?: if (discoverLanguage != DiscoverMusicLanguage.ALL) discoverLanguage.label else {
             if (RegionMusicEligibilityFilter.isIndiaRegion(countryCode)) "Indian" else "Top"
         }
         val pool = (eligibleFavs + eligibleRecent).distinctBy { it.id }
@@ -149,12 +154,14 @@ object MusicDiscoveryAndRadioEngine {
     fun buildBasedOnListeningCards(
         recentSongs: List<Song>,
         favoriteSongs: List<Song>,
-        countryCode: String
+        countryCode: String,
+        musicTasteProfile: MusicTasteProfile = MusicTasteProfile()
     ): List<PersonalizedMusicMixCard> {
         val eligibleRecent = RegionMusicEligibilityFilter.filterSongsForRegion(recentSongs, countryCode)
         val eligibleFavs = RegionMusicEligibilityFilter.filterSongsForRegion(favoriteSongs, countryCode)
         val anchorSong = eligibleRecent.firstOrNull() ?: eligibleFavs.firstOrNull()
         val anchorArtist = anchorSong?.artist?.takeIf { isValidArtist(it) }
+            ?: musicTasteProfile.selectedArtists.firstOrNull()?.name?.takeIf { isValidArtist(it) }
         val anchorAlbum = anchorSong?.album?.takeIf {
             it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) && !it.equals("Downloads", ignoreCase = true)
         }
@@ -290,7 +297,8 @@ object MusicDiscoveryAndRadioEngine {
         session: SongRadioSession,
         existingQueueIds: Set<Long>,
         limit: Int = 12,
-        countryCode: String = OnlineRegionCatalog.DEFAULT_COUNTRY_CODE
+        countryCode: String = OnlineRegionCatalog.DEFAULT_COUNTRY_CODE,
+        musicTasteProfile: MusicTasteProfile = MusicTasteProfile()
     ): List<Song> {
         val regionEligible = RegionMusicEligibilityFilter.filterSongsForRegion(
             songs = candidates,
@@ -299,6 +307,9 @@ object MusicDiscoveryAndRadioEngine {
         if (regionEligible.isEmpty()) return emptyList()
 
         val blockedIds = session.playedSongIds + existingQueueIds + seedSong.id
+        val passedUrls = musicTasteProfile.passedTrackUrls
+        val preferredArtistKeys = musicTasteProfile.selectedArtistKeys
+        val preferredGenreLower = musicTasteProfile.selectedGenres.map { it.lowercase(Locale.US) }.toSet()
         val seedArtistLower = seedSong.artist.trim().lowercase(Locale.US)
         val seedGenreLower = seedSong.genre.trim().lowercase(Locale.US)
         val seedAlbumLower = seedSong.album.trim().lowercase(Locale.US)
@@ -306,13 +317,20 @@ object MusicDiscoveryAndRadioEngine {
         return regionEligible
             .asSequence()
             .filter { it.id !in blockedIds }
+            .filter { song ->
+                val urlNorm = song.contentUrl.trim().substringBefore("#").trimEnd('/').lowercase(Locale.ROOT)
+                urlNorm.isBlank() || urlNorm !in passedUrls
+            }
             .distinctBy { it.id }
             .distinctBy { "${it.title.trim().lowercase(Locale.US)}|${it.artist.trim().lowercase(Locale.US)}" }
             .sortedByDescending { song ->
                 val artistKey = song.artist.trim().lowercase(Locale.US)
+                val normArtistKey = MusicTasteArtist.normalizeArtistName(song.artist)
                 var score = 0.0
                 if (artistKey == seedArtistLower && artistKey.isNotBlank()) score += 4.0
+                if (normArtistKey.isNotBlank() && normArtistKey in preferredArtistKeys) score += 3.0
                 if (seedGenreLower.isNotBlank() && song.genre.trim().lowercase(Locale.US) == seedGenreLower) score += 2.5
+                if (preferredGenreLower.isNotEmpty() && song.genre.trim().lowercase(Locale.US) in preferredGenreLower) score += 2.0
                 if (seedAlbumLower.isNotBlank() && song.album.trim().lowercase(Locale.US) == seedAlbumLower) score += 1.5
                 score += (session.likedArtists[artistKey] ?: 0) * 5.0
                 score += (session.completedArtists[artistKey] ?: 0) * 2.0

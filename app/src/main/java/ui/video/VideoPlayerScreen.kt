@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.graphics.Rect
 import android.media.AudioManager
 import android.os.Build
 import android.view.SurfaceView
@@ -113,6 +114,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -226,9 +229,16 @@ fun VideoPlayerScreen(
     playbackProgressFlow: StateFlow<VideoPlaybackProgress>? = null,
     onAttachSurfaceView: ((SurfaceView) -> Unit)? = null,
     onDetachSurfaceView: ((SurfaceView) -> Unit)? = null,
+    onVideoViewportBoundsChanged: ((Rect?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val video = playerState.activeVideo ?: return
+    val latestOnVideoViewportBoundsChanged by rememberUpdatedState(onVideoViewportBoundsChanged)
+    DisposableEffect(Unit) {
+        onDispose {
+            latestOnVideoViewportBoundsChanged?.invoke(null)
+        }
+    }
     val details = playerState.resolvedDetails
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -650,6 +660,17 @@ fun VideoPlayerScreen(
                                 swipeDragProgress = 0f
                                 swipeDragOffsetPx = 0f
                             }
+                        }
+                    }
+                    .onGloballyPositioned { coords ->
+                        val cb = latestOnVideoViewportBoundsChanged ?: return@onGloballyPositioned
+                        val b = coords.boundsInWindow()
+                        val l = b.left.roundToInt()
+                        val t = b.top.roundToInt()
+                        val r = b.right.roundToInt()
+                        val bt = b.bottom.roundToInt()
+                        if (r > l && bt > t) {
+                            cb(Rect(l, t, r, bt))
                         }
                     }
                     .testTag("video_surface_container"),

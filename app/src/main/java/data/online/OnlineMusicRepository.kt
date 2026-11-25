@@ -118,7 +118,12 @@ class OnlineMusicRepository(
         forceRefresh: Boolean = false,
         countryCode: String = NewPipeInitializer.currentCountryCode()
     ): OnlineResult<List<OnlineTrack>> {
-        return streamResolver.fetchDiscoveryFeed(provider, forceRefresh, countryCode)
+        return streamResolver.fetchDiscoveryFeed(
+            provider = provider,
+            forceRefresh = forceRefresh,
+            countryCode = countryCode,
+            searchDataSource = searchDataSource
+        )
     }
 
     suspend fun fetchDiscoverSection(

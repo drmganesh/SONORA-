@@ -24,7 +24,11 @@ data class SonoraRecommendWeights(
     val minMeaningfulListenMs: Long = 20_000L,
     val completedSessionMs: Long = 90_000L,
     val completedSessionRatio: Double = 0.70,
-    val recentHalfLifeDays: Double = 14.0
+    val recentHalfLifeDays: Double = 14.0,
+    val onboardingArtistWeight: Double = 3.6,
+    val onboardingGenreWeight: Double = 1.9,
+    val onboardingLikedTrackBoost: Double = 2.4,
+    val onboardingPassedArtistPenalty: Double = -1.6
 )
 
 /**
@@ -84,7 +88,11 @@ data class SonoraUserTasteProfile(
     val familiarFavoriteKeys: Set<String> = emptySet(),
     val topDisplayArtists: List<String> = emptyList(),
     val seedQueries: List<SonoraSeedQuery> = emptyList(),
-    val summarySubtitle: String = ""
+    val summarySubtitle: String = "",
+    val onboardingArtistScores: Map<String, Double> = emptyMap(),
+    val onboardingLikedTrackUrls: Set<String> = emptySet(),
+    val onboardingPassedTrackUrls: Set<String> = emptySet(),
+    val onboardingPassedArtistCounts: Map<String, Int> = emptyMap()
 )
 
 /**

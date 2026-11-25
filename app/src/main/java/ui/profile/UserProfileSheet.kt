@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
@@ -95,7 +96,9 @@ fun UserProfileSheet(
     onOpenDynamicColors: () -> Unit,
     onOpenPlayerStyles: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenMusicAnalytics: () -> Unit = {}
+    onOpenMusicAnalytics: () -> Unit = {},
+    musicTasteSummary: String = "Personalize your artists, genres & song picks",
+    onOpenMusicTaste: () -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
@@ -415,6 +418,18 @@ fun UserProfileSheet(
                         fontSize = 11.sp,
                         letterSpacing = 1.1.sp,
                         color = colors.textMuted
+                    )
+
+                    PersonalizationActionRow(
+                        icon = Icons.Rounded.GraphicEq,
+                        title = "Music Taste",
+                        subtitle = musicTasteSummary,
+                        colors = colors,
+                        tag = "profile_music_taste_row",
+                        onClick = {
+                            onDismiss()
+                            onOpenMusicTaste()
+                        }
                     )
 
                     PersonalizationActionRow(

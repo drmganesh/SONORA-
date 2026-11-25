@@ -161,6 +161,7 @@ fun HomeScreen(
     onOpenDynamicColors: () -> Unit = {},
     onOpenPlayerStyles: () -> Unit = {},
     onOpenMusicAnalytics: () -> Unit = {},
+    onOpenMusicTaste: () -> Unit = {},
     screenVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -184,6 +185,7 @@ fun HomeScreen(
     val homeThemeMode by viewModel.homeThemeMode.collectAsState()
     val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
+    val musicTasteProfile by viewModel.musicTasteProfile.collectAsState()
     val reduceAnimations by viewModel.reduceAnimations.collectAsState()
     val homeAnimationLevel by viewModel.homeAnimationLevel.collectAsState()
     val dailyMixAnimationStyle by viewModel.dailyMixAnimationStyle.collectAsState()
@@ -1194,7 +1196,9 @@ fun HomeScreen(
             onOpenDynamicColors = onOpenDynamicColors,
             onOpenPlayerStyles = onOpenPlayerStyles,
             onOpenSettings = onOpenSettings,
-            onOpenMusicAnalytics = onOpenMusicAnalytics
+            onOpenMusicAnalytics = onOpenMusicAnalytics,
+            musicTasteSummary = musicTasteProfile.summarySubtitle(),
+            onOpenMusicTaste = onOpenMusicTaste
         )
     }
 

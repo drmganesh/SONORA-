@@ -197,6 +197,38 @@ class OnlineStreamResolver(
             return KioskInfo.getInfo(extractor)
         }
 
+        /**
+         * Extracts kiosk items resiliently: calls [KioskExtractor.fetchPage] first and attempts
+         * [KioskInfo.getInfo]. If YouTube's deprecated Trending kiosk fails inside `getName()`
+         * (e.g., `ParsingException: Could not get Trending name`), falls back to reading
+         * `extractor.initialPage` directly when available.
+         */
+        fun extractKioskPageSafely(
+            extractor: KioskExtractor<*>
+        ): Triple<List<org.schabi.newpipe.extractor.InfoItem>, org.schabi.newpipe.extractor.Page?, String?> {
+            extractor.fetchPage()
+            return try {
+                val info = KioskInfo.getInfo(extractor)
+                Triple(
+                    info.relatedItems.orEmpty(),
+                    if (info.hasNextPage()) info.nextPage else null,
+                    info.url
+                )
+            } catch (pe: org.schabi.newpipe.extractor.exceptions.ParsingException) {
+                val initialPage = runCatching { extractor.initialPage }.getOrNull()
+                val pageItems = initialPage?.items.orEmpty()
+                if (pageItems.isNotEmpty()) {
+                    Triple(
+                        pageItems,
+                        if (initialPage?.hasNextPage() == true) initialPage.nextPage else null,
+                        runCatching { extractor.url }.getOrNull()
+                    )
+                } else {
+                    throw pe
+                }
+            }
+        }
+
         private val TITLE_NOISE_REGEX = Regex(
             "\\s*[(\\[](?:official|audio|video|lyric|lyrical|lyrics|mv|hd|4k|8k|remaster|visualizer|explicit|full(?:\\s+(?:song|video|audio))?|from\\s+[^)\\]]*|feat\\.?[^)\\]]*|ft\\.?[^)\\]]*|with\\s+lyrics|teaser|promo|jukebox|theme|ost|original\\s+motion\\s+picture).*?[)\\]]",
             RegexOption.IGNORE_CASE
@@ -1071,7 +1103,8 @@ class OnlineStreamResolver(
     suspend fun fetchDiscoveryFeed(
         provider: OnlineMusicProvider,
         forceRefresh: Boolean = false,
-        countryCode: String = NewPipeInitializer.currentCountryCode()
+        countryCode: String = NewPipeInitializer.currentCountryCode(),
+        searchDataSource: OnlineSearchDataSource? = null
     ): OnlineResult<List<OnlineTrack>> = withContext(Dispatchers.IO) {
         val cleanCountry = countryCode.trim().uppercase().ifBlank { NewPipeInitializer.currentCountryCode() }
         val cacheKey = "${provider.key}|$cleanCountry"
@@ -1091,25 +1124,62 @@ class OnlineStreamResolver(
             )
         }
 
-        try {
-            val result = extractKioskTracksWithCandidates(provider)
-            val filteredItems = RegionMusicEligibilityFilter.filterTracksForRegion(
-                tracks = result.items,
-                countryCode = cleanCountry
-            )
-            if (filteredItems.isNotEmpty()) {
-                discoveryCache.put(cacheKey, now to filteredItems)
+        val kioskAttempt = runCatching {
+            extractKioskTracksWithCandidates(provider)
+        }
+        val kioskFailure = kioskAttempt.exceptionOrNull()
+        if (kioskFailure is CancellationException) throw kioskFailure
+
+        val kioskItems = kioskAttempt.getOrNull()?.items.orEmpty()
+        val filteredKioskItems = RegionMusicEligibilityFilter.filterTracksForRegion(
+            tracks = kioskItems,
+            countryCode = cleanCountry
+        )
+        if (filteredKioskItems.isNotEmpty()) {
+            discoveryCache.put(cacheKey, now to filteredKioskItems)
+            return@withContext OnlineResult.Success(filteredKioskItems)
+        }
+
+        // Graceful fallback to real region-scoped search when YouTube's legacy Trending kiosk
+        // fails parsing (e.g., YoutubeTrendingExtractor: Could not get Trending name) or is empty.
+        if (searchDataSource != null) {
+            if (kioskFailure != null) {
+                Log.w(
+                    TAG,
+                    "Discovery kiosk unavailable for service=${provider.displayName} country=$cleanCountry (${kioskFailure::class.java.simpleName}: ${kioskFailure.message}); falling back to search"
+                )
             }
-            OnlineResult.Success(filteredItems)
-        } catch (ce: CancellationException) {
-            throw ce
-        } catch (t: Throwable) {
+            val fallbackQuery = RegionMusicEligibilityFilter.scopeRecommendationQuery(
+                baseQuery = "trending popular hit songs",
+                countryCode = cleanCountry,
+                discoverLanguage = DiscoverMusicLanguage.ALL
+            )
+            when (val searchRes = searchDataSource.search(fallbackQuery, provider, OnlineSearchFilter.SONGS)) {
+                is OnlineResult.Success -> {
+                    val filteredSearch = RegionMusicEligibilityFilter.filterTracksForRegion(
+                        tracks = searchRes.value.items.filter { it.kind == OnlineItemKind.TRACK },
+                        countryCode = cleanCountry
+                    )
+                    if (filteredSearch.isNotEmpty()) {
+                        discoveryCache.put(cacheKey, now to filteredSearch)
+                    }
+                    return@withContext OnlineResult.Success(filteredSearch)
+                }
+                is OnlineResult.Error -> {
+                    return@withContext searchRes
+                }
+            }
+        }
+
+        if (kioskFailure != null) {
             OnlineSearchDataSource.mapThrowableToError(
-                t = t,
+                t = kioskFailure,
                 providerName = provider.displayName,
                 operation = "discovery_kiosk",
                 requestType = provider.key
             )
+        } else {
+            OnlineResult.Success(emptyList())
         }
     }
 
@@ -1623,9 +1693,8 @@ class OnlineStreamResolver(
                     requestInfo = provider.key
                 ) {
                     val extractor = kioskList.getExtractorById(kioskId, null)
-                    val kioskInfo = fetchKioskInfoSafely(extractor)
-                    val mapped = kioskInfo.relatedItems
-                        .orEmpty()
+                    val (rawItems, nextPage, kioskUrl) = extractKioskPageSafely(extractor)
+                    val mapped = rawItems
                         .mapNotNull { item ->
                             OnlineTrackMapper.mapInfoItem(
                                 item = item,
@@ -1635,8 +1704,7 @@ class OnlineStreamResolver(
                             )
                         }
                         .filter { it.kind == OnlineItemKind.TRACK }
-                    val nextPage = kioskInfo.nextPage
-                    val nextToken = if (kioskInfo.hasNextPage() && nextPage != null && !kioskInfo.url.isNullOrBlank()) {
+                    val nextToken = if (nextPage != null && !kioskUrl.isNullOrBlank()) {
                         "kiosk:${UUID.randomUUID()}".also { key ->
                             kioskContinuationCache.put(
                                 key,
@@ -1644,7 +1712,7 @@ class OnlineStreamResolver(
                                     providerKey = provider.key,
                                     providerName = provider.displayName,
                                     serviceId = provider.serviceId,
-                                    kioskUrl = kioskInfo.url,
+                                    kioskUrl = kioskUrl,
                                     nextPage = nextPage
                                 )
                             )

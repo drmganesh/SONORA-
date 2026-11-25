@@ -54,12 +54,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
@@ -99,7 +97,6 @@ import ui.motion.horizontalSwipeNavigation
 import ui.motion.rememberEffectiveMotionState
 import domain.home.HomeMusicMode
 import domain.video.ChannelDetailUtils
-import domain.video.FloatingPipResizeCalculator
 import domain.video.OnlineVideoChannel
 import domain.video.OnlineVideoItem
 import domain.video.VideoChannelUiState
@@ -121,7 +118,8 @@ import ui.video.shareVideoLink
 @Composable
 fun SonoraApp(
     viewModel: SonoraViewModel,
-    isIntroOverlayActive: Boolean = false
+    isIntroOverlayActive: Boolean = false,
+    onVideoViewportBoundsChanged: ((android.graphics.Rect?) -> Unit)? = null
 ) {
     val themeMode by viewModel.themeMode.collectAsState()
     val dynamicPalette by viewModel.dynamicPalette.collectAsState()
@@ -135,6 +133,11 @@ fun SonoraApp(
     val playbackInfo by viewModel.playbackInfo.collectAsState()
     val trackDirection by viewModel.trackTransitionDirection.collectAsState()
     val profileOnboardingState by viewModel.profileOnboardingState.collectAsState()
+    val musicTasteOnboardingState by viewModel.musicTasteOnboardingState.collectAsState()
+    val musicTasteProfile by viewModel.musicTasteProfile.collectAsState()
+    val musicTasteArtistState by viewModel.musicTasteArtistState.collectAsState()
+    val musicTasteDiscoveryState by viewModel.musicTasteDiscoveryState.collectAsState()
+    val musicTastePreviewState by viewModel.musicTastePreviewState.collectAsState()
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
 
     LaunchedEffect(systemDark) {
@@ -155,6 +158,8 @@ fun SonoraApp(
     var showDownloadManagerScreen by remember { mutableStateOf(false) }
     var showLyricsScreen by remember { mutableStateOf(false) }
     var showMusicAnalyticsScreen by remember { mutableStateOf(false) }
+    var showMusicTasteScreen by remember { mutableStateOf(false) }
+    var musicTasteEditMode by remember { mutableStateOf<domain.onboarding.MusicTasteEditLaunchMode?>(null) }
     var openLibraryDownloadsTrigger by remember { mutableIntStateOf(0) }
 
     val downloadFlowState by viewModel.downloadFlowState.collectAsState()
@@ -264,9 +269,10 @@ fun SonoraApp(
         }
     }
 
-    LaunchedEffect(profileOnboardingState, isIntroOverlayActive) {
+    LaunchedEffect(profileOnboardingState, musicTasteOnboardingState, isIntroOverlayActive) {
         if (isIntroOverlayActive ||
-            profileOnboardingState != data.preferences.ProfileOnboardingState.COMPLETED
+            profileOnboardingState != data.preferences.ProfileOnboardingState.COMPLETED ||
+            musicTasteOnboardingState != domain.onboarding.MusicTasteOnboardingState.COMPLETED
         ) {
             return@LaunchedEffect
         }
@@ -308,6 +314,21 @@ fun SonoraApp(
             editorialColors = editorialColors,
             reduceAnimations = effectiveReduceAnimations
         ) {
+            // Dedicated Android System PiP mode: render ONLY the active Media3 video surface
+            // edge-to-edge, completely excluding Home, Bottom Navigation, Music Mini-Player,
+            // recommendations, banners, sheets, and dialogs from the PiP window.
+            if (domain.video.SystemPipPolicy.shouldRenderVideoOnlyPipUi(videoPlayerState)) {
+                ui.video.SystemPipVideoScreen(
+                    playerState = videoPlayerState,
+                    colors = editorialColors,
+                    onAttachSurfaceView = { viewModel.videoController.attachVideoSurfaceView(it) },
+                    onDetachSurfaceView = { viewModel.videoController.detachVideoSurfaceView(it) },
+                    onAttachTextureView = { viewModel.videoController.attachVideoSurface(it) },
+                    onDetachTextureView = { viewModel.videoController.detachVideoSurface(it) }
+                )
+                return@SonoraTheme
+            }
+
             when (profileOnboardingState) {
                 data.preferences.ProfileOnboardingState.LOADING -> {
                     Box(
@@ -331,6 +352,47 @@ fun SonoraApp(
                 data.preferences.ProfileOnboardingState.COMPLETED -> Unit
             }
 
+            when (musicTasteOnboardingState) {
+                domain.onboarding.MusicTasteOnboardingState.LOADING -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color.Black)
+                            .testTag("music_taste_loading_gate")
+                    )
+                    return@SonoraTheme
+                }
+                domain.onboarding.MusicTasteOnboardingState.REQUIRED -> {
+                    ui.onboarding.MusicTasteOnboardingScreen(
+                        colors = editorialColors,
+                        reduceAnimations = effectiveReduceAnimations,
+                        launchMode = domain.onboarding.MusicTasteEditLaunchMode.FULL_ONBOARDING,
+                        profile = musicTasteProfile,
+                        artistState = musicTasteArtistState,
+                        discoveryState = musicTasteDiscoveryState,
+                        previewState = musicTastePreviewState,
+                        onLoadInitialArtists = { viewModel.loadInitialTasteArtists(it) },
+                        onSearchArtists = { viewModel.searchTasteArtists(it) },
+                        onToggleArtist = { viewModel.toggleTasteArtist(it) },
+                        onClearArtists = { viewModel.clearTasteArtists() },
+                        onToggleGenre = { viewModel.toggleTasteGenre(it) },
+                        onClearGenres = { viewModel.clearTasteGenres() },
+                        onLoadDiscoverySession = { viewModel.loadTasteDiscoverySession(it) },
+                        onDecideTrack = { track, decision -> viewModel.decideTasteDiscoveryTrack(track, decision) },
+                        onTogglePreview = { viewModel.toggleTasteDiscoveryPreview(it) },
+                        onStopPreview = { viewModel.stopTasteDiscoveryPreview() },
+                        onPreviousTrack = { viewModel.stepBackTasteDiscoveryTrack() },
+                        onNextTrack = { viewModel.stepNextTasteDiscoveryTrack() },
+                        onClearDiscoverySelections = { viewModel.clearTasteDiscoverySessionSelections() },
+                        onSkipOnboarding = { viewModel.skipMusicTasteOnboarding() },
+                        onCompleteOnboarding = { viewModel.completeMusicTasteOnboarding() },
+                        onDismissEditMode = { viewModel.completeMusicTasteOnboarding() }
+                    )
+                    return@SonoraTheme
+                }
+                domain.onboarding.MusicTasteOnboardingState.COMPLETED -> Unit
+            }
+
             val pushEnter = SonoraTransitions.pushEnter(motionState)
             val pushExit = SonoraTransitions.pushExit(motionState)
             val modalEnter = SonoraTransitions.modalEnter(motionState)
@@ -350,43 +412,47 @@ fun SonoraApp(
             BackHandler(enabled = isChannelDetailOpen && !isVideoPlayerExpanded) {
                 viewModel.videoController.dismissChannelProfile()
             }
-            BackHandler(enabled = showMusicAnalyticsScreen && !isChannelDetailOpen && !isVideoPlayerExpanded) {
+            val isMusicTasteOverlayOpen = showMusicTasteScreen || musicTasteEditMode != null
+            BackHandler(enabled = showMusicTasteScreen && musicTasteEditMode == null && !isChannelDetailOpen && !isVideoPlayerExpanded) {
+                showMusicTasteScreen = false
+            }
+            BackHandler(enabled = showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isChannelDetailOpen && !isVideoPlayerExpanded) {
                 showMusicAnalyticsScreen = false
             }
-            BackHandler(enabled = showLyricsScreen && !showMusicAnalyticsScreen && !isChannelDetailOpen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isChannelDetailOpen && !isVideoPlayerExpanded) {
                 showLyricsScreen = false
             }
-            BackHandler(enabled = showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showDownloadManagerScreen = false
             }
-            BackHandler(enabled = showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showMusicPlayerHubScreen = false
             }
-            BackHandler(enabled = showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showDynamicThemeScreen = false
             }
-            BackHandler(enabled = showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showQueueScreen = false
             }
-            BackHandler(enabled = showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showFolderManagementScreen = false
             }
-            BackHandler(enabled = showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showAudioStudioScreen = false
             }
-            BackHandler(enabled = showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showEqualizerScreen = false
             }
-            BackHandler(enabled = isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 isNowPlayingExpanded = false
             }
-            BackHandler(enabled = showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showPlaylistsScreen = false
             }
-            BackHandler(enabled = showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 showSettingsScreen = false
             }
-            BackHandler(enabled = currentTab != 0 && !showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isVideoPlayerExpanded) {
+            BackHandler(enabled = currentTab != 0 && !showSettingsScreen && !showPlaylistsScreen && !isNowPlayingExpanded && !showEqualizerScreen && !showAudioStudioScreen && !showFolderManagementScreen && !showQueueScreen && !showDynamicThemeScreen && !showMusicPlayerHubScreen && !showDownloadManagerScreen && !showLyricsScreen && !showMusicAnalyticsScreen && !isMusicTasteOverlayOpen && !isVideoPlayerExpanded) {
                 currentTab = 0
             }
 
@@ -394,6 +460,8 @@ fun SonoraApp(
                 !isNowPlayingExpanded &&
                 !showLyricsScreen &&
                 !showMusicAnalyticsScreen &&
+                !showMusicTasteScreen &&
+                musicTasteEditMode == null &&
                 !showEqualizerScreen &&
                 !showAudioStudioScreen &&
                 !showPlaylistsScreen &&
@@ -436,6 +504,7 @@ fun SonoraApp(
                             onOpenSettings = { showSettingsScreen = true },
                             onNavigateToSearch = { currentTab = 1 },
                             onOpenMusicAnalytics = { showMusicAnalyticsScreen = true },
+                            onOpenMusicTaste = { showMusicTasteScreen = true },
                             onNavigateToLibrary = { currentTab = 2 },
                             onOpenOnlineMusic = { currentTab = 3 },
                             onOpenNowPlaying = {
@@ -503,7 +572,7 @@ fun SonoraApp(
 
                 // 2. Persistent Floating Audio Mini-Player + Floating Pill Bottom Navigation
                 // (In-app floating video PiP is mounted in a dedicated safe-area overlay layer
-                // so it can resize smoothly up to 85% screen width without recreating its TextureView.)
+                // so playback and its live TextureView persist across tab & channel navigation.)
                 if (showBottomChrome) {
                     Column(
                         modifier = Modifier
@@ -786,6 +855,65 @@ fun SonoraApp(
                     )
                 }
 
+                // 12b-taste. Permanent Profile -> Music Taste Preferences Overlay
+                AnimatedVisibility(
+                    visible = showMusicTasteScreen,
+                    enter = pushEnter,
+                    exit = pushExit
+                ) {
+                    ui.profile.MusicTasteScreen(
+                        profile = musicTasteProfile,
+                        colors = editorialColors,
+                        onBack = { showMusicTasteScreen = false },
+                        onEditArtists = { musicTasteEditMode = domain.onboarding.MusicTasteEditLaunchMode.EDIT_ARTISTS },
+                        onEditGenres = { musicTasteEditMode = domain.onboarding.MusicTasteEditLaunchMode.EDIT_GENRES },
+                        onRestartSongDiscovery = {
+                            musicTasteEditMode = domain.onboarding.MusicTasteEditLaunchMode.RESTART_DISCOVERY
+                        },
+                        onRemoveArtist = { viewModel.toggleTasteArtist(it) },
+                        onRemoveGenre = { viewModel.toggleTasteGenre(it) },
+                        onRemoveLikedTrack = { viewModel.removeLikedTasteDiscoveryTrack(it) },
+                        onRemovePassedTrack = { viewModel.removePassedTasteDiscoveryTrack(it) },
+                        onResetMusicTaste = { viewModel.resetMusicTastePreferences() }
+                    )
+                }
+
+                // 12b-taste-editor. Single-step Music Taste Editor / Restart Discovery Overlay
+                AnimatedVisibility(
+                    visible = musicTasteEditMode != null,
+                    enter = modalEnter,
+                    exit = modalExit
+                ) {
+                    val activeEditMode = musicTasteEditMode
+                    if (activeEditMode != null) {
+                        ui.onboarding.MusicTasteOnboardingScreen(
+                            colors = editorialColors,
+                            reduceAnimations = effectiveReduceAnimations,
+                            launchMode = activeEditMode,
+                            profile = musicTasteProfile,
+                            artistState = musicTasteArtistState,
+                            discoveryState = musicTasteDiscoveryState,
+                            previewState = musicTastePreviewState,
+                            onLoadInitialArtists = { viewModel.loadInitialTasteArtists(it) },
+                            onSearchArtists = { viewModel.searchTasteArtists(it) },
+                            onToggleArtist = { viewModel.toggleTasteArtist(it) },
+                            onClearArtists = { viewModel.clearTasteArtists() },
+                            onToggleGenre = { viewModel.toggleTasteGenre(it) },
+                            onClearGenres = { viewModel.clearTasteGenres() },
+                            onLoadDiscoverySession = { viewModel.loadTasteDiscoverySession(it) },
+                            onDecideTrack = { track, decision -> viewModel.decideTasteDiscoveryTrack(track, decision) },
+                            onTogglePreview = { viewModel.toggleTasteDiscoveryPreview(it) },
+                            onStopPreview = { viewModel.stopTasteDiscoveryPreview() },
+                            onPreviousTrack = { viewModel.stepBackTasteDiscoveryTrack() },
+                            onNextTrack = { viewModel.stepNextTasteDiscoveryTrack() },
+                            onClearDiscoverySelections = { viewModel.clearTasteDiscoverySessionSelections() },
+                            onSkipOnboarding = { musicTasteEditMode = null },
+                            onCompleteOnboarding = { musicTasteEditMode = null },
+                            onDismissEditMode = { musicTasteEditMode = null }
+                        )
+                    }
+                }
+
                 // 12b-ch. Dedicated Full-Screen YouTube-Style Channel Detail Page Overlay
                 // Layered below VideoPlayerScreen so playback continues seamlessly in FloatingVideoMiniPlayer
                 // when opening a channel from a video, and tapping a channel video expands cleanly on top.
@@ -841,13 +969,10 @@ fun SonoraApp(
                     }
                 }
 
-                // 12b-pip. Persistent In-App Floating PiP Video Player Overlay (Pinch-to-Resize)
+                // 12b-pip. Persistent In-App Floating PiP Video Player Overlay
                 // Single TextureView-backed overlay layered above primary tabs & Channel Detail
-                // and below full-screen VideoPlayerScreen so playback & pinched size persist
-                // seamlessly across navigation without recreating ExoPlayer or video surfaces.
-                var savedFloatingPipWidthFraction by rememberSaveable {
-                    mutableFloatStateOf(FloatingPipResizeCalculator.INITIAL_WIDTH_FRACTION)
-                }
+                // and below full-screen VideoPlayerScreen so playback persists seamlessly
+                // across navigation without recreating ExoPlayer or video surfaces.
                 val showFloatingVideoPip = showVideoMiniPlayer && (showBottomChrome || isChannelDetailOpen)
                 if (showFloatingVideoPip) {
                     FloatingVideoMiniPlayer(
@@ -856,16 +981,12 @@ fun SonoraApp(
                         onExpand = { viewModel.videoController.expandVideoPlayer() },
                         onTogglePlayPause = { viewModel.videoController.toggleVideoPlayPause() },
                         onPlayNext = { viewModel.videoController.playNextInQueue() },
-                        onClose = {
-                            savedFloatingPipWidthFraction = FloatingPipResizeCalculator.INITIAL_WIDTH_FRACTION
-                            viewModel.videoController.closeVideoPlayer()
-                        },
+                        onClose = { viewModel.videoController.closeVideoPlayer() },
                         playbackProgressFlow = viewModel.videoController.playbackProgress,
                         onAttachTextureView = { viewModel.videoController.attachVideoSurface(it) },
                         onDetachTextureView = { viewModel.videoController.detachVideoSurface(it) },
                         bottomInsetClearance = if (showBottomChrome && !isChannelDetailOpen) 86.dp else 12.dp,
-                        initialWidthFraction = savedFloatingPipWidthFraction,
-                        onWidthFractionChanged = { savedFloatingPipWidthFraction = it },
+                        onVideoViewportBoundsChanged = onVideoViewportBoundsChanged,
                         modifier = Modifier
                             .fillMaxSize()
                             .statusBarsPadding()
@@ -929,7 +1050,8 @@ fun SonoraApp(
                         recommendationFeedback = videoRecommendationFeedback,
                         playbackProgressFlow = viewModel.videoController.playbackProgress,
                         onAttachSurfaceView = { viewModel.videoController.attachVideoSurfaceView(it) },
-                        onDetachSurfaceView = { viewModel.videoController.detachVideoSurfaceView(it) }
+                        onDetachSurfaceView = { viewModel.videoController.detachVideoSurfaceView(it) },
+                        onVideoViewportBoundsChanged = onVideoViewportBoundsChanged
                     )
                 }
 

@@ -766,18 +766,56 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             .map { list -> list.filter { !it.isMissingFile }.map { it.toSong() } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Personalized Music Taste Onboarding & Profile -> Music Taste (local-only DataStore)
+    private val musicTastePrefs = data.preferences.MusicTastePreferences(application)
+    val musicTasteProfile: StateFlow<domain.onboarding.MusicTasteProfile> = musicTastePrefs.musicTasteProfile
+    val musicTasteOnboardingState: StateFlow<domain.onboarding.MusicTasteOnboardingState> =
+        musicTastePrefs.onboardingState
+
+    private val musicTasteDiscoveryCoordinator =
+        data.online.MusicTasteDiscoveryCoordinator.fromRepository(onlineRepository)
+
+    private val discoveryPreviewPlayer = data.online.DiscoveryAudioPreviewPlayer(
+        context = application,
+        onlineRepository = onlineRepository,
+        scope = viewModelScope,
+        onRequestPauseMainPlayback = {
+            if (_playbackInfo.value.isPlaying) {
+                togglePlayPause()
+            }
+        }
+    )
+    val musicTastePreviewState: StateFlow<domain.onboarding.MusicTastePreviewState> =
+        discoveryPreviewPlayer.previewState
+
+    private val _musicTasteArtistState = MutableStateFlow(domain.onboarding.MusicTasteArtistDiscoveryUiState())
+    val musicTasteArtistState: StateFlow<domain.onboarding.MusicTasteArtistDiscoveryUiState> =
+        _musicTasteArtistState.asStateFlow()
+
+    private val _musicTasteDiscoveryState = MutableStateFlow(domain.onboarding.MusicTasteDiscoverySessionUiState())
+    val musicTasteDiscoveryState: StateFlow<domain.onboarding.MusicTasteDiscoverySessionUiState> =
+        _musicTasteDiscoveryState.asStateFlow()
+
+    private var musicTasteArtistLoadJob: Job? = null
+    private var musicTasteArtistSearchJob: Job? = null
+    private var musicTasteRelatedJob: Job? = null
+    private var musicTasteSessionLoadJob: Job? = null
+    private var cachedInitialTasteArtists: List<domain.onboarding.MusicTasteArtist> = emptyList()
+
     val madeForYouCards: StateFlow<List<data.online.PersonalizedMusicMixCard>> =
         combine(
             recentlyPlayedOnlineTracks,
             onlineFavoriteTracks,
             _onlineContentCountry,
-            _discoverMusicLanguage
-        ) { recent, favs, country, lang ->
+            _discoverMusicLanguage,
+            musicTasteProfile
+        ) { recent, favs, country, lang, taste ->
             data.online.MusicDiscoveryAndRadioEngine.buildMadeForYouCards(
                 recentSongs = recent,
                 favoriteSongs = favs,
                 countryCode = country,
-                discoverLanguage = lang
+                discoverLanguage = lang,
+                musicTasteProfile = taste
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -785,12 +823,14 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         combine(
             recentlyPlayedOnlineTracks,
             onlineFavoriteTracks,
-            _onlineContentCountry
-        ) { recent, favs, country ->
+            _onlineContentCountry,
+            musicTasteProfile
+        ) { recent, favs, country, taste ->
             data.online.MusicDiscoveryAndRadioEngine.buildBasedOnListeningCards(
                 recentSongs = recent,
                 favoriteSongs = favs,
-                countryCode = country
+                countryCode = country,
+                musicTasteProfile = taste
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -1338,6 +1378,395 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             userProfilePrefs.resetPersonalProfileData()
         }
+    }
+
+    // --- Personalized Music Taste Onboarding & Profile -> Music Taste Actions ---
+
+    fun loadInitialTasteArtists(forceRefresh: Boolean = false) {
+        if (!forceRefresh && cachedInitialTasteArtists.isNotEmpty() && _musicTasteArtistState.value.searchQuery.isBlank()) {
+            _musicTasteArtistState.update {
+                it.copy(
+                    artists = mergeSelectedArtistsFirst(cachedInitialTasteArtists, musicTasteProfile.value.selectedArtists),
+                    isLoadingInitial = false,
+                    isOffline = !connectivityMonitor.isOnline.value,
+                    errorMessage = null
+                )
+            }
+            return
+        }
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        musicTasteArtistLoadJob?.cancel()
+        val isOnline = connectivityMonitor.isOnline.value
+        _musicTasteArtistState.update {
+            it.copy(
+                isLoadingInitial = true,
+                isOffline = !isOnline,
+                errorMessage = null
+            )
+        }
+        musicTasteArtistLoadJob = viewModelScope.launch {
+            val result = musicTasteDiscoveryCoordinator.loadInitialArtists(
+                provider = provider,
+                countryCode = _onlineContentCountry.value,
+                discoverLanguage = _discoverMusicLanguage.value,
+                selectedArtists = musicTasteProfile.value.selectedArtists,
+                followedArtists = followedOnlineArtists.value,
+                cachedOnlineTracks = allOnlineTracks.value,
+                isNetworkOnline = connectivityMonitor.isOnline.value
+            )
+            result.onSuccess { list ->
+                cachedInitialTasteArtists = list
+                _musicTasteArtistState.update { state ->
+                    val merged = if (state.searchQuery.isBlank()) {
+                        mergeSelectedArtistsFirst(list, musicTasteProfile.value.selectedArtists)
+                    } else {
+                        state.artists
+                    }
+                    state.copy(
+                        artists = merged,
+                        isLoadingInitial = false,
+                        isOffline = !connectivityMonitor.isOnline.value,
+                        errorMessage = null
+                    )
+                }
+            }.onFailure { err ->
+                _musicTasteArtistState.update { state ->
+                    state.copy(
+                        isLoadingInitial = false,
+                        isOffline = !connectivityMonitor.isOnline.value,
+                        errorMessage = err.message ?: "Unable to load artists right now."
+                    )
+                }
+            }
+        }
+    }
+
+    fun searchTasteArtists(query: String) {
+        _musicTasteArtistState.update { it.copy(searchQuery = query, errorMessage = null) }
+        musicTasteArtistSearchJob?.cancel()
+        val clean = query.trim()
+        if (clean.isBlank()) {
+            _musicTasteArtistState.update {
+                it.copy(
+                    artists = mergeSelectedArtistsFirst(cachedInitialTasteArtists, musicTasteProfile.value.selectedArtists),
+                    isSearching = false,
+                    isOffline = !connectivityMonitor.isOnline.value
+                )
+            }
+            if (cachedInitialTasteArtists.isEmpty()) {
+                loadInitialTasteArtists(forceRefresh = false)
+            }
+            return
+        }
+
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        musicTasteArtistSearchJob = viewModelScope.launch {
+            delay(320L)
+            val isOnline = connectivityMonitor.isOnline.value
+            _musicTasteArtistState.update { it.copy(isSearching = true, isOffline = !isOnline) }
+            val result = musicTasteDiscoveryCoordinator.searchArtists(
+                query = clean,
+                provider = provider,
+                isNetworkOnline = isOnline,
+                cachedCandidates = cachedInitialTasteArtists + musicTasteProfile.value.selectedArtists
+            )
+            result.onSuccess { matches ->
+                _musicTasteArtistState.update { state ->
+                    if (state.searchQuery.trim() == clean) {
+                        state.copy(
+                            artists = matches,
+                            isSearching = false,
+                            isOffline = !connectivityMonitor.isOnline.value,
+                            errorMessage = null
+                        )
+                    } else state
+                }
+            }.onFailure { err ->
+                _musicTasteArtistState.update { state ->
+                    if (state.searchQuery.trim() == clean) {
+                        state.copy(
+                            isSearching = false,
+                            isOffline = !connectivityMonitor.isOnline.value,
+                            errorMessage = err.message ?: "Could not search artists."
+                        )
+                    } else state
+                }
+            }
+        }
+    }
+
+    fun toggleTasteArtist(artist: domain.onboarding.MusicTasteArtist) {
+        val wasSelected = musicTasteProfile.value.selectedArtists.any { it.normalizedKey == artist.normalizedKey }
+        viewModelScope.launch {
+            val updatedProfile = musicTastePrefs.toggleArtist(artist)
+            refreshRecommendationsAfterTasteChange()
+
+            // When newly selecting an artist, surface real related artists cleanly without duplicates
+            if (!wasSelected && connectivityMonitor.isOnline.value) {
+                val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return@launch
+                musicTasteRelatedJob?.cancel()
+                _musicTasteArtistState.update { it.copy(isLoadingRelated = true) }
+                musicTasteRelatedJob = viewModelScope.launch {
+                    val existingKeys = (
+                        _musicTasteArtistState.value.artists.map { it.normalizedKey } +
+                            updatedProfile.selectedArtists.map { it.normalizedKey }
+                        ).toSet()
+                    val related = musicTasteDiscoveryCoordinator.loadRelatedArtists(
+                        seedArtist = artist,
+                        provider = provider,
+                        existingArtistKeys = existingKeys,
+                        isNetworkOnline = connectivityMonitor.isOnline.value
+                    )
+                    if (related.isNotEmpty()) {
+                        cachedInitialTasteArtists = (cachedInitialTasteArtists + related)
+                            .distinctBy { it.normalizedKey }
+                        _musicTasteArtistState.update { state ->
+                            val currentList = state.artists
+                            val insertIdx = currentList.indexOfFirst { it.normalizedKey == artist.normalizedKey }
+                            val merged = if (insertIdx >= 0 && state.searchQuery.isBlank()) {
+                                val head = currentList.take(insertIdx + 1)
+                                val tail = currentList.drop(insertIdx + 1)
+                                (head + related + tail).distinctBy { it.normalizedKey }
+                            } else {
+                                (currentList + related).distinctBy { it.normalizedKey }
+                            }
+                            state.copy(
+                                artists = merged,
+                                isLoadingRelated = false,
+                                lastRelatedSourceName = artist.name
+                            )
+                        }
+                    } else {
+                        _musicTasteArtistState.update { it.copy(isLoadingRelated = false) }
+                    }
+                }
+            }
+        }
+    }
+
+    fun clearTasteArtists() {
+        viewModelScope.launch {
+            musicTastePrefs.clearSelectedArtists()
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun toggleTasteGenre(genre: String) {
+        viewModelScope.launch {
+            musicTastePrefs.toggleGenre(genre)
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun clearTasteGenres() {
+        viewModelScope.launch {
+            musicTastePrefs.clearSelectedGenres()
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun loadTasteDiscoverySession(resetPreviousDecisions: Boolean = false) {
+        stopTasteDiscoveryPreview()
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        musicTasteSessionLoadJob?.cancel()
+        val isOnline = connectivityMonitor.isOnline.value
+        _musicTasteDiscoveryState.value = domain.onboarding.MusicTasteDiscoverySessionUiState(
+            isLoading = true,
+            isOffline = !isOnline
+        )
+        musicTasteSessionLoadJob = viewModelScope.launch {
+            val profile = musicTastePrefs.getProfileOnce()
+            val likedKeys = buildSet {
+                (_allSongs.value + allOnlineTracks.value)
+                    .filter { it.isFavorite }
+                    .forEach { song ->
+                        val url = domain.online.SonoraPersonalizedRecommendationEngine.normalizeTrackUrl(song.contentUrl)
+                        if (url.isNotBlank()) add(url)
+                        add(domain.online.SonoraPersonalizedRecommendationEngine.buildTrackIdentityKey(song.title, song.artist))
+                    }
+            }
+            val alreadyDecidedUrls = if (resetPreviousDecisions) {
+                emptySet()
+            } else {
+                profile.likedTrackUrls + profile.passedTrackUrls
+            }
+            val result = musicTasteDiscoveryCoordinator.buildDiscoverySession(
+                selectedArtists = profile.selectedArtists,
+                selectedGenres = profile.selectedGenres,
+                provider = provider,
+                countryCode = _onlineContentCountry.value,
+                discoverLanguage = _discoverMusicLanguage.value,
+                existingLikedKeys = likedKeys,
+                alreadyDecidedUrls = alreadyDecidedUrls,
+                cachedOnlineTracks = allOnlineTracks.value,
+                isNetworkOnline = connectivityMonitor.isOnline.value,
+                targetCount = domain.onboarding.MusicTasteCatalog.DEFAULT_DISCOVERY_SESSION_SIZE
+            )
+            result.onSuccess { tracks ->
+                _musicTasteDiscoveryState.value = domain.onboarding.MusicTasteDiscoverySessionUiState(
+                    tracks = tracks,
+                    currentIndex = 0,
+                    isLoading = false,
+                    isOffline = !connectivityMonitor.isOnline.value,
+                    errorMessage = null
+                )
+            }.onFailure { err ->
+                _musicTasteDiscoveryState.value = domain.onboarding.MusicTasteDiscoverySessionUiState(
+                    tracks = emptyList(),
+                    currentIndex = 0,
+                    isLoading = false,
+                    isOffline = !connectivityMonitor.isOnline.value,
+                    errorMessage = err.message ?: "Could not load discovery songs."
+                )
+            }
+        }
+    }
+
+    fun decideTasteDiscoveryTrack(
+        track: domain.onboarding.MusicTasteDiscoveryTrack,
+        decision: domain.onboarding.MusicTasteSwipeDecision
+    ) {
+        stopTasteDiscoveryPreview()
+        _musicTasteDiscoveryState.update { state ->
+            val updatedDecisions = state.sessionDecisions + (track.normalizedUrl to decision)
+            val nextIdx = (state.currentIndex + 1).coerceAtMost(state.tracks.size)
+            state.copy(
+                currentIndex = nextIdx,
+                sessionDecisions = updatedDecisions,
+                historyStack = state.historyStack + (state.currentIndex to decision)
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            musicTastePrefs.recordDiscoveryDecision(track, decision)
+            when (decision) {
+                domain.onboarding.MusicTasteSwipeDecision.ADD_TO_LIKED_SONGS -> {
+                    val song = track.toSong(isFavorite = false)
+                    val existing = dao.getOnlineTrackById(song.id)
+                    if (existing == null || !existing.isFavorite) {
+                        onlineRepository.toggleFavoriteOnlineTrack(song)
+                    }
+                }
+                domain.onboarding.MusicTasteSwipeDecision.PASS -> {
+                    sonoraRecommendCachePrefs.recordDislike(track.stableId, track.contentUrl, track.artist)
+                }
+                domain.onboarding.MusicTasteSwipeDecision.LIKE -> Unit
+            }
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun stepBackTasteDiscoveryTrack() {
+        stopTasteDiscoveryPreview()
+        _musicTasteDiscoveryState.update { state ->
+            if (state.currentIndex <= 0) return@update state
+            state.copy(
+                currentIndex = (state.currentIndex - 1).coerceAtLeast(0),
+                historyStack = state.historyStack.dropLast(1)
+            )
+        }
+    }
+
+    fun stepNextTasteDiscoveryTrack() {
+        stopTasteDiscoveryPreview()
+        _musicTasteDiscoveryState.update { state ->
+            if (state.tracks.isEmpty() || state.currentIndex >= state.tracks.size) return@update state
+            state.copy(currentIndex = (state.currentIndex + 1).coerceAtMost(state.tracks.size))
+        }
+    }
+
+    fun clearTasteDiscoverySessionSelections() {
+        stopTasteDiscoveryPreview()
+        _musicTasteDiscoveryState.update { state ->
+            state.copy(
+                currentIndex = 0,
+                sessionDecisions = emptyMap(),
+                historyStack = emptyList()
+            )
+        }
+        viewModelScope.launch {
+            musicTastePrefs.clearDiscoveryDecisions()
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun toggleTasteDiscoveryPreview(track: domain.onboarding.MusicTasteDiscoveryTrack) {
+        discoveryPreviewPlayer.togglePreview(
+            track = track,
+            isNetworkOnline = connectivityMonitor.isOnline.value
+        )
+    }
+
+    fun stopTasteDiscoveryPreview() {
+        discoveryPreviewPlayer.stopPreview()
+    }
+
+    fun removeLikedTasteDiscoveryTrack(contentUrl: String) {
+        viewModelScope.launch {
+            musicTastePrefs.removeLikedDiscoveryTrack(contentUrl)
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun removePassedTasteDiscoveryTrack(contentUrl: String) {
+        viewModelScope.launch {
+            musicTastePrefs.removePassedDiscoveryTrack(contentUrl)
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun completeMusicTasteOnboarding() {
+        stopTasteDiscoveryPreview()
+        viewModelScope.launch {
+            musicTastePrefs.completeOnboarding()
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun skipMusicTasteOnboarding() {
+        stopTasteDiscoveryPreview()
+        viewModelScope.launch {
+            musicTastePrefs.skipOnboarding()
+            refreshRecommendationsAfterTasteChange()
+        }
+    }
+
+    fun resetMusicTastePreferences() {
+        stopTasteDiscoveryPreview()
+        viewModelScope.launch {
+            musicTastePrefs.resetMusicTaste()
+            _musicTasteDiscoveryState.value = domain.onboarding.MusicTasteDiscoverySessionUiState()
+            refreshRecommendationsAfterTasteChange()
+            _libraryFeedbackMessage.value = "Music Taste preferences reset. Your library, playlists & downloads are unchanged."
+        }
+    }
+
+    private fun refreshRecommendationsAfterTasteChange() {
+        val currentTaste = musicTasteProfile.value
+        val updatedDailyProfile = OnlineRecommendationEngine.buildDailyRecommendationProfile(
+            recentlyPlayedLocal = recentlyPlayedSongs.value,
+            recentlyPlayedOnline = recentlyPlayedOnlineTracks.value,
+            favouriteArtists = favouriteArtists.value,
+            allSongs = _allSongs.value,
+            onlineTracks = allOnlineTracks.value,
+            onlineSearchHistory = onlineSearchHistory.value,
+            dailyMixes = _dailyMixes.value,
+            countryCode = _onlineContentCountry.value,
+            languageCode = _onlineContentLanguage.value,
+            discoverLanguage = _discoverMusicLanguage.value,
+            musicTasteProfile = currentTaste
+        )
+        _onlineRecommendationProfile.value = updatedDailyProfile
+        if (_homeMusicMode.value == HomeMusicMode.ONLINE || _sonoraRecommendState.value.items.isNotEmpty()) {
+            sonoraRecommendGeneration += 1
+            scheduleSonoraRecommendationsRefreshDebounced()
+        }
+    }
+
+    private fun mergeSelectedArtistsFirst(
+        catalog: List<domain.onboarding.MusicTasteArtist>,
+        selected: List<domain.onboarding.MusicTasteArtist>
+    ): List<domain.onboarding.MusicTasteArtist> {
+        return (selected + catalog).distinctBy { it.normalizedKey }
     }
 
     private val _recentSearches = MutableStateFlow(preferences.recentSearches)
@@ -2652,7 +3081,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             // Defer full recommendation profile scoring until intro finishes and compute off-main-thread
             startupDeferredWorkGate.await()
-            combine(listeningSignalsFlow, preferenceSignalsFlow) { listening, prefs ->
+            combine(listeningSignalsFlow, preferenceSignalsFlow, musicTasteProfile) { listening, prefs, taste ->
                 OnlineRecommendationEngine.buildDailyRecommendationProfile(
                     recentlyPlayedLocal = listening.recentlyPlayedLocal,
                     recentlyPlayedOnline = listening.recentlyPlayedOnline,
@@ -2663,7 +3092,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     dailyMixes = prefs.dailyMixes,
                     countryCode = prefs.countryCode,
                     languageCode = prefs.languageCode,
-                    discoverLanguage = prefs.discoverLanguage
+                    discoverLanguage = prefs.discoverLanguage,
+                    musicTasteProfile = taste
                 )
             }
                 .flowOn(Dispatchers.Default)
@@ -4162,7 +4592,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         session = _songRadioSession.value,
                         existingQueueIds = setOf(seed.id),
                         limit = 15,
-                        countryCode = country
+                        countryCode = country,
+                        musicTasteProfile = musicTasteProfile.value
                     )
                     _currentSongRecommendations.value = ranked
                 }
@@ -4222,7 +4653,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         session = _songRadioSession.value,
                         existingQueueIds = _queue.value.map { it.id }.toSet(),
                         limit = 15,
-                        countryCode = country
+                        countryCode = country,
+                        musicTasteProfile = musicTasteProfile.value
                     )
                     _currentSongRecommendations.value = ranked
                     if (ranked.isNotEmpty()) {
@@ -4288,7 +4720,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                         session = _songRadioSession.value,
                         existingQueueIds = _queue.value.map { it.id }.toSet(),
                         limit = 10,
-                        countryCode = country
+                        countryCode = country,
+                        musicTasteProfile = musicTasteProfile.value
                     )
                     if (nextBatch.isNotEmpty()) {
                         addAllToQueue(nextBatch)
@@ -4886,7 +5319,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             dailyMixes = _dailyMixes.value,
             countryCode = _onlineContentCountry.value,
             languageCode = _onlineContentLanguage.value,
-            discoverLanguage = _discoverMusicLanguage.value
+            discoverLanguage = _discoverMusicLanguage.value,
+            musicTasteProfile = musicTasteProfile.value
         )
         _onlineRecommendationProfile.value = currentProfile
         lastRecommendationSeedQueried = currentProfile.seedQuery
@@ -5133,7 +5567,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 countryCode = _onlineContentCountry.value,
                 languageCode = _onlineContentLanguage.value,
                 discoverLanguage = _discoverMusicLanguage.value,
-                strictIndiaOnly = domain.online.RegionMusicEligibilityFilter.isIndiaRegion(_onlineContentCountry.value)
+                strictIndiaOnly = domain.online.RegionMusicEligibilityFilter.isIndiaRegion(_onlineContentCountry.value),
+                musicTasteProfile = musicTasteProfile.value
             )
             val resultState = sonoraRecommendationCoordinator.loadRecommendations(
                 snapshot = snapshot,
@@ -6427,6 +6862,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         indiaDiscoveryJob?.cancel()
         currentSongRecsJob?.cancel()
         radioTopUpJob?.cancel()
+        musicTasteArtistLoadJob?.cancel()
+        musicTasteArtistSearchJob?.cancel()
+        musicTasteRelatedJob?.cancel()
+        musicTasteSessionLoadJob?.cancel()
+        discoveryPreviewPlayer.release()
         videoController.release()
         cacheManager.onMusicPlayerStateChanged(isOpen = false)
         downloadFormatResolveJob?.cancel()

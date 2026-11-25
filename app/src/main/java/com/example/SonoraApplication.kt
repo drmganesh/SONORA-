@@ -49,7 +49,8 @@ class SonoraApplication : Application(), ImageLoaderFactory {
                         file.isFile &&
                             file.length() > 0L &&
                             file.name.endsWith(".preferences_pb") &&
-                            file.name != "sonora_user_profile.preferences_pb"
+                            file.name != "sonora_user_profile.preferences_pb" &&
+                            file.name != "sonora_music_taste.preferences_pb"
                     }
                     if (hasOtherPriorStore) return true
                 }

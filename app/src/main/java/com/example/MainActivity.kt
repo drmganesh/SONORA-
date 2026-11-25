@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
@@ -29,12 +30,16 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.ui.SonoraApp
 import com.example.viewmodel.SonoraViewModel
-import domain.video.VideoPlayerUiState
+import domain.video.SystemPipParamsSnapshot
+import domain.video.SystemPipPolicy
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import ui.splash.SonoraSplashScreen
 
@@ -50,6 +55,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private val viewModel: SonoraViewModel by viewModels()
+    private val pipSourceRectHintFlow = MutableStateFlow<Rect?>(null)
 
     private val pipActionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -89,21 +95,29 @@ class MainActivity : ComponentActivity() {
         registerPipControlReceiver()
         observePipParameters()
         handleNotificationVideoIntent(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
+            viewModel.videoController.onPictureInPictureModeChanged(true)
+        }
 
         setContent {
             var showSplashOverlay by rememberSaveable { mutableStateOf(!alreadyPlayedInSession) }
             var isHomeContentMounted by rememberSaveable { mutableStateOf(alreadyPlayedInSession) }
             val reduceAnimations by viewModel.reduceAnimations.collectAsState()
+            val videoPlayerState by viewModel.videoController.playerState.collectAsStateWithLifecycle()
+            val isSystemPipVideoOnly = SystemPipPolicy.shouldRenderVideoOnlyPipUi(videoPlayerState)
 
             Box(modifier = Modifier.fillMaxSize()) {
-                if (isHomeContentMounted) {
+                if (isHomeContentMounted || isSystemPipVideoOnly) {
                     SonoraApp(
                         viewModel = viewModel,
-                        isIntroOverlayActive = showSplashOverlay
+                        isIntroOverlayActive = showSplashOverlay && !isSystemPipVideoOnly,
+                        onVideoViewportBoundsChanged = { rect ->
+                            pipSourceRectHintFlow.value = rect
+                        }
                     )
                 }
 
-                if (showSplashOverlay) {
+                if (showSplashOverlay && !isSystemPipVideoOnly) {
                     SonoraSplashScreen(
                         appReduceAnimations = reduceAnimations,
                         onPrepareHomeContent = {
@@ -172,7 +186,7 @@ class MainActivity : ComponentActivity() {
         super.onUserLeaveHint()
         val videoState = viewModel.videoController.playerState.value
         val autoPipEnabled = videoState.videoExperienceSettings.autoPipEnabled
-        if (autoPipEnabled && videoState.hasActiveVideo && videoState.isPlaying) {
+        if (SystemPipPolicy.shouldAutoEnterSystemPip(videoState, autoPipEnabled)) {
             enterVideoPictureInPicture()
         }
     }
@@ -184,10 +198,21 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         viewModel.videoController.onPictureInPictureModeChanged(isInPictureInPictureMode)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
+            val state = viewModel.videoController.playerState.value
+            val rect = pipSourceRectHintFlow.value
             updatePipParamsSafely(
-                state = viewModel.videoController.playerState.value,
-                autoEnterEnabled = viewModel.videoController.playerState.value.videoExperienceSettings.autoPipEnabled
+                SystemPipPolicy.buildParamsSnapshot(
+                    state = state,
+                    autoPipEnabled = state.videoExperienceSettings.autoPipEnabled,
+                    sourceRectLeft = rect?.left ?: 0,
+                    sourceRectTop = rect?.top ?: 0,
+                    sourceRectRight = rect?.right ?: 0,
+                    sourceRectBottom = rect?.bottom ?: 0
+                )
             )
+        } else if (!isInPictureInPictureMode && !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            // PiP window was dismissed/closed (Activity stopped rather than expanded back to foreground)
+            viewModel.videoController.onAppBackgrounded()
         }
     }
 
@@ -210,14 +235,26 @@ class MainActivity : ComponentActivity() {
     fun enterVideoPictureInPicture(): Boolean {
         if (!isPictureInPictureSupported()) return false
         val state = viewModel.videoController.playerState.value
-        if (!state.hasActiveVideo) return false
+        if (!SystemPipPolicy.canEnterSystemPip(state)) return false
         return runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val params = buildPictureInPictureParams(
+                val rect = pipSourceRectHintFlow.value
+                val snapshot = SystemPipPolicy.buildParamsSnapshot(
                     state = state,
-                    autoEnterEnabled = state.videoExperienceSettings.autoPipEnabled
+                    autoPipEnabled = state.videoExperienceSettings.autoPipEnabled,
+                    sourceRectLeft = rect?.left ?: 0,
+                    sourceRectTop = rect?.top ?: 0,
+                    sourceRectRight = rect?.right ?: 0,
+                    sourceRectBottom = rect?.bottom ?: 0
                 )
-                enterPictureInPictureMode(params)
+                val params = buildPictureInPictureParams(snapshot)
+                val entered = enterPictureInPictureMode(params)
+                if (entered) {
+                    // Sync immediately so Compose switches to the video-only PiP surface without
+                    // waiting for an asynchronous callback frame while the PiP window animates.
+                    viewModel.videoController.onPictureInPictureModeChanged(true)
+                }
+                entered
             } else {
                 false
             }
@@ -247,39 +284,37 @@ class MainActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 combine(
                     viewModel.videoController.playerState,
-                    viewModel.videoExperienceSettings
-                ) { videoState, expSettings ->
-                    videoState to expSettings
-                }.collect { (videoState, expSettings) ->
-                    val allowAuto = expSettings.autoPipEnabled && videoState.hasActiveVideo && videoState.isPlaying
-                    updatePipParamsSafely(videoState, allowAuto)
+                    viewModel.videoExperienceSettings,
+                    pipSourceRectHintFlow
+                ) { videoState, expSettings, sourceRect ->
+                    SystemPipPolicy.buildParamsSnapshot(
+                        state = videoState,
+                        autoPipEnabled = expSettings.autoPipEnabled,
+                        sourceRectLeft = sourceRect?.left ?: 0,
+                        sourceRectTop = sourceRect?.top ?: 0,
+                        sourceRectRight = sourceRect?.right ?: 0,
+                        sourceRectBottom = sourceRect?.bottom ?: 0
+                    )
                 }
+                    .distinctUntilChanged()
+                    .collect { snapshot ->
+                        updatePipParamsSafely(snapshot)
+                    }
             }
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun updatePipParamsSafely(state: VideoPlayerUiState, autoEnterEnabled: Boolean) {
+    private fun updatePipParamsSafely(snapshot: SystemPipParamsSnapshot) {
         if (!isPictureInPictureSupported()) return
         runCatching {
-            setPictureInPictureParams(buildPictureInPictureParams(state, autoEnterEnabled))
+            setPictureInPictureParams(buildPictureInPictureParams(snapshot))
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun buildPictureInPictureParams(
-        state: VideoPlayerUiState,
-        autoEnterEnabled: Boolean
-    ): PictureInPictureParams {
-        val (effW, effH) = state.effectiveVideoDimensions
-        val w = kotlin.math.round(effW).toInt().coerceAtLeast(16)
-        val h = kotlin.math.round(effH).toInt().coerceAtLeast(9)
-        val ratio = Rational(w, h)
-        val clampedRatio = when {
-            ratio.toFloat() > 2.39f -> Rational(239, 100)
-            ratio.toFloat() < 0.42f -> Rational(42, 100)
-            else -> ratio
-        }
+    internal fun buildPictureInPictureParams(snapshot: SystemPipParamsSnapshot): PictureInPictureParams {
+        val aspectRatio = Rational(snapshot.aspectNumerator, snapshot.aspectDenominator)
 
         val actions = mutableListOf<RemoteAction>()
         val playPauseIntent = PendingIntent.getBroadcast(
@@ -290,12 +325,12 @@ class MainActivity : ComponentActivity() {
         )
         val playPauseIcon = Icon.createWithResource(
             this,
-            if (state.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+            if (snapshot.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
         )
-        val playPauseTitle = if (state.isPlaying) "Pause" else "Play"
+        val playPauseTitle = if (snapshot.isPlaying) "Pause" else "Play"
         actions.add(RemoteAction(playPauseIcon, playPauseTitle, playPauseTitle, playPauseIntent))
 
-        if (state.hasNextInQueue) {
+        if (snapshot.hasNextInQueue) {
             val nextIntent = PendingIntent.getBroadcast(
                 this,
                 REQUEST_CODE_PIP_NEXT,
@@ -307,11 +342,22 @@ class MainActivity : ComponentActivity() {
         }
 
         val builder = PictureInPictureParams.Builder()
-            .setAspectRatio(clampedRatio)
+            .setAspectRatio(aspectRatio)
             .setActions(actions)
 
+        if (snapshot.hasValidSourceRect) {
+            builder.setSourceRectHint(
+                Rect(
+                    snapshot.sourceRectLeft,
+                    snapshot.sourceRectTop,
+                    snapshot.sourceRectRight,
+                    snapshot.sourceRectBottom
+                )
+            )
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            builder.setAutoEnterEnabled(autoEnterEnabled)
+            builder.setAutoEnterEnabled(snapshot.autoEnterEnabled)
             builder.setSeamlessResizeEnabled(true)
         }
         return builder.build()

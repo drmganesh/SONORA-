@@ -8,6 +8,7 @@ import data.preferences.CachedSonoraRecommendations
 import data.preferences.SonoraRecommendationCachePreferences
 import domain.library.FollowedOnlineArtist
 import domain.library.OnlinePlaylist
+import domain.onboarding.MusicTasteProfile
 import domain.online.DiscoverMusicLanguage
 import domain.online.DiscoverSectionState
 import domain.online.DiscoverSectionType
@@ -46,7 +47,8 @@ data class LocalPersonalizationSnapshot(
     val countryCode: String,
     val languageCode: String,
     val discoverLanguage: DiscoverMusicLanguage,
-    val strictIndiaOnly: Boolean = RegionMusicEligibilityFilter.isIndiaRegion(countryCode)
+    val strictIndiaOnly: Boolean = RegionMusicEligibilityFilter.isIndiaRegion(countryCode),
+    val musicTasteProfile: MusicTasteProfile = MusicTasteProfile()
 )
 
 /**
@@ -147,7 +149,8 @@ class SonoraRecommendationCoordinator(
             discoverLanguage = snapshot.discoverLanguage,
             strictIndiaOnly = snapshot.strictIndiaOnly,
             weights = weights,
-            nowMs = nowMs
+            nowMs = nowMs,
+            musicTasteProfile = snapshot.musicTasteProfile
         )
 
         val cached = cachePreferences.getCachedRecommendationsOnce()
@@ -189,7 +192,8 @@ class SonoraRecommendationCoordinator(
         // Reuse valid warm cache when not forcing a refresh and no newer interaction invalidated it
         if (!forceRefresh && cacheMatchesContext && cached != null) {
             val isFresh = (nowMs - cached.cachedAtMs) in 0L..CACHE_TTL_MS
-            val interactedAfterCache = interactions.lastUpdatedAtMs > cached.cachedAtMs
+            val interactedAfterCache = interactions.lastUpdatedAtMs > cached.cachedAtMs ||
+                snapshot.musicTasteProfile.lastUpdatedAtMs > cached.cachedAtMs
             if (isFresh && !interactedAfterCache) {
                 val validCached = filterCachedForCurrentRules(cached, profile, interactions)
                 if (validCached.isNotEmpty()) {

@@ -7,14 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. v1.4.0)"
+        description: "Release tag (e.g. v1.4.1)"
         required: true
-        default: "v1.4.0"
+        default: "v1.4.1"
         type: string
       release_name:
         description: "Release title (optional)"
         required: false
-        default: "SONORA v1.4.0 — Pinch-to-Resize Video PiP, Personalized Recommendations & Fluid Startup"
+        default: "SONORA v1.4.1 — Personalized Music Taste Onboarding, System PiP Fix & Discovery Reliability"
         type: string
       draft:
         description: "Create as a Draft release"
