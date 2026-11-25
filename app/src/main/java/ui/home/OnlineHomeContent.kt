@@ -30,7 +30,6 @@ import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Icon
@@ -62,6 +61,7 @@ import domain.online.OnlineItemKind
 import domain.online.OnlineMusicProvider
 import domain.online.OnlineRecommendationProfile
 import domain.online.OnlineTrack
+import domain.online.SonoraRecommendUiState
 import ui.home.animations.DailyMixAnimationStyle
 import ui.home.animations.HomeAnimationLevel
 import ui.motion.LocalEffectiveMotionState
@@ -92,11 +92,9 @@ fun OnlineHomeContent(
     recentlyPlayedOnline: List<Song>,
     savedOnlineTracks: List<Song>,
     playlists: List<Playlist>,
-    providers: List<OnlineMusicProvider>,
     selectedProvider: OnlineMusicProvider?,
     discoverLanguage: DiscoverMusicLanguage,
     countryCode: String,
-    languageCode: String,
     recommendationProfile: OnlineRecommendationProfile,
     isNetworkOnline: Boolean,
     currentSong: Song?,
@@ -108,10 +106,8 @@ fun OnlineHomeContent(
     dailyMixAnimationStyle: DailyMixAnimationStyle,
     screenVisible: Boolean,
     reduceAnimations: Boolean,
-    onSelectProvider: (OnlineMusicProvider) -> Unit,
     onSelectDiscoverLanguage: (DiscoverMusicLanguage) -> Unit,
     onOpenRegionSheet: () -> Unit,
-    onRefreshAll: () -> Unit,
     onRetrySection: (DiscoverSectionType) -> Unit,
     onLoadMoreSection: (DiscoverSectionType) -> Unit,
     onPlayCollection: (List<Song>, Boolean) -> Unit,
@@ -125,7 +121,16 @@ fun OnlineHomeContent(
     onSwitchSoundCloudFallback: () -> Unit,
     onDismissPlaybackError: () -> Unit,
     onOpenPlaylistsScreen: () -> Unit,
-    onOpenViewAllOnline: () -> Unit,
+    sonoraRecommendState: SonoraRecommendUiState = SonoraRecommendUiState(),
+    favoriteOnlineIds: Set<Long> = emptySet(),
+    onRefreshSonoraRecommend: () -> Unit = {},
+    onPlayRecommendedTrack: (OnlineTrack, List<OnlineTrack>) -> Unit = onTrackClick,
+    onAddRecommendedToQueue: (OnlineTrack) -> Unit = {},
+    onPlayRecommendedNext: (OnlineTrack) -> Unit = {},
+    onToggleLikeRecommended: (OnlineTrack) -> Unit = {},
+    onDislikeRecommended: (OnlineTrack) -> Unit = {},
+    onOpenRecommendedArtist: (OnlineTrack) -> Unit = {},
+    onOpenRecommendedAlbum: (OnlineTrack) -> Unit = {},
     hasMusicMiniPlayer: Boolean = currentSong != null,
     modifier: Modifier = Modifier
 ) {
@@ -197,208 +202,35 @@ fun OnlineHomeContent(
             )
         }
 
-        // 3. Online Music Discover Controls Bar (Provider Pills, Region IN•EN, Refresh, View All)
-        item(key = "online_music_discover_controls") {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("home_online_music_section"),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
+        // Graceful offline banner (rendered only when offline; zero empty space when online)
+        if (!isNetworkOnline) {
+            item(key = "online_home_offline_banner") {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = colors.surfaceTinted,
+                    border = BorderStroke(0.75.dp, colors.accentStrong.copy(alpha = 0.45f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 22.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 20.dp)
+                        .testTag("home_online_offline_banner")
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 10.dp)
-                    ) {
-                        Text(
-                            text = "Online Music",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 22.sp,
-                            letterSpacing = (-0.3).sp,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = "Discover music from online streaming services.",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontSize = 12.sp,
-                            color = colors.textSecondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Surface(
-                            onClick = onOpenRegionSheet,
-                            shape = RoundedCornerShape(18.dp),
-                            color = colors.surfaceTinted,
-                            border = BorderStroke(0.75.dp, colors.cardBorder),
-                            modifier = Modifier
-                                .height(48.dp)
-                                .testTag("home_online_region_button")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Public,
-                                    contentDescription = "Online Content Region",
-                                    tint = colors.accentStrong,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "${countryCode.uppercase()}•${languageCode.uppercase()}",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    color = colors.textPrimary
-                                )
-                            }
-                        }
-
-                        Surface(
-                            onClick = onOpenViewAllOnline,
-                            shape = RoundedCornerShape(18.dp),
-                            color = colors.accentPill,
-                            modifier = Modifier
-                                .height(48.dp)
-                                .testTag("home_online_view_all_button")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "View All",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    color = colors.onAccentPill
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                    contentDescription = "View all Online Music",
-                                    tint = colors.onAccentPill,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Providers & Refresh
-                if (providers.isNotEmpty()) {
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 20.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        item(key = "online_home_refresh") {
-                            Surface(
-                                onClick = onRefreshAll,
-                                shape = RoundedCornerShape(18.dp),
-                                color = colors.surfaceTinted,
-                                border = BorderStroke(0.75.dp, colors.cardBorder),
-                                modifier = Modifier
-                                    .height(38.dp)
-                                    .testTag("home_online_refresh_button")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Refresh,
-                                        contentDescription = "Refresh Online Music",
-                                        tint = colors.accentStrong,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = "Refresh",
-                                        fontFamily = PlusJakartaFontFamily,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp,
-                                        color = colors.textPrimary
-                                    )
-                                }
-                            }
-                        }
-
-                        items(providers, key = { "oh_prov_${it.key}" }) { provider ->
-                            val selected = provider.key == selectedProvider?.key
-                            Surface(
-                                onClick = { onSelectProvider(provider) },
-                                shape = RoundedCornerShape(18.dp),
-                                color = if (selected) colors.accentStrong else colors.surface,
-                                border = BorderStroke(
-                                    0.75.dp,
-                                    if (selected) colors.accentStrong else colors.cardBorder
-                                ),
-                                modifier = Modifier
-                                    .height(38.dp)
-                                    .testTag("home_online_provider_${provider.key}")
-                            ) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier.padding(horizontal = 14.dp)
-                                ) {
-                                    Text(
-                                        text = provider.displayName,
-                                        fontFamily = PlusJakartaFontFamily,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 12.sp,
-                                        color = if (selected) colors.onAccentStrong else colors.textSecondary
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Graceful offline banner
-                if (!isNetworkOnline) {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = colors.surfaceTinted,
-                        border = BorderStroke(0.75.dp, colors.accentStrong.copy(alpha = 0.45f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp)
-                            .testTag("home_online_offline_banner")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.WifiOff,
-                                contentDescription = null,
-                                tint = colors.accentStrong,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "You're offline. Switch to Offline Music anytime or reconnect to stream.",
-                                fontFamily = PlusJakartaFontFamily,
-                                fontSize = 12.sp,
-                                color = colors.textSecondary
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Rounded.WifiOff,
+                            contentDescription = null,
+                            tint = colors.accentStrong,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "You're offline. Switch to Offline Music anytime or reconnect to stream.",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 12.sp,
+                            color = colors.textSecondary
+                        )
                     }
                 }
             }
@@ -421,6 +253,29 @@ fun OnlineHomeContent(
                     onDismiss = onDismissPlaybackError
                 )
             }
+        }
+
+        // 3b. Sonora Recommend (NEW — Personalized Recommendations directly above Trending Music India)
+        item(key = "sonora_recommend_section") {
+            SonoraRecommendSection(
+                state = sonoraRecommendState,
+                favoriteOnlineIds = favoriteOnlineIds,
+                currentSongId = currentSong?.id,
+                isPlaying = isPlaying,
+                colors = colors,
+                animationLevel = animationLevel,
+                screenVisible = screenVisible,
+                reduceAnimations = reduceAnimations,
+                onRefresh = onRefreshSonoraRecommend,
+                onPlayTrack = onPlayRecommendedTrack,
+                onAddToQueue = onAddRecommendedToQueue,
+                onPlayNext = onPlayRecommendedNext,
+                onToggleLike = onToggleLikeRecommended,
+                onDislikeTrack = onDislikeRecommended,
+                onOpenArtist = onOpenRecommendedArtist,
+                onOpenAlbum = onOpenRecommendedAlbum,
+                onMoreOptions = onTrackLongClick
+            )
         }
 
         // 4. Trending Music in India

@@ -7,14 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. v1.3.7)"
+        description: "Release tag (e.g. v1.4.0)"
         required: true
-        default: "v1.3.7"
+        default: "v1.4.0"
         type: string
       release_name:
         description: "Release title (optional)"
         required: false
-        default: "SONORA v1.3.7 — Festival Atmosphere Engine"
+        default: "SONORA v1.4.0 — Pinch-to-Resize Video PiP, Personalized Recommendations & Fluid Startup"
         type: string
       draft:
         description: "Create as a Draft release"
@@ -102,6 +102,9 @@ jobs:
           else
             TAG="${GITHUB_REF_NAME}"
             TITLE=""
+          fi
+          if [ -z "$TITLE" ] && [ -f RELEASE_NOTES.md ]; then
+            TITLE=$(head -n 1 RELEASE_NOTES.md | sed -E 's/^#[[:space:]]*//')
           fi
           if [ -z "$TITLE" ]; then
             TITLE="SONORA $TAG"

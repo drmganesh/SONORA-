@@ -46,6 +46,7 @@ import com.example.model.ThemeMode
 import com.example.model.VisualizerStyle
 import com.example.service.SonoraMusicService
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -56,6 +57,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.update
@@ -342,6 +344,25 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     val discoverSectionsState: StateFlow<Map<DiscoverSectionType, DiscoverSectionState>> =
         _discoverSectionsState.asStateFlow()
 
+    private val _discoverRefreshCount = MutableStateFlow(0L)
+    val discoverRefreshCount: StateFlow<Long> = _discoverRefreshCount.asStateFlow()
+
+    // --- Personalized "Sonora Recommend" Section (Local-Only Personalization + Real NewPipe Candidates) ---
+    val sonoraRecommendCachePrefs = data.preferences.SonoraRecommendationCachePreferences(application)
+    private val sonoraRecommendationCoordinator by lazy {
+        data.online.SonoraRecommendationCoordinator.fromRepository(
+            cachePreferences = sonoraRecommendCachePrefs,
+            onlineRepository = onlineRepository
+        )
+    }
+    private val _sonoraRecommendState =
+        MutableStateFlow(domain.online.SonoraRecommendUiState(isLoading = true))
+    val sonoraRecommendState: StateFlow<domain.online.SonoraRecommendUiState> =
+        _sonoraRecommendState.asStateFlow()
+    private var sonoraRecommendJob: Job? = null
+    private var sonoraRecommendDebounceJob: Job? = null
+    private var sonoraRecommendGeneration: Int = 0
+
     private val _onlineCollectionState = MutableStateFlow<OnlineCollectionUiState>(OnlineCollectionUiState.Idle)
     val onlineCollectionState: StateFlow<OnlineCollectionUiState> = _onlineCollectionState.asStateFlow()
 
@@ -502,7 +523,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             )
         }.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.Eagerly,
+            started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
 
@@ -530,6 +551,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun onAppForegroundedForFestivalSync() {
         viewModelScope.launch(Dispatchers.IO) {
+            // Never contend with the cold-start intro animation for CPU, Disk, or Network
+            startupDeferredWorkGate.await()
             runCatching {
                 _festivalReferenceDate.value = java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
                 val autoEnabled = runCatching {
@@ -622,6 +645,20 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     @Volatile
     var hasCompletedLaunchAnimation: Boolean = false
+
+    private val startupDeferredWorkGate = CompletableDeferred<Unit>()
+
+    val isStartupDeferredWorkReleased: Boolean
+        get() = startupDeferredWorkGate.isCompleted
+
+    /**
+     * Releases deferred non-essential startup tasks (online discovery network fetches,
+     * weather/festival calendar synchronization, download reconciliation, and full recommendation
+     * scoring) once the intro animation finishes or is skipped so startup frames stay smooth.
+     */
+    fun onStartupIntroCompleted() {
+        startupDeferredWorkGate.complete(Unit)
+    }
 
     @Volatile
     private var userUpdatedHomeMode = false
@@ -1340,6 +1377,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             val anyJobRunning = discoverSectionJobs.values.any { it.isActive }
             if (!hasLoadedSection && !anyJobRunning && _selectedOnlineProvider.value != null) {
                 refreshOnlineDiscovery(forceRefresh = false)
+            } else if (_sonoraRecommendState.value.items.isEmpty() && sonoraRecommendJob?.isActive != true) {
+                loadSonoraRecommendations(forceRefresh = false)
             }
         } else if (mode == HomeMusicMode.ONLINE_VIDEO) {
             videoController.ensureHomeDiscoveryLoaded()
@@ -2204,8 +2243,12 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), LocalLibraryStats())
 
     init {
-        NewPipeInitializer.ensureInitialized(application)
-        initOnlineProviders()
+        // Safety fallback so non-UI/test ViewModel instantiations still release deferred work automatically
+        viewModelScope.launch {
+            delay(2_200L)
+            startupDeferredWorkGate.complete(Unit)
+        }
+        initOnlineProvidersAsync(application)
         bindMusicService()
         loadLocalSongs()
         observePlaylists()
@@ -2321,6 +2364,23 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     _discoverMusicLanguage.value = savedFilter
                 }
         }
+        viewModelScope.launch {
+            onlineRegionPrefs.selectedProviderKeyFlow
+                .catch { e -> Log.w(TAG, "Online provider DataStore stream error", e) }
+                .collect { savedKey ->
+                    val currentKey = _selectedOnlineProvider.value?.key
+                    if (currentKey != null && !currentKey.equals(savedKey, ignoreCase = true)) {
+                        val target = _onlineProviders.value.firstOrNull { it.key == savedKey }
+                        if (target != null) {
+                            _selectedOnlineProvider.value = target
+                            preferences.selectedOnlineProviderKey = target.key
+                            if (_selectedOnlineFilter.value !in target.supportedFilters) {
+                                _selectedOnlineFilter.value = target.defaultFilter
+                            }
+                        }
+                    }
+                }
+        }
         observeOnlineRecommendationProfile()
         viewModelScope.launch {
             combine(backgroundPlaybackSettings, sessionManagementSettings) { bg, sess -> bg to sess }
@@ -2333,14 +2393,16 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 }
         }
         viewModelScope.launch(Dispatchers.IO) {
+            startupDeferredWorkGate.await()
             runCatching {
                 downloadCoordinator.reconcileInterruptedTasks(autoResume = true)
             }.onFailure { e ->
                 Log.w(TAG, "Download reconciliation skipped: ${e.message}")
             }
         }
-        // Hydrate cached Odisha weather immediately, perform initial refresh, and schedule 20-min periodic updates
+        // Defer Odisha weather hydration, initial network refresh, and 20-min periodic loop until after intro
         viewModelScope.launch(Dispatchers.IO) {
+            startupDeferredWorkGate.await()
             val initialSettings = runCatching {
                 ambientEffectsPrefs.weatherAmbientSettingsFlow.first()
             }.getOrDefault(data.preferences.WeatherAmbientSettings.DEFAULT)
@@ -2359,9 +2421,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _festivalReferenceDate.value = java.time.LocalDate.now(domain.weather.SolarPositionCalculator.INDIA_ZONE)
             }
         }
-        // Seed Pan-India Hindu Festival Room cache, register single unique daily WorkManager fallback,
-        // and run automatic daily sync if not yet synced on the current Asia/Kolkata calendar day.
+        // Defer Pan-India Hindu Festival Room seeding, WorkManager scheduling, and daily sync until after intro
         viewModelScope.launch(Dispatchers.IO) {
+            startupDeferredWorkGate.await()
             runCatching {
                 festivalRepository.ensureInitialCacheSeeded()
                 festivalRepository.schedulePeriodicRefresh(getApplication())
@@ -2588,6 +2650,8 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         viewModelScope.launch {
+            // Defer full recommendation profile scoring until intro finishes and compute off-main-thread
+            startupDeferredWorkGate.await()
             combine(listeningSignalsFlow, preferenceSignalsFlow) { listening, prefs ->
                 OnlineRecommendationEngine.buildDailyRecommendationProfile(
                     recentlyPlayedLocal = listening.recentlyPlayedLocal,
@@ -2602,6 +2666,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     discoverLanguage = prefs.discoverLanguage
                 )
             }
+                .flowOn(Dispatchers.Default)
                 .distinctUntilChanged()
                 .debounce(450L)
                 .catch { e -> Log.w(TAG, "Recommendation profile observation error", e) }
@@ -3222,12 +3287,17 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         val q = _queue.value
         if (q.isEmpty()) return
 
-        // If Song Radio is active and the user skipped early (< 35% of track), adapt radio weights
+        // Record early skip (< 35% of track) for adaptive Song Radio & Sonora Recommend personalization
         val currentPlaying = _currentSong.value
         val curDur = _playbackInfo.value.durationMs
         val curPos = _playbackInfo.value.currentPositionMs
-        if (_songRadioSession.value.isActive && currentPlaying != null && curDur > 10_000L && curPos < (curDur * 0.35f).toLong()) {
-            _songRadioSession.update { data.online.MusicDiscoveryAndRadioEngine.recordRadioSkip(it, currentPlaying) }
+        if (currentPlaying != null && curDur > 10_000L && curPos < (curDur * 0.35f).toLong()) {
+            if (_songRadioSession.value.isActive) {
+                _songRadioSession.update { data.online.MusicDiscoveryAndRadioEngine.recordRadioSkip(it, currentPlaying) }
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                sonoraRecommendCachePrefs.recordEarlySkip(currentPlaying.id, currentPlaying.artist)
+            }
         }
 
         val matched = _nextMatchedSong.value
@@ -3476,6 +3546,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     data.online.MusicDiscoveryAndRadioEngine.recordRadioLike(it, song)
                 }
             }
+            scheduleSonoraRecommendationsRefreshDebounced()
         }
     }
 
@@ -3489,6 +3560,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _allSongs.value = _allSongs.value.map {
                     if (it.id == song.id) it.copy(playCount = it.playCount + 1, lastPlayedTimestamp = now) else it
                 }
+            }
+            if (song.playCount >= 1) {
+                sonoraRecommendCachePrefs.recordRepeatedListen(song.id, song.artist)
             }
         }
     }
@@ -3588,6 +3662,9 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun playNextInQueue(song: Song) {
         playAllNextInQueue(listOf(song))
+        viewModelScope.launch(Dispatchers.IO) {
+            sonoraRecommendCachePrefs.recordPlayNext(song.id, song.artist)
+        }
     }
 
     fun playAllNextInQueue(songs: List<Song>) {
@@ -3779,9 +3856,11 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 dao.pruneUnreferencedVideos()
                 dao.clearOnlineSearchHistory()
                 dao.clearVideoSearchHistory()
+                sonoraRecommendCachePrefs.clearAllForHistoryReset()
             }.onFailure { e ->
                 Log.w(TAG, "Failed clearing listening history: ${e.message}")
             }
+            scheduleSonoraRecommendationsRefreshDebounced()
         }
     }
 
@@ -4613,17 +4692,28 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
 
     // --- Online Music Discovery, Search & Stream Quality Controls (NewPipe Extractor) ---
 
-    private fun initOnlineProviders() {
-        val providers = onlineRepository.getAvailableProviders()
-        _onlineProviders.value = providers
-        val savedKey = preferences.selectedOnlineProviderKey
-        val selected = providers.firstOrNull { it.key == savedKey }
-            ?: providers.firstOrNull { it.key == OnlineMusicProvider.KEY_YOUTUBE_MUSIC }
-            ?: providers.firstOrNull()
-        _selectedOnlineProvider.value = selected
-        if (selected != null) {
-            _selectedOnlineFilter.value = selected.defaultFilter
-            refreshOnlineDiscovery(forceRefresh = false)
+    private fun initOnlineProvidersAsync(application: Application) {
+        viewModelScope.launch(Dispatchers.IO) {
+            NewPipeInitializer.ensureInitialized(application)
+            val providers = onlineRepository.getAvailableProviders()
+            val savedKey = onlineRegionPrefs.getInitialSelectedProviderKey()
+            val selected = providers.firstOrNull { it.key == savedKey }
+                ?: providers.firstOrNull { it.key == OnlineMusicProvider.KEY_YOUTUBE_MUSIC }
+                ?: providers.firstOrNull()
+            withContext(Dispatchers.Main.immediate) {
+                _onlineProviders.value = providers
+                if (_selectedOnlineProvider.value == null && selected != null) {
+                    _selectedOnlineProvider.value = selected
+                    _selectedOnlineFilter.value = selected.defaultFilter
+                }
+            }
+            // Wait until the startup intro hands off to Home before kicking off online discovery network traffic
+            startupDeferredWorkGate.await()
+            withContext(Dispatchers.Main.immediate) {
+                if (_selectedOnlineProvider.value != null && _discoverRefreshCount.value == 0L) {
+                    refreshOnlineDiscovery(forceRefresh = false)
+                }
+            }
         }
     }
 
@@ -4633,11 +4723,15 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         clearPlaybackError()
         _selectedOnlineProvider.value = target
         preferences.selectedOnlineProviderKey = target.key
+        viewModelScope.launch(Dispatchers.IO) {
+            onlineRegionPrefs.setSelectedProviderKey(target.key)
+        }
         if (_selectedOnlineFilter.value !in target.supportedFilters) {
             _selectedOnlineFilter.value = target.defaultFilter
         }
         _onlineSearchSuggestions.value = emptyList()
-        refreshOnlineDiscovery(forceRefresh = false)
+        onlineRepository.clearDiscoverCache()
+        refreshOnlineDiscovery(forceRefresh = true)
         val q = _onlineSearchQuery.value.trim()
         if (q.isNotBlank()) {
             executeOnlineSearch(q)
@@ -4773,6 +4867,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         }
         activeDiscoverProviderKey = provider.key
         discoverGeneration += 1L
+        _discoverRefreshCount.value = discoverGeneration
         val generation = discoverGeneration
 
         discoverSectionJobs.values.forEach { it.cancel() }
@@ -4808,6 +4903,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 forceRefresh = forceRefresh
             )
         }
+        loadSonoraRecommendations(forceRefresh = forceRefresh)
     }
 
     fun retryDiscoverSection(section: DiscoverSectionType) {
@@ -4975,9 +5071,254 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 _discoverSectionsState.update { current ->
                     current.toMutableMap().apply { put(section, resultState) }
                 }
+                if (resultState is DiscoverSectionState.Success &&
+                    _sonoraRecommendState.value.items.isEmpty() &&
+                    sonoraRecommendJob?.isActive != true
+                ) {
+                    loadSonoraRecommendations(forceRefresh = false)
+                }
             }
         }
         discoverSectionJobs[section] = job
+    }
+
+    // --- Sonora Recommend Public Controls, Availability Check & Artist/Album Navigation ---
+
+    fun refreshSonoraRecommendations() {
+        sonoraRecommendGeneration += 1
+        loadSonoraRecommendations(forceRefresh = true)
+    }
+
+    fun loadSonoraRecommendations(forceRefresh: Boolean = false) {
+        val provider = _selectedOnlineProvider.value
+            ?: _onlineProviders.value.firstOrNull()
+            ?: return
+        sonoraRecommendJob?.cancel()
+        val generation = sonoraRecommendGeneration
+        val currentItems = _sonoraRecommendState.value.items
+        _sonoraRecommendState.update {
+            it.copy(
+                isLoading = currentItems.isEmpty(),
+                isRefreshing = currentItems.isNotEmpty() && forceRefresh,
+                errorMessage = null
+            )
+        }
+        sonoraRecommendJob = viewModelScope.launch {
+            val events = runCatching { listeningAnalyticsRepository.getAllEventsOnce() }.getOrDefault(emptyList())
+            val allLocal = _allSongs.value
+            val allOnline = allOnlineTracks.value
+            val combinedSongsById = buildMap<Long, Song> {
+                allLocal.forEach { put(it.id, it) }
+                allOnline.forEach { put(it.id, it) }
+            }
+            val playlistCrossRefs = runCatching {
+                withContext(Dispatchers.IO) { dao.getAllPlaylistSongCrossRefsFlow().first() }
+            }.getOrDefault(emptyList())
+            val localPlaylistSongs = playlistCrossRefs
+                .groupBy { it.playlistId }
+                .mapValues { (_, refs) ->
+                    refs.sortedBy { it.orderIndex }.mapNotNull { combinedSongsById[it.songId] }
+                }
+            val snapshot = data.online.LocalPersonalizationSnapshot(
+                likedLocalSongs = allLocal.filter { it.isFavorite },
+                likedOnlineSongs = allOnline.filter { it.isFavorite },
+                followedOnlineArtists = followedOnlineArtists.value,
+                favouriteLocalArtists = favouriteArtists.value,
+                localPlaylists = _playlists.value,
+                localPlaylistSongs = localPlaylistSongs,
+                onlinePlaylists = onlinePlaylists.value,
+                listeningEvents = events,
+                recentlyPlayedOnline = recentlyPlayedOnlineTracks.value,
+                recentlyPlayedLocal = recentlyPlayedSongs.value,
+                countryCode = _onlineContentCountry.value,
+                languageCode = _onlineContentLanguage.value,
+                discoverLanguage = _discoverMusicLanguage.value,
+                strictIndiaOnly = domain.online.RegionMusicEligibilityFilter.isIndiaRegion(_onlineContentCountry.value)
+            )
+            val resultState = sonoraRecommendationCoordinator.loadRecommendations(
+                snapshot = snapshot,
+                provider = provider,
+                existingDiscoverSections = _discoverSectionsState.value,
+                isNetworkOnline = connectivityMonitor.isOnline.value,
+                forceRefresh = forceRefresh,
+                refreshGeneration = generation
+            )
+            if (generation == sonoraRecommendGeneration) {
+                _sonoraRecommendState.value = resultState
+            }
+        }
+    }
+
+    private fun scheduleSonoraRecommendationsRefreshDebounced() {
+        sonoraRecommendDebounceJob?.cancel()
+        sonoraRecommendDebounceJob = viewModelScope.launch {
+            delay(1_200L)
+            if (_homeMusicMode.value == HomeMusicMode.ONLINE || _sonoraRecommendState.value.items.isNotEmpty()) {
+                loadSonoraRecommendations(forceRefresh = true)
+            }
+        }
+    }
+
+    fun dislikeRecommendedTrack(track: OnlineTrack) {
+        val normUrl = domain.online.SonoraPersonalizedRecommendationEngine.normalizeTrackUrl(track.contentUrl)
+        _sonoraRecommendState.update { current ->
+            current.copy(
+                items = current.items.filterNot { item ->
+                    item.track.stableId == track.stableId ||
+                        domain.online.SonoraPersonalizedRecommendationEngine.normalizeTrackUrl(item.track.contentUrl) == normUrl
+                }
+            )
+        }
+        _libraryFeedbackMessage.value = "We'll recommend fewer tracks like \"${track.title}\"."
+        viewModelScope.launch(Dispatchers.IO) {
+            sonoraRecommendCachePrefs.recordDislike(track.stableId, track.contentUrl, track.artist)
+            if (_sonoraRecommendState.value.items.size < 6) {
+                loadSonoraRecommendations(forceRefresh = true)
+            }
+        }
+    }
+
+    /**
+     * Verifies candidate playability and stream availability (with expired-URL re-resolution)
+     * before handing off to SONORA's unified Media3 playback pipeline. Gracefully removes
+     * deleted or unavailable tracks without crashing.
+     */
+    fun playRecommendedTrack(track: OnlineTrack, pool: List<OnlineTrack>, onPlaybackStarted: () -> Unit = {}) {
+        if (!domain.online.SonoraPersonalizedRecommendationEngine.isCandidateMetadataPlayable(track)) {
+            markRecommendedTrackUnavailable(track, "This track is no longer available.")
+            return
+        }
+        if (!connectivityMonitor.isOnline.value) {
+            _libraryFeedbackMessage.value = "You're offline. Connect to stream \"${track.title}\"."
+            return
+        }
+        viewModelScope.launch {
+            val song = OnlineTrackMapper.toUnifiedSong(track)
+            var resolved = onlineRepository.resolvePlayableStream(
+                song = song,
+                qualityPreference = _onlineQualityPreference.value,
+                forceRefresh = false
+            )
+            if (resolved is OnlineResult.Error && resolved.kind == OnlineErrorKind.STREAM_EXPIRED) {
+                onlineRepository.invalidateStreamCache(song.contentUrl)
+                resolved = onlineRepository.resolvePlayableStream(
+                    song = song,
+                    qualityPreference = _onlineQualityPreference.value,
+                    forceRefresh = true
+                )
+            }
+            when (resolved) {
+                is OnlineResult.Success -> {
+                    playOnlineTrack(track, pool)
+                    onPlaybackStarted()
+                }
+                is OnlineResult.Error -> {
+                    val permanentlyUnavailable = resolved.kind == OnlineErrorKind.NO_PLAYABLE_AUDIO_STREAM ||
+                        resolved.kind == OnlineErrorKind.UNSUPPORTED ||
+                        resolved.kind == OnlineErrorKind.AGE_OR_GEO_RESTRICTED
+                    if (permanentlyUnavailable) {
+                        markRecommendedTrackUnavailable(track, resolved.message)
+                    } else {
+                        // Transient error (timeout / rate limit): still allow playback pipeline retry UI
+                        playOnlineTrack(track, pool)
+                        onPlaybackStarted()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun markRecommendedTrackUnavailable(track: OnlineTrack, reason: String) {
+        sonoraRecommendationCoordinator.markTrackUnavailable(track.contentUrl)
+        val normUrl = domain.online.SonoraPersonalizedRecommendationEngine.normalizeTrackUrl(track.contentUrl)
+        _sonoraRecommendState.update { current ->
+            current.copy(
+                items = current.items.filterNot { item ->
+                    item.track.stableId == track.stableId ||
+                        domain.online.SonoraPersonalizedRecommendationEngine.normalizeTrackUrl(item.track.contentUrl) == normUrl
+                }
+            )
+        }
+        _libraryFeedbackMessage.value = "\"${track.title}\" is unavailable and was removed from Sonora Recommend ($reason)"
+    }
+
+    fun openRecommendedArtist(track: OnlineTrack) {
+        val directArtist = ui.online.buildArtistExploreTrack(track)
+        if (directArtist != null) {
+            openOnlineCollection(directArtist)
+            return
+        }
+        val artistName = track.artist.trim()
+        if (artistName.isBlank()) return
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        onlineCollectionJob?.cancel()
+        onlineCollectionJob = viewModelScope.launch {
+            _onlineCollectionState.value = OnlineCollectionUiState.Loading(artistName)
+            when (val res = onlineRepository.search(artistName, provider, OnlineSearchFilter.SONGS)) {
+                is OnlineResult.Success -> {
+                    val tracks = res.value.items.filter { it.kind == OnlineItemKind.TRACK }
+                    _onlineCollectionState.value = OnlineCollectionUiState.Success(
+                        details = OnlineCollectionDetails(
+                            title = artistName,
+                            subtitle = "Artist • ${provider.displayName}",
+                            providerName = provider.displayName,
+                            contentUrl = track.artistUrl ?: track.contentUrl,
+                            artworkUrl = track.artworkUrl,
+                            tracks = tracks
+                        ),
+                        sourceItem = track.copy(title = artistName, kind = OnlineItemKind.ARTIST)
+                    )
+                }
+                is OnlineResult.Error -> {
+                    _onlineCollectionState.value = OnlineCollectionUiState.Error(res.message, track)
+                }
+            }
+        }
+    }
+
+    fun openRecommendedAlbum(track: OnlineTrack) {
+        val albumName = track.album.trim()
+        if (!domain.online.SonoraPersonalizedRecommendationEngine.isValidAlbumName(albumName)) return
+        val provider = _selectedOnlineProvider.value ?: _onlineProviders.value.firstOrNull() ?: return
+        onlineCollectionJob?.cancel()
+        onlineCollectionJob = viewModelScope.launch {
+            _onlineCollectionState.value = OnlineCollectionUiState.Loading(albumName)
+            val query = "$albumName ${track.artist}".trim()
+            val albumSearch = onlineRepository.search(query, provider, OnlineSearchFilter.ALBUMS)
+            val matchingAlbum = (albumSearch as? OnlineResult.Success)?.value?.items
+                ?.firstOrNull { it.kind == OnlineItemKind.ALBUM || it.kind == OnlineItemKind.PLAYLIST }
+            if (matchingAlbum != null) {
+                when (val details = onlineRepository.fetchCollectionDetails(matchingAlbum)) {
+                    is OnlineResult.Success -> {
+                        _onlineCollectionState.value = OnlineCollectionUiState.Success(
+                            details = details.value,
+                            sourceItem = matchingAlbum
+                        )
+                        return@launch
+                    }
+                    is OnlineResult.Error -> Unit
+                }
+            }
+            when (val songSearch = onlineRepository.search(query, provider, OnlineSearchFilter.SONGS)) {
+                is OnlineResult.Success -> {
+                    val tracks = songSearch.value.items.filter { it.kind == OnlineItemKind.TRACK }
+                    _onlineCollectionState.value = OnlineCollectionUiState.Success(
+                        details = OnlineCollectionDetails(
+                            title = albumName,
+                            subtitle = "${track.artist} • ${provider.displayName}",
+                            providerName = provider.displayName,
+                            contentUrl = track.contentUrl,
+                            artworkUrl = track.artworkUrl,
+                            tracks = tracks
+                        ),
+                        sourceItem = track.copy(title = albumName, kind = OnlineItemKind.ALBUM)
+                    )
+                }
+                is OnlineResult.Error -> {
+                    _onlineCollectionState.value = OnlineCollectionUiState.Error(songSearch.message, track)
+                }
+            }
+        }
     }
 
     fun openOnlineCollection(item: OnlineTrack) {
@@ -5124,6 +5465,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                     } else {
                         "Unfollowed $name."
                     }
+                    scheduleSonoraRecommendationsRefreshDebounced()
                 }
                 .onFailure { err ->
                     _libraryFeedbackMessage.value = err.message ?: "This provider does not expose an artist channel to follow."
@@ -5176,6 +5518,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 .onSuccess {
                     val suffix = if (playlistName.isNotBlank()) " to \"$playlistName\"" else ""
                     _libraryFeedbackMessage.value = "Added \"${song.title}\"$suffix."
+                    scheduleSonoraRecommendationsRefreshDebounced()
                 }
                 .onFailure { err ->
                     _libraryFeedbackMessage.value = err.message ?: "Could not add track to online playlist."

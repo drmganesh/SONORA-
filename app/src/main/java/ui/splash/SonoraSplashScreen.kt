@@ -1,17 +1,13 @@
 package ui.splash
 
+import android.app.ActivityManager
 import android.content.Context
+import android.os.PowerManager
 import android.provider.Settings
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.updateTransition
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +37,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,170 +75,196 @@ fun isSystemReduceMotionActive(context: Context): Boolean {
     }.getOrDefault(false)
 }
 
+fun isBatterySaverActive(context: Context): Boolean {
+    return runCatching {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        pm?.isPowerSaveMode == true
+    }.getOrDefault(false)
+}
+
+fun isLowRamDevice(context: Context): Boolean {
+    return runCatching {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        am?.isLowRamDevice == true
+    }.getOrDefault(false)
+}
+
+@Stable
+private class SonoraSplashAnimationState(reducedMotion: Boolean) {
+    val overlayAlpha = Animatable(1f)
+    val overlayScale = Animatable(1f)
+    val ambientGlowAlpha = Animatable(if (reducedMotion) 0.45f else 0f)
+    val logoScale = Animatable(if (reducedMotion) 1f else 0.86f)
+    val logoAlpha = Animatable(if (reducedMotion) 1f else 0f)
+    val ringExpansion = Animatable(0f)
+    val lightSweep = Animatable(-0.35f)
+    val waveAlpha = Animatable(0f)
+    val waveAmplitude = Animatable(0.15f)
+    val waveTravel = Animatable(0f)
+    val brandAlpha = Animatable(if (reducedMotion) 1f else 0f)
+    val brandSlideProgress = Animatable(if (reducedMotion) 0f else 1f)
+    val creditAlpha = Animatable(if (reducedMotion) 1f else 0f)
+    val creditSlideProgress = Animatable(if (reducedMotion) 0f else 1f)
+}
+
 /**
- * Original 5-phase cinematic SONORA launch sequence (~2.1s total) that sits non-blockingly over
- * the live SONORA Home screen, respects system & app Reduce Motion preferences, and hands off
- * smoothly without duplicating splash screens or delaying media/library initialization.
+ * Fluid, GPU-accelerated 5-phase cinematic SONORA launch sequence (~1.85s total; ~0.52s under
+ * Reduce Motion or Battery Saver) that sits non-blockingly over the live SONORA Home screen.
+ *
+ * Performance characteristics:
+ * - Zero per-frame Compose recompositions: every [Animatable] value is read exclusively inside
+ *   [Modifier.graphicsLayer] or [Modifier.drawWithCache] draw lambdas.
+ * - Zero per-frame text re-layout: `"SONORA"` keeps static letterSpacing and uses a subtle
+ *   GPU `scaleX` tightening reveal instead of animating `letterSpacing`.
+ * - Pre-decoded cached logo bitmap via [SplashLogoPreloader] (decoded off-main-thread on app start).
+ * - Staged Home screen warm-up via [onPrepareHomeContent] after initial intro frames settle, and
+ *   [onTransitionToHome] right as the fade-out begins so deferred background tasks start seamlessly.
+ * - Respects System Reduce Motion, App Reduce Animations, Battery Saver, and Low-RAM devices.
  */
 @Composable
 fun SonoraSplashScreen(
     appReduceAnimations: Boolean,
     onAnimationFinished: () -> Unit,
+    onPrepareHomeContent: () -> Unit = {},
+    onTransitionToHome: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+
+    val lowRam = remember(context) { isLowRamDevice(context) }
     val reducedMotion = remember(context, appReduceAnimations) {
-        appReduceAnimations || isSystemReduceMotionActive(context)
+        appReduceAnimations || isSystemReduceMotionActive(context) || isBatterySaverActive(context)
     }
+    val logoBitmap = remember(context) { SplashLogoPreloader.getCachedOrDecode(context) }
+    val backgroundBrush = remember {
+        Brush.radialGradient(colors = listOf(DeepMidnightTint, AmoledBlack))
+    }
+
     val latestOnFinished by rememberUpdatedState(onAnimationFinished)
+    val latestOnPrepareHome by rememberUpdatedState(onPrepareHomeContent)
+    val latestOnTransitionHome by rememberUpdatedState(onTransitionToHome)
 
-    var phase by remember { mutableStateOf(SonoraSplashPhase.DARK_INTRO) }
-    var developerCreditVisible by remember(reducedMotion) { mutableStateOf(reducedMotion) }
-    val phaseTransition = updateTransition(targetState = phase, label = "sonora_splash_phase")
+    var completed by remember { mutableStateOf(false) }
+    val animState = remember(reducedMotion) { SonoraSplashAnimationState(reducedMotion) }
 
-    val overlayAlpha by phaseTransition.animateFloat(
-        transitionSpec = {
-            when {
-                reducedMotion -> tween(durationMillis = 220, easing = FastOutSlowInEasing)
-                targetState == SonoraSplashPhase.TRANSITION_HOME ||
-                    targetState == SonoraSplashPhase.COMPLETED -> tween(durationMillis = 360, easing = FastOutSlowInEasing)
-                else -> snap()
-            }
-        },
-        label = "splash_overlay_alpha"
-    ) { currentPhase ->
-        if (currentPhase == SonoraSplashPhase.TRANSITION_HOME || currentPhase == SonoraSplashPhase.COMPLETED) {
-            0f
-        } else {
-            1f
-        }
-    }
-
-    val overlayScale by phaseTransition.animateFloat(
-        transitionSpec = {
-            if (reducedMotion) snap() else tween(durationMillis = 360, easing = FastOutSlowInEasing)
-        },
-        label = "splash_overlay_scale"
-    ) { currentPhase ->
-        if (!reducedMotion && (currentPhase == SonoraSplashPhase.TRANSITION_HOME || currentPhase == SonoraSplashPhase.COMPLETED)) {
-            1.045f
-        } else {
-            1f
-        }
-    }
-
-    val ambientGlowAlpha = remember { Animatable(if (reducedMotion) 0.45f else 0f) }
-    val logoScale = remember { Animatable(if (reducedMotion) 1f else 0.84f) }
-    val logoAlpha = remember { Animatable(if (reducedMotion) 1f else 0f) }
-    val ringExpansion = remember { Animatable(0f) }
-    val lightSweep = remember { Animatable(-0.35f) }
-    val waveAlpha = remember { Animatable(if (reducedMotion) 0f else 0f) }
-    val waveAmplitude = remember { Animatable(0.15f) }
-    val waveTravel = remember { Animatable(0f) }
-    val letterSpacingSp = remember { Animatable(if (reducedMotion) 4.4f else 8.2f) }
+    val brandSlideOffsetPx = remember(density) { with(density) { 16.dp.toPx() } }
+    val creditSlideOffsetPx = remember(density) { with(density) { 12.dp.toPx() } }
 
     LaunchedEffect(reducedMotion) {
         if (reducedMotion) {
-            phase = SonoraSplashPhase.BRAND_REVEAL
-            developerCreditVisible = true
-            delay(360L)
-            phase = SonoraSplashPhase.TRANSITION_HOME
-            delay(230L)
-            phase = SonoraSplashPhase.COMPLETED
+            latestOnPrepareHome()
+            delay(320L)
+            latestOnTransitionHome()
+            animState.overlayAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+            )
+            completed = true
             latestOnFinished()
             return@LaunchedEffect
         }
 
-        // Phase 1: Dark Intro & subtle golden aura + faint baseline wave
-        phase = SonoraSplashPhase.DARK_INTRO
+        // Phase 1: Dark Intro & subtle golden aura + faint baseline wave (0 -> 130ms)
         val glowJob = launch {
-            ambientGlowAlpha.animateTo(
+            animState.ambientGlowAlpha.animateTo(
                 targetValue = 0.65f,
-                animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
             )
         }
         val baselineWaveJob = launch {
-            waveAlpha.animateTo(
+            animState.waveAlpha.animateTo(
                 targetValue = 0.45f,
-                animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing)
+                animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
             )
         }
-        delay(150L)
+        delay(130L)
 
-        // Phase 2: Official SONORA Logo Reveal + light sweep + expanding circular wave ring
-        phase = SonoraSplashPhase.LOGO_REVEAL
+        // Phase 2: Official SONORA Logo Reveal + expanding circular resonance ring + light sweep (130 -> 430ms)
         launch {
-            logoAlpha.animateTo(1f, tween(durationMillis = 480, easing = FastOutSlowInEasing))
+            animState.logoAlpha.animateTo(1f, tween(durationMillis = 420, easing = FastOutSlowInEasing))
         }
         launch {
-            logoScale.animateTo(1f, tween(durationMillis = 620, easing = FastOutSlowInEasing))
+            animState.logoScale.animateTo(1f, tween(durationMillis = 540, easing = FastOutSlowInEasing))
         }
         launch {
-            delay(140L)
-            ringExpansion.animateTo(1f, tween(durationMillis = 920, easing = FastOutSlowInEasing))
+            delay(110L)
+            animState.ringExpansion.animateTo(1f, tween(durationMillis = 820, easing = FastOutSlowInEasing))
         }
-        launch {
-            delay(180L)
-            lightSweep.animateTo(1.35f, tween(durationMillis = 680, easing = FastOutSlowInEasing))
+        if (!lowRam) {
+            launch {
+                delay(150L)
+                animState.lightSweep.animateTo(1.35f, tween(durationMillis = 620, easing = FastOutSlowInEasing))
+            }
         }
-        delay(320L)
+        delay(220L)
+        // Mount Home screen underneath once initial intro frames are locked in smoothly
+        latestOnPrepareHome()
+        delay(80L)
 
-        // Phase 3: Smooth Left-to-Right Audio Wave Animation
-        phase = SonoraSplashPhase.AUDIO_WAVE
+        // Phase 3: Smooth Left-to-Right Audio Wave Animation (430 -> 740ms)
         launch {
-            waveAlpha.animateTo(1f, tween(durationMillis = 260, easing = FastOutSlowInEasing))
+            animState.waveAlpha.animateTo(1f, tween(durationMillis = 240, easing = FastOutSlowInEasing))
         }
         launch {
-            waveAmplitude.animateTo(1f, tween(durationMillis = 420, easing = FastOutSlowInEasing))
+            animState.waveAmplitude.animateTo(1f, tween(durationMillis = 380, easing = FastOutSlowInEasing))
         }
         launch {
-            waveTravel.animateTo(1f, tween(durationMillis = 980, easing = LinearEasing))
+            animState.waveTravel.animateTo(1f, tween(durationMillis = 900, easing = LinearEasing))
         }
         delay(310L)
 
-        // Phase 4: Brand Reveal ("SONORA" + "A Music Experience Beyond Listening" + Developer Credit)
-        phase = SonoraSplashPhase.BRAND_REVEAL
+        // Phase 4: Brand Reveal ("SONORA" + Tagline + Developer Credit) via pure GPU layer transforms (740 -> 1520ms)
         launch {
-            letterSpacingSp.animateTo(
-                targetValue = 4.4f,
-                animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing)
-            )
+            animState.brandAlpha.animateTo(1f, tween(durationMillis = 340, easing = FastOutSlowInEasing))
         }
-        delay(220L)
-        developerCreditVisible = true
-        delay(920L)
+        launch {
+            animState.brandSlideProgress.animateTo(0f, tween(durationMillis = 420, easing = FastOutSlowInEasing))
+        }
+        delay(180L)
+        launch {
+            animState.creditAlpha.animateTo(1f, tween(durationMillis = 360, easing = FastOutSlowInEasing))
+        }
+        launch {
+            animState.creditSlideProgress.animateTo(0f, tween(durationMillis = 380, easing = FastOutSlowInEasing))
+        }
+        delay(600L)
 
-        // Phase 5: Smooth transition into live Home screen
+        // Phase 5: Smooth single-pass GPU fade & gentle scale-out directly into prepared Home screen (1520 -> 1850ms)
         glowJob.cancel()
         baselineWaveJob.cancel()
-        phase = SonoraSplashPhase.TRANSITION_HOME
-        delay(370L)
-        phase = SonoraSplashPhase.COMPLETED
+        latestOnTransitionHome()
+        val fadeJob = launch {
+            animState.overlayAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 330, easing = FastOutSlowInEasing)
+            )
+        }
+        val scaleJob = launch {
+            animState.overlayScale.animateTo(
+                targetValue = 1.035f,
+                animationSpec = tween(durationMillis = 330, easing = FastOutSlowInEasing)
+            )
+        }
+        fadeJob.join()
+        scaleJob.join()
+
+        completed = true
         latestOnFinished()
     }
 
-    if (phase == SonoraSplashPhase.COMPLETED) return
-
-    val brandVisible = reducedMotion ||
-        phase == SonoraSplashPhase.BRAND_REVEAL ||
-        phase == SonoraSplashPhase.TRANSITION_HOME
+    if (completed) return
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .graphicsLayer {
-                alpha = overlayAlpha
-                scaleX = overlayScale
-                scaleY = overlayScale
+                alpha = animState.overlayAlpha.value
+                val scale = animState.overlayScale.value
+                scaleX = scale
+                scaleY = scale
             }
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        DeepMidnightTint,
-                        AmoledBlack
-                    )
-                )
-            )
+            .background(backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
             .testTag("sonora_splash_overlay"),
@@ -260,62 +284,61 @@ fun SonoraSplashScreen(
                 verticalArrangement = Arrangement.Center
             ) {
                 SonoraLogoAnimation(
-                    logoScale = logoScale.value,
-                    logoAlpha = logoAlpha.value,
-                    ambientGlowAlpha = ambientGlowAlpha.value,
-                    ringExpansionProgress = ringExpansion.value,
-                    lightSweepProgress = lightSweep.value,
-                    reducedMotion = reducedMotion
+                    logoScaleProvider = { animState.logoScale.value },
+                    logoAlphaProvider = { animState.logoAlpha.value },
+                    ambientGlowAlphaProvider = { animState.ambientGlowAlpha.value },
+                    ringExpansionProvider = { animState.ringExpansion.value },
+                    lightSweepProvider = { animState.lightSweep.value },
+                    logoBitmap = logoBitmap,
+                    reducedMotion = reducedMotion,
+                    lowRamDevice = lowRam
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 if (!reducedMotion) {
                     SonoraWaveAnimation(
-                        visibilityAlpha = waveAlpha.value,
-                        amplitudeProgress = waveAmplitude.value,
-                        travelProgress = waveTravel.value
+                        visibilityAlphaProvider = { animState.waveAlpha.value },
+                        amplitudeProgressProvider = { animState.waveAmplitude.value },
+                        travelProgressProvider = { animState.waveTravel.value },
+                        barCount = if (lowRam) 15 else 23
                     )
                     Spacer(modifier = Modifier.height(22.dp))
                 } else {
                     Spacer(modifier = Modifier.height(14.dp))
                 }
 
-                AnimatedVisibility(
-                    visible = brandVisible,
-                    enter = if (reducedMotion) {
-                        fadeIn(snap())
-                    } else {
-                        fadeIn(animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing)) +
-                            slideInVertically(
-                                animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
-                                initialOffsetY = { it / 4 }
-                            )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = animState.brandAlpha.value
+                        val slide = animState.brandSlideProgress.value
+                        translationY = slide * brandSlideOffsetPx
+                        // Smooth subtle horizontal tightening without per-frame text relayout
+                        scaleX = 1f + (0.045f * slide)
                     }
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = stringResource(id = R.string.app_name),
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 30.sp,
-                            letterSpacing = letterSpacingSp.value.sp,
-                            color = BrandIvory,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.testTag("sonora_splash_brand_title")
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = stringResource(id = R.string.splash_brand_tagline),
-                            fontFamily = PlusJakartaFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 13.5.sp,
-                            letterSpacing = 0.6.sp,
-                            color = BrandWarmGold,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.testTag("sonora_splash_brand_subtitle")
-                        )
-                    }
+                    Text(
+                        text = stringResource(id = R.string.app_name),
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 30.sp,
+                        letterSpacing = 4.4.sp,
+                        color = BrandIvory,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.testTag("sonora_splash_brand_title")
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(id = R.string.splash_brand_tagline),
+                        fontFamily = PlusJakartaFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.5.sp,
+                        letterSpacing = 0.6.sp,
+                        color = BrandWarmGold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.testTag("sonora_splash_brand_subtitle")
+                    )
                 }
             }
 
@@ -328,63 +351,55 @@ fun SonoraSplashScreen(
                     .padding(bottom = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = developerCreditVisible,
-                    enter = if (reducedMotion) {
-                        fadeIn(snap())
-                    } else {
-                        fadeIn(animationSpec = tween(durationMillis = 440, easing = FastOutSlowInEasing)) +
-                            slideInVertically(
-                                animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-                                initialOffsetY = { it / 5 }
-                            )
-                    }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            alpha = animState.creditAlpha.value
+                            translationY = animState.creditSlideProgress.value * creditSlideOffsetPx
+                        }
+                        .testTag("splash_developer_credit")
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.testTag("splash_developer_credit")
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .width(28.dp)
-                                .height(1.dp)
-                                .clip(RoundedCornerShape(1.dp))
-                                .background(BrandWarmGold.copy(alpha = 0.36f))
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = stringResource(id = R.string.developer_credit_label),
-                            fontFamily = PlusJakartaFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.2.sp,
-                            color = BrandWarmGold.copy(alpha = 0.78f),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.testTag("splash_developer_label")
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = stringResource(id = R.string.developer_credit_name),
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.5.sp,
-                            letterSpacing = 0.8.sp,
-                            color = BrandIvory.copy(alpha = 0.94f),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.testTag("splash_developer_name")
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = stringResource(id = R.string.developer_credit_qualification),
-                            fontFamily = PlusJakartaFontFamily,
-                            fontWeight = FontWeight.Normal,
-                            fontSize = 11.5.sp,
-                            letterSpacing = 0.4.sp,
-                            color = BrandWarmGold.copy(alpha = 0.72f),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.testTag("splash_developer_qualification")
-                        )
-                    }
+                    Box(
+                        modifier = Modifier
+                            .width(28.dp)
+                            .height(1.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(BrandWarmGold.copy(alpha = 0.36f))
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(id = R.string.developer_credit_label),
+                        fontFamily = PlusJakartaFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.2.sp,
+                        color = BrandWarmGold.copy(alpha = 0.78f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.testTag("splash_developer_label")
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = stringResource(id = R.string.developer_credit_name),
+                        fontFamily = OutfitFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.5.sp,
+                        letterSpacing = 0.8.sp,
+                        color = BrandIvory.copy(alpha = 0.94f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.testTag("splash_developer_name")
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = stringResource(id = R.string.developer_credit_qualification),
+                        fontFamily = PlusJakartaFontFamily,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 11.5.sp,
+                        letterSpacing = 0.4.sp,
+                        color = BrandWarmGold.copy(alpha = 0.72f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.testTag("splash_developer_qualification")
+                    )
                 }
             }
         }

@@ -66,10 +66,12 @@ class SonoraSplashScreenTest {
         composeRule.waitForIdle()
         composeRule.mainClock.advanceTimeBy(450L)
         composeRule.waitForIdle()
+        val expectedTagline = ApplicationProvider.getApplicationContext<Context>()
+            .getString(R.string.splash_brand_tagline)
         composeRule.onNodeWithText("SONORA").assertIsDisplayed()
-        composeRule.onNodeWithText("Premium Music Experience").assertIsDisplayed()
+        composeRule.onNodeWithText(expectedTagline).assertIsDisplayed()
 
-        // Phase 5: Transition & Completion (~2s total)
+        // Phase 5: Transition & Completion (~1.85s total)
         composeRule.mainClock.advanceTimeBy(1200L)
         composeRule.waitForIdle()
         assertTrue(finished)
@@ -95,7 +97,7 @@ class SonoraSplashScreenTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("sonora_splash_overlay").assertIsDisplayed()
         composeRule.onNodeWithText("SONORA").assertIsDisplayed()
-        composeRule.onNodeWithText("Premium Music Experience").assertIsDisplayed()
+        composeRule.onNodeWithText(context.getString(R.string.splash_brand_tagline)).assertIsDisplayed()
         assertTrue(composeRule.onAllNodesWithTag("sonora_splash_waveform").fetchSemanticsNodes().isEmpty())
 
         composeRule.mainClock.advanceTimeBy(600L)

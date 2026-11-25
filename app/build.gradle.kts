@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.sonora.musica"
     minSdk = 26
     targetSdk = 36
-    versionCode = 6
-    versionName = "1.3.9"
+    versionCode = 7
+    versionName = "1.4.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

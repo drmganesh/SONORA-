@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,10 +54,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
@@ -96,6 +99,7 @@ import ui.motion.horizontalSwipeNavigation
 import ui.motion.rememberEffectiveMotionState
 import domain.home.HomeMusicMode
 import domain.video.ChannelDetailUtils
+import domain.video.FloatingPipResizeCalculator
 import domain.video.OnlineVideoChannel
 import domain.video.OnlineVideoItem
 import domain.video.VideoChannelUiState
@@ -115,7 +119,10 @@ import ui.video.openOfficialExternalUrl
 import ui.video.shareVideoLink
 
 @Composable
-fun SonoraApp(viewModel: SonoraViewModel) {
+fun SonoraApp(
+    viewModel: SonoraViewModel,
+    isIntroOverlayActive: Boolean = false
+) {
     val themeMode by viewModel.themeMode.collectAsState()
     val dynamicPalette by viewModel.dynamicPalette.collectAsState()
     val homeThemeMode by viewModel.homeThemeMode.collectAsState()
@@ -257,8 +264,10 @@ fun SonoraApp(viewModel: SonoraViewModel) {
         }
     }
 
-    LaunchedEffect(profileOnboardingState) {
-        if (profileOnboardingState != data.preferences.ProfileOnboardingState.COMPLETED) {
+    LaunchedEffect(profileOnboardingState, isIntroOverlayActive) {
+        if (isIntroOverlayActive ||
+            profileOnboardingState != data.preferences.ProfileOnboardingState.COMPLETED
+        ) {
             return@LaunchedEffect
         }
         viewModel.triggerAppUpdateLaunchFlow()
@@ -423,7 +432,7 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                         0 -> HomeScreen(
                             viewModel = viewModel,
                             colors = editorialColors,
-                            screenVisible = showBottomChrome && currentTab == 0,
+                            screenVisible = !isIntroOverlayActive && showBottomChrome && currentTab == 0,
                             onOpenSettings = { showSettingsScreen = true },
                             onNavigateToSearch = { currentTab = 1 },
                             onOpenMusicAnalytics = { showMusicAnalyticsScreen = true },
@@ -492,7 +501,9 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                     isInOnlineVideoExperience = isInOnlineVideoExperience
                 )
 
-                // 2. Persistent Floating Mini-Player (Audio or Video) + Floating Pill Bottom Navigation
+                // 2. Persistent Floating Audio Mini-Player + Floating Pill Bottom Navigation
+                // (In-app floating video PiP is mounted in a dedicated safe-area overlay layer
+                // so it can resize smoothly up to 85% screen width without recreating its TextureView.)
                 if (showBottomChrome) {
                     Column(
                         modifier = Modifier
@@ -501,17 +512,7 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                             .navigationBarsPadding(),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        if (showVideoMiniPlayer) {
-                            FloatingVideoMiniPlayer(
-                                playerState = videoPlayerState,
-                                colors = editorialColors,
-                                onExpand = { viewModel.videoController.expandVideoPlayer() },
-                                onTogglePlayPause = { viewModel.videoController.toggleVideoPlayPause() },
-                                onPlayNext = { viewModel.videoController.playNextInQueue() },
-                                onClose = { viewModel.videoController.closeVideoPlayer() },
-                                playbackProgressFlow = viewModel.videoController.playbackProgress
-                            )
-                        } else {
+                        if (!showVideoMiniPlayer) {
                             AnimatedVisibility(
                                 visible = showMusicMiniPlayer && currentSong != null,
                                 enter = if (motionState.animationsEnabled) {
@@ -610,6 +611,15 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                         onOpenAudioStudio = { showAudioStudioScreen = true },
                         onOpenFolderManagement = { showFolderManagementScreen = true },
                         onOpenDownloadManager = { showDownloadManagerScreen = true },
+                        onOpenOnlineMusic = {
+                            showSettingsScreen = false
+                            currentTab = 3
+                        },
+                        onOpenOnlineLibrary = {
+                            viewModel.setLibrarySectionMode(domain.library.LibrarySectionMode.ONLINE)
+                            showSettingsScreen = false
+                            currentTab = 2
+                        },
                         onBack = { showSettingsScreen = false }
                     )
                 }
@@ -828,27 +838,39 @@ fun SonoraApp(viewModel: SonoraViewModel) {
                             },
                             onVideoMoreClick = { videoOptionsTarget = it }
                         )
-
-                        if (showChannelVideoMiniPlayer) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .fillMaxWidth()
-                                    .navigationBarsPadding()
-                                    .padding(bottom = 10.dp)
-                            ) {
-                                FloatingVideoMiniPlayer(
-                                    playerState = videoPlayerState,
-                                    colors = editorialColors,
-                                    onExpand = { viewModel.videoController.expandVideoPlayer() },
-                                    onTogglePlayPause = { viewModel.videoController.toggleVideoPlayPause() },
-                                    onPlayNext = { viewModel.videoController.playNextInQueue() },
-                                    onClose = { viewModel.videoController.closeVideoPlayer() },
-                                    playbackProgressFlow = viewModel.videoController.playbackProgress
-                                )
-                            }
-                        }
                     }
+                }
+
+                // 12b-pip. Persistent In-App Floating PiP Video Player Overlay (Pinch-to-Resize)
+                // Single TextureView-backed overlay layered above primary tabs & Channel Detail
+                // and below full-screen VideoPlayerScreen so playback & pinched size persist
+                // seamlessly across navigation without recreating ExoPlayer or video surfaces.
+                var savedFloatingPipWidthFraction by rememberSaveable {
+                    mutableFloatStateOf(FloatingPipResizeCalculator.INITIAL_WIDTH_FRACTION)
+                }
+                val showFloatingVideoPip = showVideoMiniPlayer && (showBottomChrome || isChannelDetailOpen)
+                if (showFloatingVideoPip) {
+                    FloatingVideoMiniPlayer(
+                        playerState = videoPlayerState,
+                        colors = editorialColors,
+                        onExpand = { viewModel.videoController.expandVideoPlayer() },
+                        onTogglePlayPause = { viewModel.videoController.toggleVideoPlayPause() },
+                        onPlayNext = { viewModel.videoController.playNextInQueue() },
+                        onClose = {
+                            savedFloatingPipWidthFraction = FloatingPipResizeCalculator.INITIAL_WIDTH_FRACTION
+                            viewModel.videoController.closeVideoPlayer()
+                        },
+                        playbackProgressFlow = viewModel.videoController.playbackProgress,
+                        onAttachTextureView = { viewModel.videoController.attachVideoSurface(it) },
+                        onDetachTextureView = { viewModel.videoController.detachVideoSurface(it) },
+                        bottomInsetClearance = if (showBottomChrome && !isChannelDetailOpen) 86.dp else 12.dp,
+                        initialWidthFraction = savedFloatingPipWidthFraction,
+                        onWidthFractionChanged = { savedFloatingPipWidthFraction = it },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                    )
                 }
 
                 // 12c. Full-Screen & Portrait Online Video Player + Video Details Overlay

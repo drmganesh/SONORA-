@@ -116,6 +116,7 @@ import ui.settings.CacheManagementScreen
 import ui.settings.DynamicThemeSettingsScreen
 import ui.settings.LibraryFolderManagementScreen
 import ui.settings.MusicExperienceSettingsScreen
+import ui.settings.OnlineMusicSettingsScreen
 import ui.settings.OnlineVideoPlayerGesturesScreen
 import ui.settings.ProfileSettingsScreen
 import ui.settings.SeekbarStyleScreen
@@ -141,6 +142,8 @@ fun SettingsScreen(
     onOpenAudioStudio: () -> Unit = {},
     onOpenFolderManagement: (() -> Unit)? = null,
     onOpenDownloadManager: (() -> Unit)? = null,
+    onOpenOnlineMusic: () -> Unit = {},
+    onOpenOnlineLibrary: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -188,6 +191,7 @@ fun SettingsScreen(
     val showNotificationFormatBadge by viewModel.showNotificationFormatBadge.collectAsState()
     val onlineContentCountry by viewModel.onlineContentCountry.collectAsState()
     val onlineContentLanguage by viewModel.onlineContentLanguage.collectAsState()
+    val selectedOnlineProvider by viewModel.selectedOnlineProvider.collectAsState()
     val videoGestureSettings by viewModel.videoController.gestureSettings.collectAsState()
     val videoExperienceSettings by viewModel.videoExperienceSettings.collectAsState()
     val musicExperienceSettings by viewModel.musicExperienceSettings.collectAsState()
@@ -206,6 +210,7 @@ fun SettingsScreen(
     var showOnlineVideoPlayerGestures by remember { mutableStateOf(false) }
     var showVideoExperienceSettings by remember { mutableStateOf(false) }
     var showMusicExperienceSettings by remember { mutableStateOf(false) }
+    var showOnlineMusicSettings by remember { mutableStateOf(false) }
     var showHomeAnimationSettings by remember { mutableStateOf(false) }
     var showAmbientEffectsSettings by remember { mutableStateOf(false) }
     var showPlayerAppearanceHub by remember { mutableStateOf(false) }
@@ -1115,7 +1120,7 @@ fun SettingsScreen(
                     }
                 }
 
-                // 5. ONLINE MUSIC & REGION
+                // 5. ONLINE MUSIC (Region, Streaming Services, Discovery & Online Library)
                 item {
                     val countryName = domain.online.OnlineRegionCatalog.supportedCountries
                         .firstOrNull { it.code.equals(onlineContentCountry, ignoreCase = true) }
@@ -1123,58 +1128,22 @@ fun SettingsScreen(
                     val languageName = domain.online.OnlineRegionCatalog.supportedLanguages
                         .firstOrNull { it.code.equals(onlineContentLanguage, ignoreCase = true) }
                         ?.name ?: onlineContentLanguage
+                    val providerName = selectedOnlineProvider?.displayName ?: "YT Music"
                     ExpandableSettingsSection(
-                        title = "ONLINE MUSIC & REGION",
-                        subtitle = "$countryName ($onlineContentCountry) • $languageName ($onlineContentLanguage)",
+                        title = "ONLINE MUSIC",
+                        subtitle = "$providerName • ${onlineContentCountry.uppercase()} • ${onlineContentLanguage.uppercase()}",
                         expanded = onlineExpanded,
                         onToggle = { onlineExpanded = !onlineExpanded },
                         colors = colors
                     ) {
-                        Text(
-                            text = "Content Country",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = colors.textPrimary
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.CloudQueue,
+                            title = stringResource(id = com.example.R.string.settings_online_music_title),
+                            subtitle = "$providerName • $countryName ($onlineContentCountry) • $languageName ($onlineContentLanguage)",
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_online_music_row"),
+                            onClick = { showOnlineMusicSettings = true }
                         )
-                        Text(
-                            text = "Sets charts and discovery country without changing language",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontSize = 11.sp,
-                            color = colors.textSecondary
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        GestureOptionChipRow(
-                            options = domain.online.OnlineRegionCatalog.supportedCountries.map { it.code to "${it.name} (${it.code})" },
-                            selected = onlineContentCountry,
-                            onSelect = { viewModel.setOnlineContentCountry(it) },
-                            colors = colors
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Preferred Language",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = "Sets Accept-Language (${onlineContentLanguage.lowercase()}-${onlineContentCountry.uppercase()}) without changing country",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontSize = 11.sp,
-                            color = colors.textSecondary
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        GestureOptionChipRow(
-                            options = domain.online.OnlineRegionCatalog.supportedLanguages.map { it.code to "${it.name} (${it.code})" },
-                            selected = onlineContentLanguage,
-                            onSelect = { viewModel.setOnlineContentLanguage(it) },
-                            colors = colors
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        HorizontalDivider(color = colors.cardBorder)
-                        Spacer(modifier = Modifier.height(6.dp))
                         SettingsLinkRow(
                             icon = Icons.Rounded.AutoAwesome,
                             title = "Music Experience",
@@ -1554,6 +1523,30 @@ fun SettingsScreen(
             VideoExperienceSettingsScreen(
                 viewModel = viewModel,
                 onBack = { showVideoExperienceSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showOnlineMusicSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            OnlineMusicSettingsScreen(
+                viewModel = viewModel,
+                onOpenMusicExperience = {
+                    showOnlineMusicSettings = false
+                    showMusicExperienceSettings = true
+                },
+                onOpenOnlineLibrary = {
+                    viewModel.setLibrarySectionMode(domain.library.LibrarySectionMode.ONLINE)
+                    showOnlineMusicSettings = false
+                    onOpenOnlineLibrary()
+                },
+                onOpenOnlineMusicExplore = {
+                    showOnlineMusicSettings = false
+                    onOpenOnlineMusic()
+                },
+                onBack = { showOnlineMusicSettings = false }
             )
         }
 

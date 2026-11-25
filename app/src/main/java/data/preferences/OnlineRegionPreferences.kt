@@ -41,6 +41,7 @@ class OnlineRegionPreferences(private val context: Context) {
         val KEY_CONTENT_COUNTRY = stringPreferencesKey("key_online_content_country")
         val KEY_CONTENT_LANGUAGE = stringPreferencesKey("key_online_content_language")
         val KEY_DISCOVER_LANGUAGE = stringPreferencesKey("key_online_discover_language")
+        val KEY_SELECTED_PROVIDER = stringPreferencesKey("key_online_selected_provider")
     }
 
     private val safeData: Flow<Preferences> = context.onlineRegionDataStore.data.catch { exception ->
@@ -65,12 +66,19 @@ class OnlineRegionPreferences(private val context: Context) {
         DiscoverMusicLanguage.fromId(raw)
     }
 
+    val selectedProviderKeyFlow: Flow<String> = safeData.map { prefs ->
+        normalizeProviderKey(prefs[KEY_SELECTED_PROVIDER] ?: sonoraPrefs.selectedOnlineProviderKey)
+    }
+
     fun getInitialCountryCode(): String = normalizeCountry(sonoraPrefs.onlineContentCountry)
 
     fun getInitialLanguageCode(): String = normalizeLanguage(sonoraPrefs.onlineContentLanguage)
 
     fun getInitialDiscoverLanguage(): DiscoverMusicLanguage =
         DiscoverMusicLanguage.fromId(sonoraPrefs.discoverMusicLanguageId)
+
+    fun getInitialSelectedProviderKey(): String =
+        normalizeProviderKey(sonoraPrefs.selectedOnlineProviderKey)
 
     /**
      * Updates content country independently without modifying language preference.
@@ -113,6 +121,24 @@ class OnlineRegionPreferences(private val context: Context) {
         } catch (e: Exception) {
             Log.e(ONLINE_REGION_PREFS_TAG, "Failed persisting discover language filter", e)
         }
+    }
+
+    suspend fun setSelectedProviderKey(providerKey: String): String {
+        val clean = normalizeProviderKey(providerKey)
+        sonoraPrefs.selectedOnlineProviderKey = clean
+        try {
+            context.onlineRegionDataStore.edit { prefs ->
+                prefs[KEY_SELECTED_PROVIDER] = clean
+            }
+        } catch (e: Exception) {
+            Log.e(ONLINE_REGION_PREFS_TAG, "Failed persisting selected online provider", e)
+        }
+        return clean
+    }
+
+    private fun normalizeProviderKey(raw: String?): String {
+        val trimmed = raw?.trim().orEmpty()
+        return trimmed.ifBlank { domain.online.OnlineMusicProvider.KEY_YOUTUBE_MUSIC }
     }
 
     private fun normalizeCountry(raw: String?): String {

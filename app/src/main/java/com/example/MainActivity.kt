@@ -72,6 +72,10 @@ class MainActivity : ComponentActivity() {
 
         val restoredCompleted = savedInstanceState?.getBoolean(KEY_LAUNCH_ANIMATION_COMPLETED, false) == true
         val alreadyPlayedInSession = restoredCompleted || viewModel.hasCompletedLaunchAnimation
+        if (alreadyPlayedInSession) {
+            viewModel.hasCompletedLaunchAnimation = true
+            viewModel.onStartupIntroCompleted()
+        }
 
         // Release the native Android 12+ / compat splash immediately so Compose owns the
         // dark AMOLED launch canvas on frame 1 without duplicate splash screens or blocked startup.
@@ -88,16 +92,31 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var showSplashOverlay by rememberSaveable { mutableStateOf(!alreadyPlayedInSession) }
+            var isHomeContentMounted by rememberSaveable { mutableStateOf(alreadyPlayedInSession) }
             val reduceAnimations by viewModel.reduceAnimations.collectAsState()
 
             Box(modifier = Modifier.fillMaxSize()) {
-                SonoraApp(viewModel = viewModel)
+                if (isHomeContentMounted) {
+                    SonoraApp(
+                        viewModel = viewModel,
+                        isIntroOverlayActive = showSplashOverlay
+                    )
+                }
 
                 if (showSplashOverlay) {
                     SonoraSplashScreen(
                         appReduceAnimations = reduceAnimations,
+                        onPrepareHomeContent = {
+                            isHomeContentMounted = true
+                        },
+                        onTransitionToHome = {
+                            isHomeContentMounted = true
+                            viewModel.onStartupIntroCompleted()
+                        },
                         onAnimationFinished = {
+                            isHomeContentMounted = true
                             viewModel.hasCompletedLaunchAnimation = true
+                            viewModel.onStartupIntroCompleted()
                             showSplashOverlay = false
                         }
                     )

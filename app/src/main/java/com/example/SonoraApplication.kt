@@ -12,6 +12,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import kotlinx.coroutines.launch
 
 class SonoraApplication : Application(), ImageLoaderFactory {
 
@@ -57,12 +58,21 @@ class SonoraApplication : Application(), ImageLoaderFactory {
         }
     }
 
+    private val appStartupScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+    )
+
     override fun onCreate() {
         super.onCreate()
         instance = this
         util.SonoraCrashDiagnostics.installIfDebug(this)
+        // Pre-decode and cache the downsampled official splash logo on Dispatchers.IO before Frame 1
+        ui.splash.SplashLogoPreloader.preloadAsync(this)
         hadPreExistingInstallationDataOnProcessStart = detectExistingInstallationData(this)
-        data.online.NewPipeInitializer.ensureInitialized(this)
+        // Defer NewPipe/OkHttp construction off the main thread so cold start never stalls frame 1
+        appStartupScope.launch {
+            data.online.NewPipeInitializer.ensureInitialized(this@SonoraApplication)
+        }
         Log.i(TAG, "SONORA startup initialized (SDK=${Build.VERSION.SDK_INT}, existingInstall=$hadPreExistingInstallationDataOnProcessStart)")
         createNotificationChannel()
     }

@@ -576,7 +576,7 @@ class OnlineVideoExperienceTest {
         assertEquals(LibrarySectionMode.ONLINE_VIDEO, selectedLibMode)
 
         composeRule.onNodeWithTag("floating_video_mini_player").assertIsDisplayed()
-        composeRule.onNodeWithTag("floating_video_mini_player").performClick()
+        composeRule.onNodeWithTag("video_mini_expand").performClick()
         assertTrue(expanded)
 
         // Switching Home modes in SonoraViewModel never stops active playback unexpectedly

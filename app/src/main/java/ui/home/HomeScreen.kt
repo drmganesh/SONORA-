@@ -197,7 +197,6 @@ fun HomeScreen(
 
     val discoverSections by viewModel.discoverSectionsState.collectAsState()
     val recentlyPlayedOnline by viewModel.recentlyPlayedOnlineTracks.collectAsState()
-    val onlineProviders by viewModel.onlineProviders.collectAsState()
     val selectedOnlineProvider by viewModel.selectedOnlineProvider.collectAsState()
     val discoverMusicLanguage by viewModel.discoverMusicLanguage.collectAsState()
     val onlineCountryCode by viewModel.onlineContentCountry.collectAsState()
@@ -214,6 +213,7 @@ fun HomeScreen(
     val savedOnlineAlbumIds by viewModel.savedOnlineAlbumIds.collectAsState()
     val followedOnlineArtistIds by viewModel.followedOnlineArtistIds.collectAsState()
     val savedOnlinePlaylistUrls by viewModel.savedOnlinePlaylistUrls.collectAsState()
+    val sonoraRecommendState by viewModel.sonoraRecommendState.collectAsStateWithLifecycle()
 
     val videoHomeSections by viewModel.videoController.homeSections.collectAsStateWithLifecycle()
     val videoRecentlyWatched by viewModel.videoController.videoHistory.collectAsStateWithLifecycle()
@@ -778,11 +778,9 @@ fun HomeScreen(
                                     recentlyPlayedOnline = recentlyPlayedOnline,
                                     savedOnlineTracks = onlineSavedTracks,
                                     playlists = playlists,
-                                    providers = onlineProviders,
                                     selectedProvider = selectedOnlineProvider,
                                     discoverLanguage = discoverMusicLanguage,
                                     countryCode = onlineCountryCode,
-                                    languageCode = onlineLanguageCode,
                                     recommendationProfile = recommendationProfile,
                                     isNetworkOnline = isNetworkOnline,
                                     currentSong = currentSong,
@@ -794,10 +792,8 @@ fun HomeScreen(
                                     dailyMixAnimationStyle = dailyMixAnimationStyle,
                                     screenVisible = screenVisible,
                                     reduceAnimations = reduceAnimations,
-                                    onSelectProvider = { viewModel.selectOnlineProvider(it.key) },
                                     onSelectDiscoverLanguage = { viewModel.setDiscoverMusicLanguage(it) },
                                     onOpenRegionSheet = { showOnlineRegionSheet = true },
-                                    onRefreshAll = { viewModel.refreshOnlineDiscovery(forceRefresh = true) },
                                     onRetrySection = { viewModel.retryDiscoverSection(it) },
                                     onLoadMoreSection = { viewModel.loadMoreDiscoverSection(it) },
                                     onPlayCollection = { songs, shuffle ->
@@ -824,7 +820,22 @@ fun HomeScreen(
                                     onSwitchSoundCloudFallback = { viewModel.switchToSoundCloudFallback() },
                                     onDismissPlaybackError = { viewModel.clearPlaybackError() },
                                     onOpenPlaylistsScreen = onOpenPlaylists,
-                                    onOpenViewAllOnline = onOpenOnlineMusic,
+                                    sonoraRecommendState = sonoraRecommendState,
+                                    favoriteOnlineIds = favoriteOnlineIds,
+                                    onRefreshSonoraRecommend = { viewModel.refreshSonoraRecommendations() },
+                                    onPlayRecommendedTrack = { track, pool ->
+                                        viewModel.playRecommendedTrack(track, pool) {
+                                            onOpenNowPlaying()
+                                        }
+                                    },
+                                    onAddRecommendedToQueue = { viewModel.addOnlineTrackToQueue(it) },
+                                    onPlayRecommendedNext = { viewModel.enqueueOnlineTrackNext(it) },
+                                    onToggleLikeRecommended = {
+                                        viewModel.toggleFavorite(OnlineTrackMapper.toUnifiedSong(it))
+                                    },
+                                    onDislikeRecommended = { viewModel.dislikeRecommendedTrack(it) },
+                                    onOpenRecommendedArtist = { viewModel.openRecommendedArtist(it) },
+                                    onOpenRecommendedAlbum = { viewModel.openRecommendedAlbum(it) },
                                     hasMusicMiniPlayer = currentSong != null
                                 )
                             }

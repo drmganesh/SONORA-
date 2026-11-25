@@ -652,7 +652,9 @@ private fun DrawScope.drawFireplaceLayer(
     )
 
     // Subtle rising glowing ember particles
-    val activeEmbers = (pool.capacity * 0.55f * strength).toInt().coerceIn(8, pool.capacity)
+    if (pool.capacity <= 0) return
+    val activeEmbers = (pool.capacity * 0.55f * strength).toInt()
+        .coerceIn(minOf(8, pool.capacity), pool.capacity)
     for (i in 0 until activeEmbers) {
         val px = pool.x[i] * w
         val py = pool.y[i] * h
@@ -682,7 +684,10 @@ private fun DrawScope.drawWindLayer(
 ) {
     val w = size.width
     val h = size.height
-    val activeCount = (pool.capacity * (0.45f + plan.windParticleFactor * 0.55f)).toInt().coerceIn(8, pool.capacity)
+    if (pool.capacity <= 0) return
+    val activeCount = (pool.capacity * (0.45f + plan.windParticleFactor * 0.55f))
+        .toInt()
+        .coerceIn(minOf(8, pool.capacity), pool.capacity)
     val dirSign = if (plan.windVectorX >= 0f) 1f else -1f
     val streakColor = if (isDarkTheme) Color(0xFFD8E6F2) else Color(0xFF64748B)
     val leafColor = if (isDarkTheme) Color(0xFFA5D6A7) else Color(0xFF4CAF50)
@@ -721,9 +726,10 @@ private fun DrawScope.drawRainLayer(
 ) {
     val w = size.width
     val h = size.height
+    if (pool.capacity <= 0) return
     val activeDrops = (pool.capacity * (0.28f + plan.rainDensityFactor * 0.72f))
         .toInt()
-        .coerceIn(10, pool.capacity)
+        .coerceIn(minOf(10, pool.capacity), pool.capacity)
     val rainColor = if (isDarkTheme) Color(0xFFC8E1FF) else Color(0xFF47698A)
     val windSlantPx = plan.windVectorX * 9.5f * density
 
@@ -776,9 +782,10 @@ private fun DrawScope.drawSnowLayer(
 ) {
     val w = size.width
     val h = size.height
+    if (pool.capacity <= 0) return
     val activeFlakes = (pool.capacity * (0.35f + plan.snowDensityFactor * 0.65f))
         .toInt()
-        .coerceIn(10, pool.capacity)
+        .coerceIn(minOf(10, pool.capacity), pool.capacity)
     val flakeCore = if (isDarkTheme) Color.White else accent.copy(alpha = 0.85f)
 
     for (i in 0 until activeFlakes) {
@@ -809,7 +816,10 @@ private fun DrawScope.drawClearNightStars(
 ) {
     val w = size.width
     val h = size.height
-    val starCount = (pool.capacity / 2).coerceIn(10, 30)
+    if (pool.capacity <= 0) return
+    val maxStars = minOf(30, pool.capacity)
+    val minStars = minOf(10, maxStars)
+    val starCount = (pool.capacity / 2).coerceIn(minStars, maxStars)
     for (i in 0 until starCount) {
         // Keep stars gracefully in upper 58% sky zone
         val sx = pool.x[i] * w
