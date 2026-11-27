@@ -2,10 +2,9 @@ package ui.home
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -25,7 +24,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.LibraryMusic
@@ -38,10 +36,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -52,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraMotionSpecs
 import ui.motion.rememberMotionAwareHaptic
 import ui.theme.EditorialColors
 
@@ -69,7 +68,8 @@ enum class EditorialNavTab(
 
 /**
  * Floating pill-shaped 4-destination Bottom Navigation Bar (Home, Search, Library, Online)
- * with pastel active indicator pill and subtle drop shadow.
+ * with pastel active indicator pill, single-pass elevation (no duplicate shadow overdraw),
+ * and motion-system-aligned selection transitions.
  */
 @Composable
 fun FloatingBottomNavigation(
@@ -78,9 +78,11 @@ fun FloatingBottomNavigation(
     onSelectTab: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val pillShape = RoundedCornerShape(36.dp)
+    val pillShape = remember { RoundedCornerShape(36.dp) }
+    val itemPillShape = remember { RoundedCornerShape(28.dp) }
     val motionState = LocalEffectiveMotionState.current
     val triggerHaptic = rememberMotionAwareHaptic()
+    val labelDuration = motionState.durationMillis(SonoraMotionSpecs.SELECTION_MS, essential = true)
 
     Box(
         modifier = modifier
@@ -91,11 +93,10 @@ fun FloatingBottomNavigation(
         Surface(
             shape = pillShape,
             color = colors.floatingNavBackground.copy(alpha = 0.96f),
-            shadowElevation = 16.dp,
+            shadowElevation = 10.dp,
             modifier = Modifier
                 .widthIn(max = 460.dp)
                 .fillMaxWidth()
-                .shadow(18.dp, pillShape, ambientColor = colors.shadowColor, spotColor = colors.shadowColor)
                 .border(0.75.dp, colors.cardBorder.copy(alpha = 0.85f), pillShape)
                 .testTag("floating_bottom_navigation")
         ) {
@@ -110,32 +111,25 @@ fun FloatingBottomNavigation(
                     val isSelected = selectedIndex == tab.index
                     val pillColor by animateColorAsState(
                         targetValue = if (isSelected) colors.floatingNavIndicator else Color.Transparent,
-                        animationSpec = if (!motionState.animationsEnabled) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+                        animationSpec = SonoraMotionSpecs.colorSpec(motionState, SonoraMotionSpecs.SELECTION_MS),
                         label = "nav_pill_${tab.label}"
                     )
                     val contentTint by animateColorAsState(
                         targetValue = if (isSelected) colors.floatingNavActiveTint else colors.floatingNavInactiveTint,
-                        animationSpec = if (!motionState.animationsEnabled) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+                        animationSpec = SonoraMotionSpecs.colorSpec(motionState, SonoraMotionSpecs.SELECTION_MS),
                         label = "nav_tint_${tab.label}"
                     )
-                    val iconScale by animateFloatAsState(
-                        targetValue = if (isSelected && motionState.animationsEnabled) 1.12f else 1f,
-                        animationSpec = if (!motionState.animationsEnabled) {
-                            snap()
-                        } else {
-                            spring(
-                                dampingRatio = motionState.config.intensity.springDampingRatio,
-                                stiffness = motionState.config.intensity.springStiffness
-                            )
-                        },
+                    val iconScale = animateFloatAsState(
+                        targetValue = if (isSelected && motionState.essentialFeedbackEnabled) 1.10f else 1f,
+                        animationSpec = SonoraMotionSpecs.buttonScaleSpec(motionState),
                         label = "nav_icon_scale_${tab.label}"
                     )
 
                     Box(
                         modifier = Modifier
                             .height(50.dp)
-                            .clip(RoundedCornerShape(28.dp))
-                            .background(pillColor, RoundedCornerShape(28.dp))
+                            .clip(itemPillShape)
+                            .background(pillColor, itemPillShape)
                             .clickable {
                                 if (!isSelected) triggerHaptic(HapticFeedbackType.TextHandleMove)
                                 onSelectTab(tab.index)
@@ -155,14 +149,25 @@ fun FloatingBottomNavigation(
                                 modifier = Modifier
                                     .size(21.dp)
                                     .graphicsLayer {
-                                        scaleX = iconScale
-                                        scaleY = iconScale
+                                        val s = iconScale.value
+                                        scaleX = s
+                                        scaleY = s
                                     }
                             )
                             AnimatedVisibility(
                                 visible = isSelected,
-                                enter = fadeIn() + expandHorizontally(),
-                                exit = fadeOut() + shrinkHorizontally()
+                                enter = if (!motionState.essentialFeedbackEnabled || labelDuration == 0) {
+                                    fadeIn(snap())
+                                } else {
+                                    fadeIn(tween(labelDuration, easing = SonoraMotionSpecs.EmphasizedDecelerate)) +
+                                        expandHorizontally(tween(labelDuration, easing = SonoraMotionSpecs.EmphasizedDecelerate))
+                                },
+                                exit = if (!motionState.essentialFeedbackEnabled || labelDuration == 0) {
+                                    fadeOut(snap())
+                                } else {
+                                    fadeOut(tween((labelDuration * 0.8f).toInt().coerceAtLeast(90), easing = SonoraMotionSpecs.EmphasizedAccelerate)) +
+                                        shrinkHorizontally(tween((labelDuration * 0.85f).toInt().coerceAtLeast(100), easing = SonoraMotionSpecs.EmphasizedAccelerate))
+                                }
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Spacer(modifier = Modifier.width(6.dp))

@@ -512,7 +512,7 @@ fun OnlineMusicSettingsScreen(
                                                 "Refreshed for ${selectedProvider?.displayName ?: "YT Music"} ($countryCode • ${languageCode.uppercase()})"
                                             readySectionsCount > 0 ->
                                                 "$readySectionsCount discovery sections active • ${selectedProvider?.displayName ?: "YT Music"}"
-                                            else -> "Reload charts, trending songs & Sonora Recommend"
+                                            else -> "Reload charts, trending songs & ${domain.branding.AppBranding.RECOMMEND_NAME}"
                                         }
                                         Text(
                                             text = statusText,
@@ -563,7 +563,7 @@ fun OnlineMusicSettingsScreen(
 
                         OnlineSettingsSwitchRow(
                             title = "Music Recommendations",
-                            subtitle = "Enable personalized mixes, Sonora Recommend & regional discovery",
+                            subtitle = "Enable personalized mixes, ${domain.branding.AppBranding.RECOMMEND_NAME} & regional discovery",
                             checked = musicSettings.musicRecommendationsEnabled,
                             onCheckedChange = { viewModel.setMusicRecommendationsEnabled(it) },
                             colors = colors,

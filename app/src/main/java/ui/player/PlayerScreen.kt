@@ -19,8 +19,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -39,6 +41,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -343,6 +346,16 @@ fun PlayerScreen(
         }
     }
 
+    val nowPlayingSongRadioAction = remember(songRadioSession.isActive) {
+        NowPlayingSongRadioAction(
+            isRadioActive = songRadioSession.isActive,
+            onOpenSongRadio = {
+                viewModel.loadRecommendationsForCurrentSong(forceRefresh = false)
+                showSongRadioSheet = true
+            }
+        )
+    }
+
     val seekCapability = remember(playbackInfo.isSeekable, playbackInfo.isLiveStream) {
         ui.player.seekbar.PlaybackSeekCapability(
             isSeekable = playbackInfo.isSeekable,
@@ -355,6 +368,7 @@ fun PlayerScreen(
         LocalNowPlayingDownloadAction provides nowPlayingDownloadAction,
         LocalNowPlayingOnlineLibraryAction provides nowPlayingOnlineLibraryAction,
         LocalNowPlayingStopAction provides { viewModel.stopPlayback() },
+        LocalNowPlayingSongRadioAction provides nowPlayingSongRadioAction,
         ui.player.seekbar.LocalPlaybackSeekCapability provides seekCapability
     ) {
     Box(
@@ -627,7 +641,6 @@ fun PlayerScreen(
                 playbackSpeed = playbackSpeed,
                 isOnlineTrack = currentSong?.isOnline == true,
                 isDownloaded = isCurrentDownloaded,
-                isRadioActive = songRadioSession.isActive,
                 onDownloadTrack = { currentSong?.let { viewModel.requestDownloadSong(it) } },
                 onOpenOutputDevice = { showOutputDeviceSheet = true },
                 onCycleSpeed = {
@@ -636,10 +649,6 @@ fun PlayerScreen(
                     viewModel.setPlaybackSpeed(next)
                 },
                 onOpenStreamQuality = { showQualitySelectorSheet = true },
-                onOpenSongRadio = {
-                    viewModel.loadRecommendationsForCurrentSong(forceRefresh = false)
-                    showSongRadioSheet = true
-                },
                 onOpenLyrics = openLyricsAction,
                 onOpenEqualizer = openEqualizerAction,
                 onOpenAudioStudio = openAudioStudioAction,
@@ -1225,12 +1234,10 @@ private fun PlayerUtilityStrip(
     playbackSpeed: Float,
     isOnlineTrack: Boolean,
     isDownloaded: Boolean,
-    isRadioActive: Boolean,
     onDownloadTrack: () -> Unit,
     onOpenOutputDevice: () -> Unit,
     onCycleSpeed: () -> Unit,
     onOpenStreamQuality: () -> Unit,
-    onOpenSongRadio: () -> Unit,
     onOpenLyrics: () -> Unit,
     onOpenEqualizer: () -> Unit,
     onOpenAudioStudio: () -> Unit,
@@ -1269,136 +1276,150 @@ private fun PlayerUtilityStrip(
             border = BorderStroke(1.dp, colors.cardBorder),
             tonalElevation = 2.dp
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier
-                        .heightIn(min = 48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onOpenOutputDevice)
-                        .padding(horizontal = 8.dp)
-                        .testTag("player_output_device_button"),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Headphones, contentDescription = "Audio Output Device", tint = colors.accentStrong, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = connectedDevice.take(12),
-                        fontFamily = PlusJakartaFontFamily,
-                        color = colors.textPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+            val fontScale = LocalDensity.current.fontScale
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                val baseRequiredWidth = if (isOnlineTrack) 446.dp else 350.dp
+                val needsHorizontalScroll = maxWidth < (baseRequiredWidth * fontScale.coerceAtLeast(1f))
+                val deviceMaxWidth = when {
+                    maxWidth < 340.dp -> 84.dp
+                    maxWidth < 390.dp -> 104.dp
+                    else -> 132.dp
                 }
+                val rowScrollModifier = if (needsHorizontalScroll) {
+                    Modifier.horizontalScroll(rememberScrollState())
+                } else {
+                    Modifier.fillMaxWidth()
+                }
+                val buttonWidth = if (maxWidth < 360.dp && !needsHorizontalScroll) 44.dp else 48.dp
 
                 Row(
-                    modifier = Modifier
-                        .heightIn(min = 48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onCycleSpeed)
-                        .padding(horizontal = 8.dp)
-                        .testTag("player_speed_button"),
+                    modifier = rowScrollModifier
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = if (needsHorizontalScroll) Arrangement.spacedBy(2.dp) else Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Speed, contentDescription = "Playback Speed", tint = colors.accentStrong, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${String.format(java.util.Locale.US, "%.2g", playbackSpeed)}x",
-                        fontFamily = PlusJakartaFontFamily,
-                        color = colors.textPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                IconButton(
-                    onClick = onOpenLyrics,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("player_utility_lyrics_button")
-                ) {
-                    Icon(Icons.Default.Lyrics, contentDescription = "Full-Screen Lyrics", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
-                }
-
-                IconButton(
-                    onClick = onOpenEqualizer,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("player_eq_button")
-                ) {
-                    Icon(Icons.Default.GraphicEq, contentDescription = "Equalizer", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
-                }
-
-                IconButton(
-                    onClick = onOpenAudioStudio,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("player_studio_button")
-                ) {
-                    Icon(Icons.Default.SpatialAudio, contentDescription = "Audio Effects Studio", tint = colors.textPrimary, modifier = Modifier.size(18.dp))
-                }
-
-                if (isOnlineTrack) {
-                    IconButton(
-                        onClick = onDownloadTrack,
+                    Row(
                         modifier = Modifier
-                            .size(48.dp)
-                            .testTag("player_download_button")
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable(onClick = onOpenOutputDevice)
+                            .padding(horizontal = 8.dp)
+                            .testTag("player_output_device_button"),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            if (isDownloaded) Icons.Default.DownloadDone else Icons.Default.Download,
-                            contentDescription = if (isDownloaded) "Downloaded Offline" else "Download Track",
-                            tint = colors.accentStrong,
-                            modifier = Modifier.size(18.dp)
+                        Icon(Icons.Default.Headphones, contentDescription = "Audio Output Device", tint = colors.accentStrong, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = connectedDevice,
+                            fontFamily = PlusJakartaFontFamily,
+                            color = colors.textPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = deviceMaxWidth)
                         )
                     }
-                    IconButton(
-                        onClick = onOpenStreamQuality,
+
+                    Row(
                         modifier = Modifier
-                            .size(48.dp)
-                            .testTag("player_stream_quality_button")
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable(onClick = onCycleSpeed)
+                            .padding(horizontal = 8.dp)
+                            .testTag("player_speed_button"),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.HighQuality, contentDescription = "Stream Quality", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Speed, contentDescription = "Playback Speed", tint = colors.accentStrong, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${String.format(java.util.Locale.US, "%.2g", playbackSpeed)}x",
+                            fontFamily = PlusJakartaFontFamily,
+                            color = colors.textPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
-                }
 
-                IconButton(
-                    onClick = onOpenSongRadio,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("player_song_radio_button")
-                ) {
-                    Icon(
-                        Icons.Default.Radio,
-                        contentDescription = if (isRadioActive) "Song Radio Active" else "Start Song Radio",
-                        tint = if (isRadioActive) colors.accentStrong else colors.textPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                    IconButton(
+                        onClick = onOpenLyrics,
+                        modifier = Modifier
+                            .width(buttonWidth)
+                            .height(48.dp)
+                            .testTag("player_utility_lyrics_button")
+                    ) {
+                        Icon(Icons.Default.Lyrics, contentDescription = "Full-Screen Lyrics", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
+                    }
 
-                IconButton(
-                    onClick = onToggleFocusMode,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("player_focus_mode_button")
-                ) {
-                    Icon(Icons.Default.CenterFocusStrong, contentDescription = "Artwork Focus Mode", tint = colors.textPrimary, modifier = Modifier.size(18.dp))
-                }
+                    IconButton(
+                        onClick = onOpenEqualizer,
+                        modifier = Modifier
+                            .width(buttonWidth)
+                            .height(48.dp)
+                            .testTag("player_eq_button")
+                    ) {
+                        Icon(Icons.Default.GraphicEq, contentDescription = "Equalizer", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
+                    }
 
-                IconButton(
-                    onClick = onOpenQueue,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("player_queue_drawer_button")
-                ) {
-                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Open Queue", tint = colors.accentStrong, modifier = Modifier.size(20.dp))
+                    IconButton(
+                        onClick = onOpenAudioStudio,
+                        modifier = Modifier
+                            .width(buttonWidth)
+                            .height(48.dp)
+                            .testTag("player_studio_button")
+                    ) {
+                        Icon(Icons.Default.SpatialAudio, contentDescription = "Audio Effects Studio", tint = colors.textPrimary, modifier = Modifier.size(18.dp))
+                    }
+
+                    if (isOnlineTrack) {
+                        IconButton(
+                            onClick = onDownloadTrack,
+                            modifier = Modifier
+                                .width(buttonWidth)
+                                .height(48.dp)
+                                .testTag("player_download_button")
+                        ) {
+                            Icon(
+                                if (isDownloaded) Icons.Default.DownloadDone else Icons.Default.Download,
+                                contentDescription = if (isDownloaded) "Downloaded Offline" else "Download Track",
+                                tint = colors.accentStrong,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = onOpenStreamQuality,
+                            modifier = Modifier
+                                .width(buttonWidth)
+                                .height(48.dp)
+                                .testTag("player_stream_quality_button")
+                        ) {
+                            Icon(Icons.Default.HighQuality, contentDescription = "Stream Quality", tint = colors.accentStrong, modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onToggleFocusMode,
+                        modifier = Modifier
+                            .width(buttonWidth)
+                            .height(48.dp)
+                            .testTag("player_focus_mode_button")
+                    ) {
+                        Icon(Icons.Default.CenterFocusStrong, contentDescription = "Artwork Focus Mode", tint = colors.textPrimary, modifier = Modifier.size(18.dp))
+                    }
+
+                    IconButton(
+                        onClick = onOpenQueue,
+                        modifier = Modifier
+                            .width(buttonWidth)
+                            .height(48.dp)
+                            .testTag("player_queue_drawer_button")
+                    ) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Open Queue", tint = colors.accentStrong, modifier = Modifier.size(20.dp))
+                    }
                 }
             }
         }

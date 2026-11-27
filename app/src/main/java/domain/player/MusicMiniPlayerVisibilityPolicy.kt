@@ -7,12 +7,15 @@ import domain.library.LibrarySectionMode
 
 enum class MiniPlayerVisualState {
     EXPANDED_BAR,
+    CIRCULAR_FLOATING,
+    DISMISSED,
     HIDDEN
 }
 
 /**
  * Single source of truth governing music mini-player visibility,
- * Online Video isolation, and dynamic bottom spacing across SONORA.
+ * two-stage circular collapse / dismissal, Online Video isolation,
+ * and dynamic bottom spacing across SONORA.
  */
 object MusicMiniPlayerVisibilityPolicy {
 
@@ -41,13 +44,19 @@ object MusicMiniPlayerVisibilityPolicy {
     /**
      * Resolves the active visual representation of the music mini player:
      * - [MiniPlayerVisualState.HIDDEN] when no track is active or inside Online Video mode.
-     * - [MiniPlayerVisualState.EXPANDED_BAR] whenever a music track is active outside Online Video mode.
+     * - [MiniPlayerVisualState.DISMISSED] when the user dismissed the mini-player UI (playback stays active).
+     * - [MiniPlayerVisualState.CIRCULAR_FLOATING] when collapsed to Stage 1 floating circular mode.
+     * - [MiniPlayerVisualState.EXPANDED_BAR] whenever a music track is active in standard bar mode.
      */
     fun resolveVisualState(
         hasCurrentSong: Boolean,
-        isInOnlineVideoExperience: Boolean
+        isInOnlineVideoExperience: Boolean,
+        isCircularCollapsed: Boolean = false,
+        isDismissedByUser: Boolean = false
     ): MiniPlayerVisualState {
         if (!hasCurrentSong || isInOnlineVideoExperience) return MiniPlayerVisualState.HIDDEN
+        if (isDismissedByUser) return MiniPlayerVisualState.DISMISSED
+        if (isCircularCollapsed) return MiniPlayerVisualState.CIRCULAR_FLOATING
         return MiniPlayerVisualState.EXPANDED_BAR
     }
 
@@ -55,14 +64,19 @@ object MusicMiniPlayerVisibilityPolicy {
      * The standard music mini player bar is shown ONLY when:
      * 1. A music track is active ([hasCurrentSong])
      * 2. The user is NOT in any Online Video experience ([isInOnlineVideoExperience] == false)
+     * 3. The user has not collapsed it into circular mode or dismissed its UI.
      */
     fun shouldShowMusicMiniPlayer(
         hasCurrentSong: Boolean,
-        isInOnlineVideoExperience: Boolean
+        isInOnlineVideoExperience: Boolean,
+        isCircularCollapsed: Boolean = false,
+        isDismissedByUser: Boolean = false
     ): Boolean {
         return resolveVisualState(
             hasCurrentSong = hasCurrentSong,
-            isInOnlineVideoExperience = isInOnlineVideoExperience
+            isInOnlineVideoExperience = isInOnlineVideoExperience,
+            isCircularCollapsed = isCircularCollapsed,
+            isDismissedByUser = isDismissedByUser
         ) == MiniPlayerVisualState.EXPANDED_BAR
     }
 

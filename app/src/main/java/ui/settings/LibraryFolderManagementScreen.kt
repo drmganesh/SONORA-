@@ -355,7 +355,7 @@ fun LibraryFolderManagementScreen(
                             Spacer(modifier = Modifier.height(10.dp))
 
                             Text(
-                                text = "When enabled, SONORA shows audio files exclusively from the allowed directories below and their subfolders.",
+                                text = "When enabled, ${domain.branding.AppBranding.APP_NAME} shows audio files exclusively from the allowed directories below and their subfolders.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 lineHeight = 17.sp,

@@ -316,7 +316,7 @@ fun AmbientEffectsSettingsContent(
                                     }
                                 }
                                 Text(
-                                    text = "SONORA Music Home",
+                                    text = "${domain.branding.AppBranding.APP_NAME} Music Home",
                                     fontFamily = OutfitFontFamily,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 18.sp,

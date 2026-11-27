@@ -198,7 +198,7 @@ fun ProfileSettingsScreen(
                         color = colors.textPrimary
                     )
                     Text(
-                        text = "Local SONORA identity & avatar",
+                        text = "Local ${domain.branding.AppBranding.APP_NAME} identity & avatar",
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
                         color = colors.textSecondary
@@ -271,7 +271,7 @@ fun ProfileSettingsScreen(
                                 modifier = Modifier.testTag("profile_settings_current_name")
                             )
                             Text(
-                                text = if (userProfile.hasCustomPhoto) "Custom profile photo" else "Default SONORA avatar",
+                                text = if (userProfile.hasCustomPhoto) "Custom profile photo" else "Default ${domain.branding.AppBranding.APP_NAME} avatar",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 color = colors.textSecondary,
@@ -341,7 +341,7 @@ fun ProfileSettingsScreen(
                                 OutlinedButton(
                                     onClick = {
                                         onRemoveProfilePhoto()
-                                        statusMessage = "Default SONORA avatar restored"
+                                        statusMessage = "Default ${domain.branding.AppBranding.APP_NAME} avatar restored"
                                     },
                                     shape = RoundedCornerShape(16.dp),
                                     border = BorderStroke(1.dp, colors.cardBorder),
@@ -417,7 +417,7 @@ fun ProfileSettingsScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = nameError ?: "Shown across your SONORA home & profile",
+                                        text = nameError ?: "Shown across your ${domain.branding.AppBranding.APP_NAME} home & profile",
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 11.5.sp,
                                         color = if (nameError != null) MaterialTheme.colorScheme.error else colors.textSecondary,
@@ -502,7 +502,7 @@ fun ProfileSettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Your profile name and photo are stored privately on this device only. SONORA never requires login, email, phone number, or cloud sync.",
+                            text = "Your profile name and photo are stored privately on this device only. ${domain.branding.AppBranding.APP_NAME} never requires login, email, phone number, or cloud sync.",
                             fontFamily = PlusJakartaFontFamily,
                             fontSize = 12.sp,
                             lineHeight = 18.sp,
@@ -556,7 +556,7 @@ fun ProfileSettingsScreen(
             },
             text = {
                 Text(
-                    text = "This removes your saved profile name and custom profile photo from this device and restores the default SONORA avatar. Your music library, playlists, and downloads are not affected.",
+                    text = "This removes your saved profile name and custom profile photo from this device and restores the default ${domain.branding.AppBranding.APP_NAME} avatar. Your music library, playlists, and downloads are not affected.",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,

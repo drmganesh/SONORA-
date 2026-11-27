@@ -1109,7 +1109,7 @@ fun CinematicPlayer(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = song?.artist ?: "SONORA Soundstage",
+                    text = song?.artist ?: "${domain.branding.AppBranding.APP_NAME} Soundstage",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 13.sp,
                     letterSpacing = 0.8.sp,

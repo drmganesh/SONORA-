@@ -144,7 +144,7 @@ fun MotionGesturesSettingsScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 48.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                if (motionState.systemAnimatorScale <= 0.01f) {
+                if (motionState.systemAnimatorScale <= 0.01f || motionState.isPowerSaveMode) {
                     item {
                         Surface(
                             shape = RoundedCornerShape(18.dp),
@@ -163,7 +163,11 @@ fun MotionGesturesSettingsScreen(
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "System Reduce Motion is enabled. SONORA automatically keeps transitions instant to match your device accessibility settings.",
+                                    text = if (motionState.systemAnimatorScale <= 0.01f) {
+                                        "System Reduce Motion is enabled. ${domain.branding.AppBranding.APP_NAME} automatically keeps transitions instant to match your device accessibility settings."
+                                    } else {
+                                        "Battery Saver is active. ${domain.branding.AppBranding.APP_NAME} automatically shortens transitions and pauses parallax & heavy ambient particles."
+                                    },
                                     fontFamily = PlusJakartaFontFamily,
                                     fontSize = 12.sp,
                                     lineHeight = 17.sp,
@@ -171,6 +175,26 @@ fun MotionGesturesSettingsScreen(
                                 )
                             }
                         }
+                    }
+                }
+
+                // Motion Effects Preset (Full / Reduced / Minimal Motion)
+                item {
+                    MotionSectionCard(
+                        title = "MOTION EFFECTS",
+                        subtitle = motionConfig.motionEffectsLevel.subtitle,
+                        colors = colors
+                    ) {
+                        MotionOptionGrid(
+                            items = domain.motion.MotionEffectsLevel.entries.map { it to it.label },
+                            selected = motionConfig.motionEffectsLevel,
+                            tagPrefix = "motion_effects_level",
+                            onSelect = { level ->
+                                triggerHaptic(HapticFeedbackType.TextHandleMove)
+                                viewModel.setMotionEffectsLevel(level)
+                            },
+                            colors = colors
+                        )
                     }
                 }
 

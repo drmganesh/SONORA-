@@ -92,7 +92,7 @@ fun OnlineSearchScreen(
     val qualityPreference by viewModel.onlineQualityPreference.collectAsState()
     val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
     val savedOnlineTracks by viewModel.onlineSavedTracks.collectAsState()
     val allOnlineTracks by viewModel.allOnlineTracks.collectAsState()
     val collectionState by viewModel.onlineCollectionState.collectAsState()
@@ -518,7 +518,7 @@ fun OnlineSearchScreen(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "Type a song, artist, album, or playlist and press Search on your keyboard to stream through SONORA's audio engine.",
+                                        text = "Type a song, artist, album, or playlist and press Search on your keyboard to stream through ${domain.branding.AppBranding.APP_NAME}'s audio engine.",
                                         fontFamily = PlusJakartaFontFamily,
                                         fontSize = 13.sp,
                                         color = colors.textSecondary,

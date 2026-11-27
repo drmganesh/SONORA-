@@ -7,8 +7,12 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="sonora_splash_background">#FF000000</color>
-    <color name="sonora_icon_background">#FF0D1B26</color>
-    <color name="sonora_gold_primary">#FFFDDD6E</color>
+    <color name="sonora_splash_background">#FF050B14</color>
+    <color name="sonora_icon_background">#FF07111E</color>
+    <color name="sonora_gold_primary">#FFFFC933</color>
     <color name="sonora_warm_ivory">#FFFFF6DE</color>
+    <color name="mayur_splash_background">#FF050B14</color>
+    <color name="mayur_icon_background">#FF07111E</color>
+    <color name="mayur_gold_primary">#FFFFC933</color>
+    <color name="mayur_amber_accent">#FFE69500</color>
 </resources>

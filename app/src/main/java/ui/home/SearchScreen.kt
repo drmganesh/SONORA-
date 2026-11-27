@@ -105,7 +105,7 @@ fun SearchScreen(
     val playlists by viewModel.playlists.collectAsState()
     val recentSearches by viewModel.recentSearches.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
 
     val onlineProviders by viewModel.onlineProviders.collectAsState()
     val selectedOnlineProvider by viewModel.selectedOnlineProvider.collectAsState()

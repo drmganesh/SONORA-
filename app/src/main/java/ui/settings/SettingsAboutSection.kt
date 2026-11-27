@@ -135,16 +135,30 @@ fun SettingsAboutContent(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 2. Application Name: SONORA
+        // 2. Application Name: MAYUR
         Text(
             text = stringResource(id = R.string.app_name),
             fontFamily = OutfitFontFamily,
             fontWeight = FontWeight.ExtraBold,
             fontSize = 22.sp,
-            letterSpacing = 1.2.sp,
+            letterSpacing = 1.6.sp,
             color = colors.textPrimary,
             textAlign = TextAlign.Center,
             modifier = Modifier.testTag("about_app_name")
+        )
+
+        Spacer(modifier = Modifier.height(3.dp))
+
+        // 2b. Official Tagline: Where Sound Becomes Art.
+        Text(
+            text = stringResource(id = R.string.splash_brand_tagline),
+            fontFamily = PlusJakartaFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp,
+            letterSpacing = 0.4.sp,
+            color = colors.accentStrong,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.testTag("about_app_tagline")
         )
 
         Spacer(modifier = Modifier.height(2.dp))
@@ -154,7 +168,7 @@ fun SettingsAboutContent(
             text = stringResource(id = R.string.about_app_description),
             fontFamily = PlusJakartaFontFamily,
             fontWeight = FontWeight.Medium,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             color = colors.textSecondary,
             textAlign = TextAlign.Center,
             modifier = Modifier.testTag("about_app_description")
@@ -202,7 +216,7 @@ fun SettingsAboutContent(
 
         // 6. Copyright Information
         Text(
-            text = "© $currentYear SONORA • All rights reserved",
+            text = domain.branding.AppBranding.copyrightNotice(currentYear),
             fontFamily = PlusJakartaFontFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 11.5.sp,
@@ -231,7 +245,7 @@ private fun SonoraAboutAppLogo(
     val context = LocalContext.current
     val logoResId = remember(context) {
         runCatching {
-            val id = R.drawable.sonora_official_logo
+            val id = domain.branding.AppBranding.LOGO_DRAWABLE_RES
             if (id != 0) id else null
         }.getOrNull()
     }

@@ -66,7 +66,8 @@ class SettingsAboutSectionTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("about_app_logo").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("about_app_name").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("SONORA").assertIsDisplayed()
+        composeRule.onNodeWithText("MAYUR").assertIsDisplayed()
+        composeRule.onNodeWithText("Where Sound Becomes Art.").assertIsDisplayed()
         composeRule.onNodeWithText("Premium Music Player").assertIsDisplayed()
         composeRule.onNodeWithText(versionInfo.displayLabel).assertIsDisplayed()
 

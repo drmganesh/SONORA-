@@ -5,8 +5,10 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -16,22 +18,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -40,13 +41,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.Song
 import com.example.ui.theme.SonoraCardBorder
-import com.example.ui.theme.SonoraCyan
-import com.example.ui.theme.SonoraGold
 import com.example.ui.theme.SonoraObsidian
 import com.example.ui.theme.SonoraSurfaceDark
 import com.example.util.AlbumArtHelper
 import data.artwork.AlbumArtworkQualityManager
 import data.artwork.ArtworkDisplayRole
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.SonoraMotionSpecs
 
 @Composable
 fun ArtworkAlbumView(
@@ -59,20 +60,54 @@ fun ArtworkAlbumView(
 ) {
     val context = LocalContext.current
     val qualityMode = AlbumArtworkQualityManager.currentQualityMode
+    val motionState = LocalEffectiveMotionState.current
 
-    val artworkBitmap by produceState<Bitmap?>(
-        initialValue = null,
-        key1 = song?.id,
-        key2 = "${song?.albumId}_${artworkRole.name}_${qualityMode.name}"
-    ) {
-        value = AlbumArtHelper.loadAlbumArt(context, song, artworkRole)
+    // Synchronously seed from in-memory LruCache to prevent 1-2 frame blank placeholder flashes
+    // during LazyColumn item recycling and track switching.
+    val initialCached = remember(song?.id, song?.albumId, song?.artworkUrl, artworkRole, qualityMode) {
+        AlbumArtHelper.getCachedBitmap(song, artworkRole)
     }
 
-    val palette = ui.theme.LocalDynamicColorPalette.current
+    val artworkBitmap by produceState<Bitmap?>(
+        initialValue = initialCached,
+        key1 = song?.id,
+        key2 = "${song?.albumId}_${song?.artworkUrl.orEmpty()}_${artworkRole.name}_${qualityMode.name}"
+    ) {
+        val current = AlbumArtHelper.getCachedBitmap(song, artworkRole)
+        if (current != null) {
+            value = current
+        } else {
+            value = null
+            value = AlbumArtHelper.loadAlbumArt(context, song, artworkRole)
+        }
+    }
 
-    val (rotation, breathingScale, glowAlpha) = if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "artwork_anim")
-        val rot by infiniteTransition.animateFloat(
+    // Cache ImageBitmap wrapper so animations never re-allocate it on draw/recompose
+    val imageBitmap = remember(artworkBitmap) { artworkBitmap?.asImageBitmap() }
+
+    // Smooth fade-in only when an uncached bitmap finishes decoding asynchronously
+    val artworkAlpha = animateFloatAsState(
+        targetValue = if (imageBitmap != null) 1f else 0f,
+        animationSpec = if (initialCached != null || !motionState.essentialFeedbackEnabled) {
+            snap()
+        } else {
+            tween(
+                durationMillis = motionState.durationMillis(SonoraMotionSpecs.ARTWORK_CROSSFADE_MS, essential = true),
+                easing = SonoraMotionSpecs.EmphasizedDecelerate
+            )
+        },
+        label = "artwork_fade_in"
+    )
+
+    val palette = ui.theme.LocalDynamicColorPalette.current
+    val shouldSpin = isVinylRotating && isPlaying && motionState.decorativeMotionEnabled
+    val shouldBreathe = isPlaying && artworkRole == ArtworkDisplayRole.NOW_PLAYING && motionState.decorativeMotionEnabled
+
+    // Keep infinite animation state as State<Float> and read strictly inside graphicsLayer
+    // (draw phase) so ArtworkAlbumView never recomposes at 60-120fps.
+    val rotationState: State<Float> = if (shouldSpin) {
+        val infiniteTransition = rememberInfiniteTransition(label = "artwork_spin")
+        infiniteTransition.animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(
@@ -81,36 +116,44 @@ fun ArtworkAlbumView(
             ),
             label = "rotation"
         )
-        val scale by infiniteTransition.animateFloat(
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
+
+    val breathingScaleState: State<Float> = if (shouldBreathe) {
+        val infiniteTransition = rememberInfiniteTransition(label = "artwork_breathe")
+        infiniteTransition.animateFloat(
             initialValue = 1f,
-            targetValue = 1.02f,
+            targetValue = 1.018f,
             animationSpec = infiniteRepeatable(
                 animation = tween(3200, easing = FastOutSlowInEasing),
                 repeatMode = RepeatMode.Reverse
             ),
             label = "breathingScale"
         )
-        val alpha by infiniteTransition.animateFloat(
-            initialValue = 0.35f,
-            targetValue = 0.65f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(3200, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "glowAlpha"
-        )
-        Triple(rot, scale, alpha)
     } else {
-        Triple(0f, 1f, 0.25f)
+        remember { mutableFloatStateOf(1f) }
     }
 
-    val shape = if (isVinylRotating) CircleShape else RoundedCornerShape(cornerRadius)
+    val shape = remember(isVinylRotating, cornerRadius) {
+        if (isVinylRotating) CircleShape else RoundedCornerShape(cornerRadius)
+    }
+    val glowAlpha = if (isPlaying) 0.48f else 0.22f
+    val shadowElevation = when {
+        artworkRole == ArtworkDisplayRole.THUMBNAIL -> if (isPlaying) 6.dp else 3.dp
+        isPlaying -> 14.dp
+        else -> 8.dp
+    }
 
     Box(
         modifier = modifier
-            .scale(breathingScale)
+            .graphicsLayer {
+                val s = breathingScaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .shadow(
-                elevation = if (isPlaying) 18.dp else 8.dp,
+                elevation = shadowElevation,
                 shape = shape,
                 ambientColor = palette.glowColor.copy(alpha = glowAlpha),
                 spotColor = palette.glowColor.copy(alpha = glowAlpha)
@@ -124,16 +167,17 @@ fun ArtworkAlbumView(
             .border(1.dp, palette.cardBorder, shape),
         contentAlignment = Alignment.Center
     ) {
-        val loadedBitmap = artworkBitmap
-        if (loadedBitmap != null) {
-            // Real Album Artwork (Extracted from embedded ID3/FLAC or MediaStore)
+        if (imageBitmap != null) {
             Image(
-                bitmap = loadedBitmap.asImageBitmap(),
+                bitmap = imageBitmap,
                 contentDescription = "${song?.album ?: "Album"} Artwork",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .then(if (isVinylRotating && isPlaying) Modifier.rotate(rotation) else Modifier)
+                    .graphicsLayer {
+                        alpha = artworkAlpha.value
+                        rotationZ = rotationState.value
+                    }
             )
         } else {
             // Elegant Stylized Vinyl Disc Fallback
@@ -153,7 +197,6 @@ fun ArtworkAlbumView(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                // Vinyl grooves
                 Box(
                     modifier = Modifier
                         .size(130.dp)
@@ -164,7 +207,6 @@ fun ArtworkAlbumView(
                         .size(86.dp)
                         .border(1.dp, palette.primary.copy(alpha = 0.35f), CircleShape)
                 )
-                // Center spindle label
                 Box(
                     modifier = Modifier
                         .size(52.dp)

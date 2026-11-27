@@ -77,7 +77,7 @@ sealed interface UpdateCheckOutcome {
 
     data class UpToDate(
         val latestRelease: GitHubReleaseInfo? = null,
-        val reason: String = "SONORA is up to date."
+        val reason: String = "${domain.branding.AppBranding.APP_NAME} is up to date."
     ) : UpdateCheckOutcome
 
     data class Error(

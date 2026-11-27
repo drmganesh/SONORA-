@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.UserProfile
@@ -204,7 +205,8 @@ fun GreetingHeader(
                         lineHeight = 20.sp,
                         letterSpacing = (-0.2).sp,
                         color = colors.textPrimary,
-                        maxLines = 2
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     AnimatedContent(
                         targetState = activeMode,
@@ -255,7 +257,9 @@ fun GreetingHeader(
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 10.5.sp,
                                     color = if (highlighted) colors.accentStrong else colors.textSecondary,
-                                    maxLines = 1
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }

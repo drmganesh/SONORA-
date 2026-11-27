@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -40,12 +41,10 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PersonSearch
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -128,131 +127,97 @@ fun SonoraRecommendSection(
             .fillMaxWidth()
             .testTag("sonora_recommend_section")
     ) {
-        // Editorial Section Header with Accent Badge + Refresh Button
-        Row(
+        // Editorial Section Header (full-width title + description)
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 22.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(colors.accentStrong, colors.accentPill)
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(colors.accentStrong, colors.accentPill)
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
-                            tint = colors.onAccentStrong,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                    Text(
-                        text = stringResource(R.string.sonora_recommend_title),
-                        fontFamily = OutfitFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp,
-                        letterSpacing = (-0.25).sp,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = colors.onAccentStrong,
+                        modifier = Modifier.size(14.dp)
                     )
-                    if (state.isServingCachedOffline) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = colors.surfaceTinted,
-                            border = BorderStroke(0.6.dp, colors.cardBorder),
-                            modifier = Modifier.testTag("sonora_recommend_offline_badge")
+                }
+                Text(
+                    text = stringResource(R.string.sonora_recommend_title),
+                    fontFamily = OutfitFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    letterSpacing = (-0.25).sp,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .testTag("sonora_recommend_title")
+                )
+                if (state.isServingCachedOffline) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.surfaceTinted,
+                        border = BorderStroke(0.6.dp, colors.cardBorder),
+                        modifier = Modifier
+                            .wrapContentWidth()
+                            .testTag("sonora_recommend_offline_badge")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.CloudOff,
-                                    contentDescription = null,
-                                    tint = colors.textSecondary,
-                                    modifier = Modifier.size(11.dp)
-                                )
-                                Text(
-                                    text = stringResource(R.string.sonora_recommend_cached_offline),
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 9.5.sp,
-                                    color = colors.textSecondary
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.CloudOff,
+                                contentDescription = null,
+                                tint = colors.textSecondary,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = stringResource(R.string.sonora_recommend_cached_offline),
+                                fontFamily = PlusJakartaFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 9.5.sp,
+                                color = colors.textSecondary,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
-
-                Text(
-                    text = subtitleText,
-                    fontFamily = PlusJakartaFontFamily,
-                    fontWeight = if (state.isColdStartDiscovery) FontWeight.SemiBold else FontWeight.Normal,
-                    fontSize = 12.sp,
-                    color = if (state.isColdStartDiscovery) colors.accentStrong else colors.textSecondary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("sonora_recommend_subtitle")
-                )
             }
 
-            Surface(
-                onClick = { if (!state.isRefreshing) onRefresh() },
-                shape = RoundedCornerShape(18.dp),
-                color = colors.surfaceTinted,
-                border = BorderStroke(0.75.dp, colors.cardBorder),
+            Text(
+                text = subtitleText,
+                fontFamily = PlusJakartaFontFamily,
+                fontWeight = if (state.isColdStartDiscovery) FontWeight.SemiBold else FontWeight.Normal,
+                fontSize = 12.sp,
+                color = if (state.isColdStartDiscovery) colors.accentStrong else colors.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .height(48.dp)
-                    .testTag("sonora_recommend_refresh_button")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (state.isRefreshing) {
-                        CircularProgressIndicator(
-                            strokeWidth = 2.dp,
-                            color = colors.accentStrong,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = stringResource(R.string.sonora_recommend_refresh_desc),
-                            tint = colors.accentStrong,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Text(
-                        text = stringResource(R.string.sonora_recommend_refresh),
-                        fontFamily = PlusJakartaFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = colors.textPrimary
-                    )
-                }
-            }
+                    .fillMaxWidth()
+                    .testTag("sonora_recommend_subtitle")
+            )
         }
 
         // Body States: Loading / Items Carousel / Error-Offline Card
@@ -345,7 +310,7 @@ fun SonoraRecommendSection(
                             )
                             Text(
                                 text = state.errorMessage
-                                    ?: "Like songs, follow artists, or tap Refresh to discover personalized picks.",
+                                    ?: "Like songs, follow artists, or pull down to refresh personalized picks.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 color = colors.textSecondary,

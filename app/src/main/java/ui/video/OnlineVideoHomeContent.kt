@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -125,11 +127,11 @@ fun OnlineVideoHomeContent(
                         border = BorderStroke(0.75.dp, colors.cardBorder),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("video_home_search_bar")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 14.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
@@ -145,6 +147,7 @@ fun OnlineVideoHomeContent(
                                 fontSize = 13.sp,
                                 color = colors.textMuted,
                                 maxLines = 1,
+                                softWrap = false,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
@@ -155,11 +158,12 @@ fun OnlineVideoHomeContent(
                         shape = RoundedCornerShape(24.dp),
                         color = colors.accentPill,
                         modifier = Modifier
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
+                            .wrapContentWidth()
                             .testTag("video_home_region_button")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
@@ -174,7 +178,10 @@ fun OnlineVideoHomeContent(
                                 fontFamily = OutfitFontFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.5.sp,
-                                color = colors.onAccentPill
+                                color = colors.onAccentPill,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -197,11 +204,12 @@ fun OnlineVideoHomeContent(
                                 color = if (selected) colors.accentStrong else colors.cardBorder
                             ),
                             modifier = Modifier
-                                .height(38.dp)
+                                .heightIn(min = 38.dp)
+                                .wrapContentWidth()
                                 .testTag("video_lang_chip_${lang.id}")
                         ) {
                             Box(
-                                modifier = Modifier.padding(horizontal = 14.dp),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
@@ -209,7 +217,10 @@ fun OnlineVideoHomeContent(
                                     fontFamily = PlusJakartaFontFamily,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                     fontSize = 12.5.sp,
-                                    color = if (selected) colors.onAccentStrong else colors.textSecondary
+                                    color = if (selected) colors.onAccentStrong else colors.textSecondary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }

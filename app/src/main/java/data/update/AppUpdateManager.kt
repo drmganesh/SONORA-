@@ -375,7 +375,7 @@ class AppUpdateManager(
         )
 
         if (!isNewer) {
-            val msg = "SONORA is up to date (v${installed.versionName})."
+            val msg = "${domain.branding.AppBranding.APP_NAME} is up to date (v${installed.versionName})."
             _summaryState.update {
                 it.copy(
                     isChecking = false,
@@ -531,7 +531,7 @@ class AppUpdateManager(
                     asset = selected,
                     bytesDownloaded = downloaded,
                     totalBytes = total,
-                    statusText = "Downloading SONORA v${release.versionName}…"
+                    statusText = "Downloading ${domain.branding.AppBranding.APP_NAME} v${release.versionName}…"
                 )
             }
         } catch (ce: CancellationException) {
@@ -630,7 +630,7 @@ class AppUpdateManager(
             _dialogState.value = AppUpdateDialogState.PermissionRequired(
                 release = release,
                 verifiedApk = verifiedApk,
-                rationaleMessage = "Android requires permission for SONORA to hand the verified update package to the system installer. You can turn this permission off right after updating."
+                rationaleMessage = "Android requires permission for ${domain.branding.AppBranding.APP_NAME} to hand the verified update package to the system installer. You can turn this permission off right after updating."
             )
             return InstallPreparationResult.NeedsUnknownSourcesPermission(
                 installerLauncher.buildManageUnknownAppSourcesIntent()
@@ -670,7 +670,7 @@ class AppUpdateManager(
             return prepareInstallNow(pending.first, pending.second)
         }
         awaitingUnknownSourcesFor = null
-        val msg = "Permission to install unknown apps was not granted. You can enable it later to install SONORA v${pending.first.versionName}."
+        val msg = "Permission to install unknown apps was not granted. You can enable it later to install ${domain.branding.AppBranding.APP_NAME} v${pending.first.versionName}."
         _dialogState.value = AppUpdateDialogState.Error(
             kind = UpdateErrorKind.PERMISSION_DENIED,
             title = "Installation Permission Needed",

@@ -114,7 +114,7 @@ fun HomeModeSwitcherSheet(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "SONORA Experience",
+                        text = "${domain.branding.AppBranding.APP_NAME} Experience",
                         fontFamily = OutfitFontFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp,

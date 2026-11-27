@@ -5,10 +5,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -30,6 +33,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.SpatialAudio
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Tune
@@ -48,11 +52,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ui.components.AdaptiveSingleLineBadge
 import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
@@ -69,9 +75,15 @@ data class NowPlayingOnlineLibraryAction(
     val onAddToOnlinePlaylistClick: () -> Unit
 )
 
+data class NowPlayingSongRadioAction(
+    val isRadioActive: Boolean,
+    val onOpenSongRadio: () -> Unit
+)
+
 val LocalNowPlayingDownloadAction = compositionLocalOf<NowPlayingDownloadAction?> { null }
 val LocalNowPlayingOnlineLibraryAction = compositionLocalOf<NowPlayingOnlineLibraryAction?> { null }
 val LocalNowPlayingStopAction = compositionLocalOf<(() -> Unit)?> { null }
+val LocalNowPlayingSongRadioAction = compositionLocalOf<NowPlayingSongRadioAction?> { null }
 
 /**
  * Unified SONORA AESTHETIC UI Header for Now Playing:
@@ -101,109 +113,173 @@ fun NowPlayingTopHeader(
     val downloadAction = LocalNowPlayingDownloadAction.current
     val onlineLibraryAction = LocalNowPlayingOnlineLibraryAction.current
     val stopAction = LocalNowPlayingStopAction.current
+    val songRadioAction = LocalNowPlayingSongRadioAction.current
     var showMenu by remember { mutableStateOf(false) }
 
-    Column(
+    val fontScale = LocalDensity.current.fontScale
+    val badgeLabel = remember(song?.isOnline, song?.providerName) {
+        if (song?.isOnline == true) {
+            song.providerName.ifBlank { "ONLINE" }.uppercase()
+        } else {
+            "HI-FI"
+        }
+    }
+    val formatString = song?.audioFormatInfo ?: "LOCAL AUDIO"
+
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("collapse_now_playing_button")
-            ) {
-                Icon(
-                    Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Collapse Player",
-                    tint = colors.textPrimary,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
+        // Parent player styles already provide 18–24dp horizontal margin; avoid double-padding on compact widths.
+        val outerHorizontalPad = when {
+            maxWidth < 380.dp -> 0.dp
+            maxWidth < 440.dp -> 4.dp
+            else -> 12.dp
+        }
+        val actionButtonWidth = when {
+            maxWidth < 340.dp -> 40.dp
+            maxWidth < 390.dp -> 44.dp
+            else -> 48.dp
+        }
+        val trailingCount = if (songRadioAction != null) 3 else 2
+        val availableCenterWidth = maxWidth - (outerHorizontalPad * 2) - actionButtonWidth * (1 + trailingCount)
+        val useStackedMetaRow = availableCenterWidth < 156.dp || fontScale > 1.15f
 
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = outerHorizontalPad, vertical = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "SONORA",
-                        fontFamily = OutfitFontFamily,
-                        color = colors.accentStrong,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 2.4.sp
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier
+                        .width(actionButtonWidth)
+                        .height(48.dp)
+                        .testTag("collapse_now_playing_button")
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Collapse Player",
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(28.dp)
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = colors.accentPill
-                    ) {
-                        val badgeLabel = if (song?.isOnline == true) {
-                            song.providerName.ifBlank { "ONLINE" }.uppercase()
-                        } else {
-                            "HI-FI"
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (useStackedMetaRow) {
+                        Text(
+                            text = domain.branding.AppBranding.APP_NAME,
+                            fontFamily = OutfitFontFamily,
+                            color = colors.accentStrong,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 2.0.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("now_playing_brand_label")
+                        )
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = domain.branding.AppBranding.APP_NAME,
+                                fontFamily = OutfitFontFamily,
+                                color = colors.accentStrong,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 2.2.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("now_playing_brand_label")
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            AdaptiveSingleLineBadge(
+                                text = badgeLabel,
+                                containerColor = colors.accentPill,
+                                contentColor = colors.onAccentPill,
+                                cornerRadius = 6.dp,
+                                fontSize = 9.sp,
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.5.dp),
+                                modifier = Modifier.testTag("now_playing_source_badge")
+                            )
                         }
                         Text(
-                            text = badgeLabel,
+                            text = formatString,
                             fontFamily = PlusJakartaFontFamily,
-                            color = colors.onAccentPill,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
+                            color = colors.textSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("now_playing_format_label")
                         )
                     }
                 }
 
-                val formatString = song?.audioFormatInfo ?: "LOCAL AUDIO"
-                Text(
-                    text = formatString,
-                    fontFamily = PlusJakartaFontFamily,
-                    color = colors.textSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Box {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = onOpenQueue,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("open_queue_button")
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.QueueMusic,
-                            contentDescription = "Queue",
-                            tint = colors.textPrimary,
-                            modifier = Modifier.size(22.dp)
-                        )
+                Box {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onOpenQueue,
+                            modifier = Modifier
+                                .width(actionButtonWidth)
+                                .height(48.dp)
+                                .testTag("open_queue_button")
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.QueueMusic,
+                                contentDescription = "Queue",
+                                tint = colors.textPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        if (songRadioAction != null) {
+                            IconButton(
+                                onClick = songRadioAction.onOpenSongRadio,
+                                modifier = Modifier
+                                    .width(actionButtonWidth)
+                                    .height(48.dp)
+                                    .testTag("player_song_radio_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.Radio,
+                                    contentDescription = if (songRadioAction.isRadioActive) "Song Radio Active" else "Start Song Radio",
+                                    tint = if (songRadioAction.isRadioActive) colors.accentStrong else colors.textPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier
+                                .width(actionButtonWidth)
+                                .height(48.dp)
+                                .testTag("now_playing_menu_button")
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "More Options",
+                                tint = colors.textPrimary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
-                    IconButton(
-                        onClick = { showMenu = true },
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("now_playing_menu_button")
-                    ) {
-                        Icon(
-                            Icons.Default.MoreVert,
-                            contentDescription = "More Options",
-                            tint = colors.textPrimary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
 
                 DropdownMenu(
                     expanded = showMenu,
@@ -413,6 +489,41 @@ fun NowPlayingTopHeader(
                             modifier = Modifier.testTag("now_playing_stop_playback_item")
                         )
                     }
+                }
+            }
+            }
+
+            if (useStackedMetaRow) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AdaptiveSingleLineBadge(
+                        text = badgeLabel,
+                        containerColor = colors.accentPill,
+                        contentColor = colors.onAccentPill,
+                        cornerRadius = 6.dp,
+                        fontSize = 9.sp,
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.5.dp),
+                        modifier = Modifier.testTag("now_playing_source_badge")
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = formatString,
+                        fontFamily = PlusJakartaFontFamily,
+                        color = colors.textSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .testTag("now_playing_format_label")
+                    )
                 }
             }
         }

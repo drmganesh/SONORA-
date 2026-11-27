@@ -31,6 +31,7 @@ class SonoraSplashScreenTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         assertNotNull(ContextCompat.getDrawable(context, R.mipmap.ic_launcher))
         assertNotNull(ContextCompat.getDrawable(context, R.mipmap.ic_launcher_round))
+        assertNotNull(ContextCompat.getDrawable(context, R.drawable.mayur_official_logo))
         assertNotNull(ContextCompat.getDrawable(context, R.drawable.sonora_official_logo))
         assertNotNull(ContextCompat.getDrawable(context, R.drawable.ic_splash_logo))
         assertNotNull(ContextCompat.getDrawable(context, R.drawable.ic_notif_sonora_logo))
@@ -68,7 +69,7 @@ class SonoraSplashScreenTest {
         composeRule.waitForIdle()
         val expectedTagline = ApplicationProvider.getApplicationContext<Context>()
             .getString(R.string.splash_brand_tagline)
-        composeRule.onNodeWithText("SONORA").assertIsDisplayed()
+        composeRule.onNodeWithText("MAYUR").assertIsDisplayed()
         composeRule.onNodeWithText(expectedTagline).assertIsDisplayed()
 
         // Phase 5: Transition & Completion (~1.85s total)
@@ -96,7 +97,7 @@ class SonoraSplashScreenTest {
         composeRule.mainClock.advanceTimeBy(60L)
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("sonora_splash_overlay").assertIsDisplayed()
-        composeRule.onNodeWithText("SONORA").assertIsDisplayed()
+        composeRule.onNodeWithText("MAYUR").assertIsDisplayed()
         composeRule.onNodeWithText(context.getString(R.string.splash_brand_tagline)).assertIsDisplayed()
         assertTrue(composeRule.onAllNodesWithTag("sonora_splash_waveform").fetchSemanticsNodes().isEmpty())
 

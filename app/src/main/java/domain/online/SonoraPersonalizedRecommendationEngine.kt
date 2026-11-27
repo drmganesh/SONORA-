@@ -35,7 +35,7 @@ object SonoraPersonalizedRecommendationEngine {
 
     private val PLACEHOLDER_ARTISTS = setOf(
         "", "unknown", "<unknown>", "unknown artist", "various artists",
-        "yt music", "youtube", "youtube music", "soundcloud", "bandcamp", "sonora"
+        "yt music", "youtube", "youtube music", "soundcloud", "bandcamp", "sonora", "gita"
     )
 
     private val PLACEHOLDER_ALBUMS = setOf(

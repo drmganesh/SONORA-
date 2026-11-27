@@ -124,6 +124,7 @@ enum class OnlinePlaybackStage(val defaultMessage: String) {
     FAILED("Unable to play. Retry.")
 }
 
+@androidx.compose.runtime.Immutable
 data class PlaybackInfo(
     val isPlaying: Boolean = false,
     val currentPositionMs: Long = 0L,
@@ -144,4 +145,28 @@ data class PlaybackInfo(
 ) {
     val canUserSeek: Boolean
         get() = isSeekable && !isLiveStream && durationMs > 0L
+
+    fun toStatusSummary(): PlaybackStatusSummary = PlaybackStatusSummary(
+        isPlaying = isPlaying,
+        isBuffering = isBuffering,
+        playbackStage = playbackStage,
+        statusMessage = statusMessage,
+        playbackError = playbackError,
+        playbackErrorKind = playbackErrorKind
+    )
 }
+
+/**
+ * Low-frequency immutable playback status projection excluding `currentPositionMs` and
+ * `bufferedPositionMs`. Collecting this in browsing screens (Home, Library, Queue, Search,
+ * Playlists, Online Music) completely prevents 4-10Hz recompositions during playback ticking.
+ */
+@androidx.compose.runtime.Immutable
+data class PlaybackStatusSummary(
+    val isPlaying: Boolean = false,
+    val isBuffering: Boolean = false,
+    val playbackStage: OnlinePlaybackStage = OnlinePlaybackStage.IDLE,
+    val statusMessage: String = "",
+    val playbackError: String? = null,
+    val playbackErrorKind: domain.online.OnlineErrorKind? = null
+)

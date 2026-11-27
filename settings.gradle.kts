@@ -35,6 +35,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "SONORA"
+rootProject.name = "MAYUR"
 
 include(":app")

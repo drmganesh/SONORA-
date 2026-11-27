@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.DailyMix
@@ -132,6 +133,7 @@ fun OnlineHomeContent(
     onOpenRecommendedArtist: (OnlineTrack) -> Unit = {},
     onOpenRecommendedAlbum: (OnlineTrack) -> Unit = {},
     hasMusicMiniPlayer: Boolean = currentSong != null,
+    petContent: (@Composable (Dp) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val onlineYourMix = remember(discoverSections, recentlyPlayedOnline, savedOnlineTracks, recommendationProfile, countryCode) {
@@ -180,6 +182,7 @@ fun OnlineHomeContent(
                 colors = colors,
                 animationLevel = animationLevel,
                 screenVisible = screenVisible,
+                petContent = petContent,
                 onPlayMix = {
                     if (onlineYourMix.songs.isNotEmpty()) {
                         onPlayCollection(onlineYourMix.songs, false)
@@ -592,7 +595,7 @@ fun OnlineHomeContent(
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "Your SONORA Playlists (${playlists.size})",
+                                    text = "Your ${domain.branding.AppBranding.APP_NAME} Playlists (${playlists.size})",
                                     fontFamily = PlusJakartaFontFamily,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 13.sp,

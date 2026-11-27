@@ -1,4 +1,4 @@
-name: Build & Publish SONORA Release APK
+name: Build & Publish MAYUR Release APK
 
 on:
   push:
@@ -7,14 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. v1.4.1)"
+        description: "Release tag (e.g. v1.4.2)"
         required: true
-        default: "v1.4.1"
+        default: "v1.4.2"
         type: string
       release_name:
         description: "Release title (optional)"
         required: false
-        default: "SONORA v1.4.1 — Personalized Music Taste Onboarding, System PiP Fix & Discovery Reliability"
+        default: "MAYUR v1.4.2 — Complete MAYUR Rebrand, 3D 360° Virtual Pet & Refined Home Recommendations"
         type: string
       draft:
         description: "Create as a Draft release"
@@ -107,7 +107,7 @@ jobs:
             TITLE=$(head -n 1 RELEASE_NOTES.md | sed -E 's/^#[[:space:]]*//')
           fi
           if [ -z "$TITLE" ]; then
-            TITLE="SONORA $TAG"
+            TITLE="MAYUR $TAG"
           fi
           mkdir -p "${{ runner.temp }}/release-assets"
           APK_SRC=$(find app/build/outputs/apk/release -maxdepth 1 -name "*.apk" | head -n 1)
@@ -115,7 +115,7 @@ jobs:
             echo "::error::No release APK found in app/build/outputs/apk/release"
             exit 1
           fi
-          APK_OUT="${{ runner.temp }}/release-assets/SONORA-${TAG}.apk"
+          APK_OUT="${{ runner.temp }}/release-assets/MAYUR-${TAG}.apk"
           cp "$APK_SRC" "$APK_OUT"
           echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_name=$TITLE" >> "$GITHUB_OUTPUT"
@@ -124,7 +124,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sonora-release-apk
+          name: mayur-release-apk
           path: ${{ steps.release_vars.outputs.apk_path }}
 
       - name: Draft GitHub Release

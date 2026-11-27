@@ -360,7 +360,7 @@ fun CassettePlayer(
                                 )
                                 Column {
                                     Text(
-                                        text = (song?.title ?: "SONORA TAPE").uppercase(),
+                                        text = (song?.title ?: "${domain.branding.AppBranding.APP_NAME} TAPE").uppercase(),
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 11.sp,
@@ -823,7 +823,7 @@ fun RetroWalkmanPlayer(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "SONORA WALKMAN  WM-88",
+                            text = "${domain.branding.AppBranding.APP_NAME} WALKMAN  WM-88",
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Black,
                             fontSize = 11.sp,
@@ -882,7 +882,7 @@ fun RetroWalkmanPlayer(
                             }
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${song?.title ?: "INSERT CASSETTE"} — ${song?.artist ?: "SONORA"}",
+                                text = "${song?.title ?: "INSERT CASSETTE"} — ${song?.artist ?: domain.branding.AppBranding.APP_NAME}",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,

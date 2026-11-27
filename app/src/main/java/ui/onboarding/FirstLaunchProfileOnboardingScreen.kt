@@ -140,7 +140,7 @@ fun FirstLaunchProfileOnboardingScreen(
             pickerNoticeMessage = null
         },
         onPickerUnavailable = {
-            pickerNoticeMessage = "No photo picker app found. You can continue with the default SONORA avatar."
+            pickerNoticeMessage = "No photo picker app found. You can continue with the default ${domain.branding.AppBranding.APP_NAME} avatar."
         }
     )
 
@@ -288,7 +288,7 @@ fun FirstLaunchProfileOnboardingScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.sonora_official_logo),
+                        painter = painterResource(id = domain.branding.AppBranding.LOGO_DRAWABLE_RES),
                         contentDescription = stringResource(id = R.string.splash_logo_content_desc),
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize()
@@ -305,6 +305,19 @@ fun FirstLaunchProfileOnboardingScreen(
                     letterSpacing = 4.2.sp,
                     color = OnboardingIvory,
                     textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = stringResource(id = R.string.splash_brand_tagline),
+                    fontFamily = PlusJakartaFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 13.sp,
+                    letterSpacing = 0.5.sp,
+                    color = OnboardingGoldBright.copy(alpha = 0.88f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag("onboarding_brand_tagline")
                 )
 
                 if (!reduceAnimations) {
@@ -475,7 +488,7 @@ fun FirstLaunchProfileOnboardingScreen(
 
                         if (photoSkippedExplicitly && selectedPhotoUriString == null) {
                             Text(
-                                text = "Using the default SONORA avatar — you can add a photo anytime in Settings.",
+                                text = "Using the default ${domain.branding.AppBranding.APP_NAME} avatar — you can add a photo anytime in Settings.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 color = OnboardingTextSecondary,

@@ -88,7 +88,7 @@ class DownloadUiFlowTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText("Choose Download Location").assertIsDisplayed()
-        composeRule.onNodeWithText("Select where SONORA should save your downloaded music.").assertIsDisplayed()
+        composeRule.onNodeWithText("Select where MAYUR should save your downloaded music.").assertIsDisplayed()
 
         composeRule.onNodeWithTag("choose_folder_button").performClick()
         composeRule.waitForIdle()

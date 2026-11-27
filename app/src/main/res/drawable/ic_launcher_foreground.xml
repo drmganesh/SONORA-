@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:width="68dp"
-        android:height="68dp"
-        android:drawable="@drawable/sonora_launcher_foreground_art"
+        android:width="66dp"
+        android:height="66dp"
+        android:drawable="@drawable/mayur_launcher_foreground_art"
         android:gravity="center" />
 </layer-list>

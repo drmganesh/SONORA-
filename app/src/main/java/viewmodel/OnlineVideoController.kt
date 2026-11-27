@@ -1739,7 +1739,7 @@ class OnlineVideoController(
                     providerSynced = false,
                     initialLastKnownVideoId = activeVidId
                 )
-                _feedbackMessage.value = "Subscribed to ${channel.name} in SONORA"
+                _feedbackMessage.value = "Subscribed to ${channel.name} in ${domain.branding.AppBranding.APP_NAME}"
                 // Seed channel baseline upload ID so enabling notifications later only alerts on genuinely new uploads
                 if (channel.channelUrl.isNotBlank()) {
                     runCatching {
@@ -1752,7 +1752,7 @@ class OnlineVideoController(
                 }
             } else {
                 repository.removeLocalChannelBookmark(targetChannelId)
-                _feedbackMessage.value = "Unsubscribed from ${channel.name} in SONORA"
+                _feedbackMessage.value = "Unsubscribed from ${channel.name} in ${domain.branding.AppBranding.APP_NAME}"
             }
         }
     }
@@ -1973,7 +1973,7 @@ class OnlineVideoController(
                     targetValue = video.videoId
                 )
             )
-            _feedbackMessage.value = "We'll show fewer videos like this in SONORA"
+            _feedbackMessage.value = "We'll show fewer videos like this in ${domain.branding.AppBranding.APP_NAME}"
         }
     }
 
@@ -1989,7 +1989,7 @@ class OnlineVideoController(
                     targetValue = target.lowercase()
                 )
             )
-            _feedbackMessage.value = "Won't recommend ${video.channelName.ifBlank { "this channel" }} in SONORA"
+            _feedbackMessage.value = "Won't recommend ${video.channelName.ifBlank { "this channel" }} in ${domain.branding.AppBranding.APP_NAME}"
         }
     }
 
@@ -2003,7 +2003,7 @@ class OnlineVideoController(
                     targetValue = video.videoId
                 )
             )
-            _feedbackMessage.value = "Hidden from your SONORA video feed"
+            _feedbackMessage.value = "Hidden from your ${domain.branding.AppBranding.APP_NAME} video feed"
         }
     }
 
@@ -2032,7 +2032,7 @@ class OnlineVideoController(
         val dbDao = dao ?: return
         scope.launch(Dispatchers.IO) {
             dbDao.clearAllVideoRecommendationFeedback()
-            _feedbackMessage.value = "Reset SONORA video recommendation filters"
+            _feedbackMessage.value = "Reset ${domain.branding.AppBranding.APP_NAME} video recommendation filters"
         }
     }
 

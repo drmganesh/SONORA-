@@ -54,12 +54,27 @@ object AlbumArtHelper {
         noArtCache.evictAll()
     }
 
+    private fun targetDimensionForRole(role: data.artwork.ArtworkDisplayRole): Int = when (role) {
+        data.artwork.ArtworkDisplayRole.THUMBNAIL -> 256
+        data.artwork.ArtworkDisplayRole.CARD -> 448
+        data.artwork.ArtworkDisplayRole.ALBUM_HEADER -> 640
+        data.artwork.ArtworkDisplayRole.NOW_PLAYING -> 768
+    }
+
     fun getCachedBitmap(
         song: Song?,
         role: data.artwork.ArtworkDisplayRole = data.artwork.ArtworkDisplayRole.CARD
     ): Bitmap? {
         if (song == null || song.isDemoTrack) return null
-        return memoryCache.get(buildCacheKey(song, role))
+        memoryCache.get(buildCacheKey(song, role))?.let { return it }
+        // Reuse already-decoded higher-resolution artwork when requesting a smaller role to avoid flicker/re-decode
+        if (role == data.artwork.ArtworkDisplayRole.THUMBNAIL) {
+            memoryCache.get(buildCacheKey(song, data.artwork.ArtworkDisplayRole.CARD))?.let { return it }
+            memoryCache.get(buildCacheKey(song, data.artwork.ArtworkDisplayRole.NOW_PLAYING))?.let { return it }
+        } else if (role == data.artwork.ArtworkDisplayRole.CARD) {
+            memoryCache.get(buildCacheKey(song, data.artwork.ArtworkDisplayRole.NOW_PLAYING))?.let { return it }
+        }
+        return null
     }
 
     suspend fun loadAlbumArt(
@@ -73,7 +88,7 @@ object AlbumArtHelper {
         if (song.isDemoTrack) return@withContext null
 
         val cacheKey = buildCacheKey(song, role)
-        memoryCache.get(cacheKey)?.let { return@withContext it }
+        getCachedBitmap(song, role)?.let { return@withContext it }
         if (noArtCache.get(cacheKey) == true) return@withContext null
 
         if (song.isOnline) {
@@ -142,9 +157,10 @@ object AlbumArtHelper {
         }
 
         // 1. Try Android 10+ (API 29+) ContentResolver loadThumbnail (uses MediaStore OS thumbnail cache directly)
+        val roleDim = targetDimensionForRole(role)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && song.uri.scheme == "content") {
             try {
-                bitmap = context.contentResolver.loadThumbnail(song.uri, Size(512, 512), null)
+                bitmap = context.contentResolver.loadThumbnail(song.uri, Size(roleDim, roleDim), null)
             } catch (_: Exception) {
                 // MediaStore thumbnail unavailable
             }

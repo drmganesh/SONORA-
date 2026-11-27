@@ -39,10 +39,10 @@ class ExampleRobolectricTest {
     )
 
     @Test
-    fun `verify app name resource matches SONORA`() {
+    fun `verify app name resource matches MAYUR`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("SONORA", appName)
+        assertEquals("MAYUR", appName)
     }
 
     @Test

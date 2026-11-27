@@ -881,7 +881,7 @@ private fun ChannelHeaderSection(
 
         if (!isProviderConnected && channel.isSubscribedLocal) {
             Text(
-                text = "Saved locally in SONORA Online Library • Not synced to a YouTube account",
+                text = "Saved locally in ${domain.branding.AppBranding.APP_NAME} Online Library • Not synced to a YouTube account",
                 fontFamily = PlusJakartaFontFamily,
                 fontSize = 11.sp,
                 color = colors.textMuted,

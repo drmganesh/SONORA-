@@ -174,7 +174,7 @@ fun MusicTasteScreen(
                                 color = colors.textMuted
                             )
                             Text(
-                                text = "Changes update Sonora Recommend, Recommend Songs, Your Mix, and Radio immediately — all stored privately on this device.",
+                                text = "Changes update ${domain.branding.AppBranding.RECOMMEND_NAME}, Recommend Songs, Your Mix, and Radio immediately — all stored privately on this device.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 13.sp,
                                 lineHeight = 19.sp,

@@ -232,7 +232,7 @@ fun SonoraAppUpdateDialogHost(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "SONORA v${dialogState.release.versionName} (Build ${dialogState.verifiedApk.versionCode}) has been verified and is ready for Android's system installer.",
+                            text = "${domain.branding.AppBranding.APP_NAME} v${dialogState.release.versionName} (Build ${dialogState.verifiedApk.versionCode}) has been verified and is ready for Android's system installer.",
                             fontFamily = PlusJakartaFontFamily,
                             fontSize = 13.sp,
                             lineHeight = 19.sp,
@@ -471,7 +471,7 @@ private fun UpdateAvailableDialog(
                         .border(1.dp, colors.accentStrong.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
                 ) {
                     Image(
-                        painter = painterResource(id = R.drawable.sonora_official_logo),
+                        painter = painterResource(id = domain.branding.AppBranding.LOGO_DRAWABLE_RES),
                         contentDescription = stringResource(id = R.string.about_logo_desc),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -486,7 +486,7 @@ private fun UpdateAvailableDialog(
                         color = colors.textPrimary
                     )
                     Text(
-                        text = "SONORA v${state.release.versionName}" +
+                        text = "${domain.branding.AppBranding.APP_NAME} v${state.release.versionName}" +
                             if (state.resolvedVersionCode > 0L) " (Build ${state.resolvedVersionCode})" else "",
                         fontFamily = PlusJakartaFontFamily,
                         fontWeight = FontWeight.SemiBold,

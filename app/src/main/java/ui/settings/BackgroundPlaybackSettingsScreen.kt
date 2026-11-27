@@ -154,7 +154,7 @@ fun BackgroundPlaybackSettingsScreen(
                         )
                         LifecycleSwitchRow(
                             title = "Auto Resume on App Launch",
-                            subtitle = "Resume interrupted music automatically when reopening SONORA",
+                            subtitle = "Resume interrupted music automatically when reopening ${domain.branding.AppBranding.APP_NAME}",
                             checked = bgSettings.autoResumeOnAppLaunch,
                             onCheckedChange = { viewModel.setAutoResumeOnAppLaunch(it) },
                             colors = colors,
@@ -188,7 +188,7 @@ fun BackgroundPlaybackSettingsScreen(
                         )
                         LifecycleSwitchRow(
                             title = "Stop playback when removed from Recents",
-                            subtitle = "Stop music and remove notification when swiping SONORA away from Recent Apps",
+                            subtitle = "Stop music and remove notification when swiping ${domain.branding.AppBranding.APP_NAME} away from Recent Apps",
                             checked = sessionSettings.stopPlaybackOnTaskRemoved,
                             onCheckedChange = { viewModel.setStopPlaybackOnTaskRemoved(it) },
                             colors = colors,
@@ -217,7 +217,7 @@ fun BackgroundPlaybackSettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Pressing Home, switching apps, or locking the screen keeps background music running. Swiping SONORA away from Recent Apps or tapping Stop Playback cleanly ends the playback session while saving your queue.",
+                                text = "Pressing Home, switching apps, or locking the screen keeps background music running. Swiping ${domain.branding.AppBranding.APP_NAME} away from Recent Apps or tapping Stop Playback cleanly ends the playback session while saving your queue.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 lineHeight = 18.sp,

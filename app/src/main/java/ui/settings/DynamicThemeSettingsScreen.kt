@@ -86,7 +86,7 @@ fun DynamicThemeSettingsScreen(
     val gradientEnabled by viewModel.dynamicGradientEnabled.collectAsState()
     val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
     val palette = LocalDynamicColorPalette.current
 
     BackHandler(onBack = onBack)
@@ -127,7 +127,7 @@ fun DynamicThemeSettingsScreen(
         DynamicThemeOption(
             mode = DynamicThemeMode.STATIC_THEME,
             title = "Static Studio Theme",
-            subtitle = "Lock interface to fixed SONORA palette",
+            subtitle = "Lock interface to fixed ${domain.branding.AppBranding.APP_NAME} palette",
             icon = Icons.Rounded.ColorLens
         )
     )
@@ -249,7 +249,7 @@ fun DynamicThemeSettingsScreen(
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = currentSong?.title ?: "Default SONORA Palette",
+                                        text = currentSong?.title ?: "Default ${domain.branding.AppBranding.APP_NAME} Palette",
                                         fontFamily = OutfitFontFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 16.sp,

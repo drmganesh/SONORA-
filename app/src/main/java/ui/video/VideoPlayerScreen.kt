@@ -1340,9 +1340,9 @@ fun VideoPlayerScreen(
                                         else -> Icons.Rounded.NotificationsOff
                                     },
                                     contentDescription = when {
-                                        !isSubscribed -> "Subscribe in SONORA to enable notifications"
-                                        isAlertsAll -> "SONORA channel notifications on"
-                                        else -> "SONORA channel notifications off"
+                                        !isSubscribed -> "Subscribe in ${domain.branding.AppBranding.APP_NAME} to enable notifications"
+                                        isAlertsAll -> "${domain.branding.AppBranding.APP_NAME} channel notifications on"
+                                        else -> "${domain.branding.AppBranding.APP_NAME} channel notifications off"
                                     },
                                     tint = if (isAlertsAll) colors.accentStrong else colors.textPrimary,
                                     modifier = Modifier.size(20.dp)

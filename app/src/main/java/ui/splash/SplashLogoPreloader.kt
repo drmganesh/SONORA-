@@ -94,8 +94,9 @@ object SplashLogoPreloader {
                 if (cachedTargetPx >= targetPx) return existing
             }
             val resources = context.resources
+            val logoRes = domain.branding.AppBranding.LOGO_DRAWABLE_RES
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeResource(resources, R.drawable.sonora_official_logo, bounds)
+            BitmapFactory.decodeResource(resources, logoRes, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
             val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, targetPx, targetPx)
@@ -104,7 +105,7 @@ object SplashLogoPreloader {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
                 inScaled = false
             }
-            val decoded = BitmapFactory.decodeResource(resources, R.drawable.sonora_official_logo, decodeOpts)
+            val decoded = BitmapFactory.decodeResource(resources, logoRes, decodeOpts)
                 ?: return null
 
             val finalBitmap = if (decoded.width > targetPx && decoded.height > targetPx) {

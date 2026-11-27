@@ -494,7 +494,7 @@ class SonoraNotificationManager(
 
         val minimalNotification = NotificationCompat.Builder(service, SonoraApplication.PLAYBACK_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notif_sonora_logo)
-            .setContentTitle("SONORA")
+            .setContentTitle(domain.branding.AppBranding.APP_NAME)
             .setContentText(if (isPlaying) "Playback active" else "Playback paused")
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOnlyAlertOnce(true)
@@ -552,11 +552,12 @@ class SonoraNotificationManager(
     }
 
     private fun buildHifiSubtext(song: Song, deviceName: String): String {
+        val brand = domain.branding.AppBranding.APP_NAME
         if (!prefs.showNotificationFormatBadge) {
             return if (deviceName.isNotBlank() && !deviceName.equals("Phone Speaker", ignoreCase = true)) {
-                "SONORA • $deviceName"
+                "$brand • $deviceName"
             } else {
-                "SONORA"
+                brand
             }
         }
         val formatInfo = song.audioFormatInfo
@@ -565,7 +566,7 @@ class SonoraNotificationManager(
         } else {
             ""
         }
-        return "SONORA • $formatInfo$devTag"
+        return "$brand • $formatInfo$devTag"
     }
 
     private suspend fun extractAdaptiveAccentColor(bitmap: Bitmap): Int = withContext(Dispatchers.Default) {

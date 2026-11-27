@@ -830,7 +830,7 @@ fun AudioEffectsStudioScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = dspDiagnostic ?: "Real-time stereo floating-point PCM DSP active on SONORA's single audio pipeline with automatic phase-cancellation protection and seamless bypass.",
+                                text = dspDiagnostic ?: "Real-time stereo floating-point PCM DSP active on ${domain.branding.AppBranding.APP_NAME}'s single audio pipeline with automatic phase-cancellation protection and seamless bypass.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 color = colors.textSecondary

@@ -99,7 +99,7 @@ fun ChooseDownloadLocationDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "Select where SONORA should save your downloaded music.",
+                    text = "Select where ${domain.branding.AppBranding.APP_NAME} should save your downloaded music.",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 14.sp,
                     color = colors.textSecondary

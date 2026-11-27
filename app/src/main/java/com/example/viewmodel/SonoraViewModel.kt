@@ -35,6 +35,7 @@ import com.example.util.AlbumArtHelper
 import kotlinx.coroutines.withContext
 import com.example.model.OnlinePlaybackStage
 import com.example.model.PlaybackInfo
+import com.example.model.PlaybackStatusSummary
 import com.example.model.Playlist
 import com.example.model.RepeatMode
 import com.example.model.ShuffleMode
@@ -307,6 +308,19 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         )
     )
     val playbackInfo: StateFlow<PlaybackInfo> = _playbackInfo.asStateFlow()
+
+    /**
+     * Distinct playback status flow that omits position ticks so Home, Library, Queue,
+     * Playlists, and Search screens never recompose on playback progress updates.
+     */
+    val playbackStatusSummary: StateFlow<PlaybackStatusSummary> = _playbackInfo
+        .map { it.toStatusSummary() }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = PlaybackStatusSummary()
+        )
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -1330,6 +1344,10 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     private val _motionConfig = MutableStateFlow(motionPrefs.getInitialConfig())
     val motionConfig: StateFlow<domain.motion.GlobalMotionConfig> = _motionConfig.asStateFlow()
 
+    private val virtualPetPrefs = data.preferences.VirtualPetPreferences(application)
+    private val _virtualPetSettings = MutableStateFlow(virtualPetPrefs.getInitialSettings())
+    val virtualPetSettings: StateFlow<domain.pet.MayurPetSettings> = _virtualPetSettings.asStateFlow()
+
     private val _trackTransitionDirection = MutableStateFlow(0)
     val trackTransitionDirection: StateFlow<Int> = _trackTransitionDirection.asStateFlow()
 
@@ -1825,6 +1843,13 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         _reduceAnimations.value = reduce
         preferences.reduceAnimations = reduce
         val current = _motionConfig.value
+        val targetLevel = if (reduce) {
+            domain.motion.MotionEffectsLevel.MINIMAL_MOTION
+        } else if (current.motionEffectsLevel == domain.motion.MotionEffectsLevel.MINIMAL_MOTION) {
+            domain.motion.MotionEffectsLevel.FULL_MOTION
+        } else {
+            current.motionEffectsLevel
+        }
         val targetIntensity = if (reduce) {
             domain.motion.MotionIntensity.OFF
         } else if (current.intensity == domain.motion.MotionIntensity.OFF) {
@@ -1832,12 +1857,62 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             current.intensity
         }
-        if (current.intensity != targetIntensity) {
-            val updated = current.copy(intensity = targetIntensity)
+        if (current.intensity != targetIntensity || current.motionEffectsLevel != targetLevel) {
+            val updated = current.copy(
+                motionEffectsLevel = targetLevel,
+                intensity = targetIntensity
+            )
             _motionConfig.value = updated
             viewModelScope.launch(Dispatchers.IO) {
                 motionPrefs.saveConfig(updated)
             }
+        }
+    }
+
+    fun setMotionEffectsLevel(level: domain.motion.MotionEffectsLevel) {
+        updateMotionConfig { current ->
+            when (level) {
+                domain.motion.MotionEffectsLevel.FULL_MOTION -> current.copy(
+                    motionEffectsLevel = level,
+                    intensity = if (current.intensity == domain.motion.MotionIntensity.OFF) {
+                        domain.motion.MotionIntensity.BALANCED
+                    } else {
+                        current.intensity
+                    },
+                    parallaxEffectsEnabled = true,
+                    artworkTransitionsEnabled = true
+                )
+                domain.motion.MotionEffectsLevel.REDUCED_MOTION -> current.copy(
+                    motionEffectsLevel = level,
+                    intensity = domain.motion.MotionIntensity.SUBTLE,
+                    parallaxEffectsEnabled = false
+                )
+                domain.motion.MotionEffectsLevel.MINIMAL_MOTION -> current.copy(
+                    motionEffectsLevel = level,
+                    intensity = domain.motion.MotionIntensity.OFF,
+                    parallaxEffectsEnabled = false
+                )
+            }
+        }
+    }
+
+    fun updateVirtualPetSettings(
+        transform: (domain.pet.MayurPetSettings) -> domain.pet.MayurPetSettings
+    ) {
+        val previous = _virtualPetSettings.value
+        val updated = transform(previous)
+        if (updated == previous) return
+        _virtualPetSettings.value = updated
+        viewModelScope.launch(Dispatchers.IO) {
+            virtualPetPrefs.saveSettings(updated)
+        }
+    }
+
+    fun resetVirtualPetSettings() {
+        val defaults = domain.pet.MayurPetSettings.DEFAULT
+        _virtualPetSettings.value = defaults
+        viewModelScope.launch(Dispatchers.IO) {
+            virtualPetPrefs.resetToDefaults()
         }
     }
 
@@ -1852,18 +1927,21 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             motionPrefs.saveConfig(updated)
         }
 
-        val shouldReduce = updated.intensity == domain.motion.MotionIntensity.OFF
+        val shouldReduce = updated.intensity == domain.motion.MotionIntensity.OFF ||
+            updated.motionEffectsLevel == domain.motion.MotionEffectsLevel.MINIMAL_MOTION
         if (_reduceAnimations.value != shouldReduce) {
             _reduceAnimations.value = shouldReduce
             preferences.reduceAnimations = shouldReduce
         }
 
-        if (previous.intensity != updated.intensity) {
-            val syncedHomeLevel = when (updated.intensity) {
-                domain.motion.MotionIntensity.OFF -> ui.home.animations.HomeAnimationLevel.OFF
-                domain.motion.MotionIntensity.SUBTLE -> ui.home.animations.HomeAnimationLevel.SUBTLE
-                domain.motion.MotionIntensity.BALANCED -> ui.home.animations.HomeAnimationLevel.BALANCED
-                domain.motion.MotionIntensity.EXPRESSIVE -> ui.home.animations.HomeAnimationLevel.EXPRESSIVE
+        if (previous.intensity != updated.intensity || previous.motionEffectsLevel != updated.motionEffectsLevel) {
+            val syncedHomeLevel = when {
+                updated.motionEffectsLevel == domain.motion.MotionEffectsLevel.MINIMAL_MOTION ||
+                    updated.intensity == domain.motion.MotionIntensity.OFF -> ui.home.animations.HomeAnimationLevel.OFF
+                updated.motionEffectsLevel == domain.motion.MotionEffectsLevel.REDUCED_MOTION ||
+                    updated.intensity == domain.motion.MotionIntensity.SUBTLE -> ui.home.animations.HomeAnimationLevel.SUBTLE
+                updated.intensity == domain.motion.MotionIntensity.BALANCED -> ui.home.animations.HomeAnimationLevel.BALANCED
+                else -> ui.home.animations.HomeAnimationLevel.EXPRESSIVE
             }
             setHomeAnimationLevel(syncedHomeLevel)
         }
@@ -1892,7 +1970,18 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setMotionIntensity(intensity: domain.motion.MotionIntensity) =
-        updateMotionConfig { it.copy(intensity = intensity) }
+        updateMotionConfig { current ->
+            val syncedLevel = when (intensity) {
+                domain.motion.MotionIntensity.OFF -> domain.motion.MotionEffectsLevel.MINIMAL_MOTION
+                domain.motion.MotionIntensity.SUBTLE -> domain.motion.MotionEffectsLevel.REDUCED_MOTION
+                domain.motion.MotionIntensity.BALANCED,
+                domain.motion.MotionIntensity.EXPRESSIVE -> domain.motion.MotionEffectsLevel.FULL_MOTION
+            }
+            current.copy(
+                intensity = intensity,
+                motionEffectsLevel = syncedLevel
+            )
+        }
 
     fun setScreenTransitionStyle(style: domain.motion.ScreenTransitionStyle) =
         updateMotionConfig { it.copy(transitionStyle = style) }
@@ -2728,6 +2817,14 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 .take(1)
                 .collect { saved ->
                     _motionConfig.value = saved
+                }
+        }
+        viewModelScope.launch {
+            virtualPetPrefs.settingsFlow
+                .catch { e -> Log.w(TAG, "Virtual pet DataStore stream error", e) }
+                .take(1)
+                .collect { saved ->
+                    _virtualPetSettings.value = saved
                 }
         }
         viewModelScope.launch {
@@ -4049,6 +4146,31 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
         scheduleNextTrackPreload()
     }
 
+    fun insertIntoQueueAt(index: Int, song: Song) {
+        val list = _queue.value.toMutableList()
+        val items = _queuedItems.value.toMutableList()
+        val activeItemId = items.getOrNull(_queueIndex.value)?.queueItemId
+        val insertPos = index.coerceIn(0, list.size)
+        val wrapped = musicQueueRepository.wrapSongs(listOf(song)).first()
+        list.add(insertPos, song)
+        if (items.size == _queue.value.size) {
+            items.add(insertPos.coerceAtMost(items.size), wrapped)
+            _queuedItems.value = items
+        } else {
+            syncQueuedItemsFromQueue(list)
+        }
+        _queue.value = list
+        val cur = _currentSong.value
+        val newIdx = activeItemId?.let { id -> _queuedItems.value.indexOfFirst { it.queueItemId == id } }
+            ?.takeIf { it >= 0 }
+            ?: list.indexOfFirst { it.id == cur?.id }.coerceAtLeast(0)
+        _queueIndex.value = newIdx.coerceAtMost((list.size - 1).coerceAtLeast(0))
+        cur?.let { findNextMatchedSong(it, list, _queueIndex.value) }
+        musicService?.updateQueueSnapshot(list, _queueIndex.value)
+        persistUnlimitedQueueAsync()
+        scheduleNextTrackPreload()
+    }
+
     fun clearQueue() {
         val cur = _currentSong.value
         val newList = if (cur != null) listOf(cur) else emptyList()
@@ -4631,7 +4753,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
             playedSongIds = existingPlayed,
             currentQueryHint = query
         )
-        _libraryFeedbackMessage.value = "Started SONORA Radio for \"${seedSong.title}\""
+        _libraryFeedbackMessage.value = "Started ${domain.branding.AppBranding.RADIO_NAME} for \"${seedSong.title}\""
 
         if (provider == null) return
         radioTopUpJob?.cancel()
@@ -5674,7 +5796,7 @@ class SonoraViewModel(application: Application) : AndroidViewModel(application) 
                 }
             )
         }
-        _libraryFeedbackMessage.value = "\"${track.title}\" is unavailable and was removed from Sonora Recommend ($reason)"
+        _libraryFeedbackMessage.value = "\"${track.title}\" is unavailable and was removed from ${domain.branding.AppBranding.RECOMMEND_NAME} ($reason)"
     }
 
     fun openRecommendedArtist(track: OnlineTrack) {

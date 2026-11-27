@@ -181,7 +181,7 @@ class SonoraRecommendationCoordinator(
                     isRefreshing = false,
                     isColdStartDiscovery = !profile.hasPersonalizationSignals,
                     isServingCachedOffline = false,
-                    errorMessage = "You're offline. Reconnect to refresh Sonora Recommend.",
+                    errorMessage = "You're offline. Reconnect to refresh ${domain.branding.AppBranding.RECOMMEND_NAME}.",
                     profileSummary = profile.summarySubtitle,
                     lastUpdatedAtMs = 0L,
                     refreshGeneration = refreshGeneration
@@ -339,7 +339,7 @@ class SonoraRecommendationCoordinator(
             isColdStartDiscovery = !profile.hasPersonalizationSignals,
             isServingCachedOffline = false,
             errorMessage = lastNetworkError ?: RegionMusicEligibilityFilter.emptyRegionRecommendationsMessage(
-                sectionTitle = "Sonora Recommend songs",
+                sectionTitle = "${domain.branding.AppBranding.RECOMMEND_NAME} songs",
                 countryCode = profile.countryCode,
                 providerName = provider.displayName
             ),

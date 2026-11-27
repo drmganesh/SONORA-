@@ -621,7 +621,7 @@ fun NotificationBellOptionsSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "SONORA Notifications • ${channel.name}",
+                text = "${domain.branding.AppBranding.APP_NAME} Notifications • ${channel.name}",
                 fontFamily = OutfitFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 19.sp,
@@ -646,7 +646,7 @@ fun NotificationBellOptionsSheet(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "SONORA checks followed channels periodically in the background and alerts you locally when new uploads appear. Manage per-channel preferences anytime.",
+                        text = "${domain.branding.AppBranding.APP_NAME} checks followed channels periodically in the background and alerts you locally when new uploads appear. Manage per-channel preferences anytime.",
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
                         lineHeight = 17.sp,
@@ -663,7 +663,7 @@ fun NotificationBellOptionsSheet(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Android notification permission is needed before SONORA can deliver new-upload alerts. Allow notifications in system settings and try again.",
+                        text = "Android notification permission is needed before ${domain.branding.AppBranding.APP_NAME} can deliver new-upload alerts. Allow notifications in system settings and try again.",
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
                         color = colors.textPrimary,
@@ -717,7 +717,7 @@ fun NotificationBellOptionsSheet(
                             color = colors.textPrimary
                         )
                         Text(
-                            text = "Notify me when SONORA detects new videos from this channel",
+                            text = "Notify me when ${domain.branding.AppBranding.APP_NAME} detects new videos from this channel",
                             fontFamily = PlusJakartaFontFamily,
                             fontSize = 12.sp,
                             color = colors.textSecondary
@@ -770,7 +770,7 @@ fun NotificationBellOptionsSheet(
                             color = colors.textPrimary
                         )
                         Text(
-                            text = "Stay subscribed in SONORA without background upload alerts",
+                            text = "Stay subscribed in ${domain.branding.AppBranding.APP_NAME} without background upload alerts",
                             fontFamily = PlusJakartaFontFamily,
                             fontSize = 12.sp,
                             color = colors.textSecondary
@@ -827,7 +827,7 @@ fun SonoraSaveVideoSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "Save in SONORA",
+                text = "Save in ${domain.branding.AppBranding.APP_NAME}",
                 fontFamily = OutfitFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 19.sp,
@@ -896,7 +896,7 @@ fun SonoraSaveVideoSheet(
 
             if (playlists.isEmpty()) {
                 Text(
-                    text = "No SONORA video playlists yet. Tap + New Playlist to create one.",
+                    text = "No ${domain.branding.AppBranding.APP_NAME} video playlists yet. Tap + New Playlist to create one.",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 12.sp,
                     color = colors.textSecondary
@@ -989,7 +989,7 @@ fun VideoAccountActionDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Bookmark in SONORA Library",
+                            text = "Bookmark in ${domain.branding.AppBranding.APP_NAME} Library",
                             fontFamily = PlusJakartaFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             color = colors.textPrimary

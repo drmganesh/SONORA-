@@ -31,13 +31,13 @@ enum class DynamicThemeMode(
         id = "background_only",
         displayName = "Dynamic Background Only",
         subtitle = "Change only background & glow",
-        description = "Applies dynamic gradients and ambient glow behind artwork while keeping controls in standard SONORA palette."
+        description = "Applies dynamic gradients and ambient glow behind artwork while keeping controls in standard ${domain.branding.AppBranding.APP_NAME} palette."
     ),
     STATIC_THEME(
         id = "static_theme",
         displayName = "Static Theme",
         subtitle = "Keep manually selected theme",
-        description = "Disables album art adaptation and uses the fixed SONORA studio theme."
+        description = "Disables album art adaptation and uses the fixed ${domain.branding.AppBranding.APP_NAME} studio theme."
     );
 
     companion object {

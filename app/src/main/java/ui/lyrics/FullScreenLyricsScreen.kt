@@ -754,7 +754,8 @@ fun FullScreenLyricsContent(
 
                                 itemsIndexed(
                                     items = doc.lines,
-                                    key = { index, item -> "${doc.trackKey}_${index}_${item.startTimeMs}" }
+                                    key = { index, item -> "${doc.trackKey}_${index}_${item.startTimeMs}" },
+                                    contentType = { _, _ -> "lyric_line" }
                                 ) { index, line ->
                                     val isCurrent = doc.isSynchronized && index == activeLineIndex
                                     val isPast = doc.isSynchronized && activeLineIndex >= 0 && index < activeLineIndex
@@ -766,7 +767,9 @@ fun FullScreenLyricsContent(
                                         isPast = isPast,
                                         isSynchronizedDoc = doc.isSynchronized,
                                         isSelected = isSelected,
-                                        currentPositionMs = currentPositionMs,
+                                        // Only stream high-frequency playback ticks to the currently highlighted line
+                                        // so all other visible lyric rows skip recomposition during playback.
+                                        currentPositionMs = if (isCurrent) currentPositionMs else 0L,
                                         userOffsetMs = timingState.effectiveOffsetMs,
                                         embeddedOffsetMs = doc.embeddedOffsetMs,
                                         appearance = appearance,

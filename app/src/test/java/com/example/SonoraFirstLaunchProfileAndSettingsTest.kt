@@ -107,7 +107,7 @@ class SonoraFirstLaunchProfileAndSettingsTest {
     @Test
     fun welcomeMessageAndCtaStrings_matchExactSpecification() {
         val expectedWelcome =
-            "Hey there! 💛\n\nWelcome to SONORA!\n\nYour music, your mood, your little world. 🎧\n\nLet's make this experience yours. What should we call you?"
+            "Hey there! 💛\n\nWelcome to MAYUR!\n\nYour music, your mood, your little world. 🎧\n\nLet's make this experience yours. What should we call you?"
         assertEquals(expectedWelcome, context.getString(R.string.onboarding_welcome_message))
         assertEquals("Let's Start Listening 🎵", context.getString(R.string.onboarding_start_listening_cta))
     }
@@ -257,7 +257,7 @@ class SonoraFirstLaunchProfileAndSettingsTest {
         composeRule.onNodeWithTag("onboarding_welcome_message")
             .performScrollTo()
             .assertIsDisplayed()
-            .assertTextContains("Welcome to SONORA!", substring = true)
+            .assertTextContains("Welcome to MAYUR!", substring = true)
 
         // Try submitting with whitespace-only name
         composeRule.onNodeWithTag("onboarding_name_input")

@@ -94,6 +94,7 @@ class SonoraApplication : Application(), ImageLoaderFactory {
                     .build()
             }
             .bitmapConfig(Bitmap.Config.RGB_565)
+            .crossfade(ui.motion.SonoraMotionSpecs.ARTWORK_CROSSFADE_MS)
             .respectCacheHeaders(false)
             .build()
     }
@@ -108,10 +109,10 @@ class SonoraApplication : Application(), ImageLoaderFactory {
                 }
                 val playbackChannel = NotificationChannel(
                     PLAYBACK_CHANNEL_ID,
-                    "SONORA Playback Controls",
+                    "${domain.branding.AppBranding.APP_NAME} Playback Controls",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "Displays playback status, album artwork, and controls for SONORA music player"
+                    description = "Displays playback status, album artwork, and controls for ${domain.branding.AppBranding.APP_NAME} music player"
                     setShowBadge(false)
                     lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                     enableVibration(false)
@@ -119,7 +120,7 @@ class SonoraApplication : Application(), ImageLoaderFactory {
                 }
                 val downloadsChannel = NotificationChannel(
                     DOWNLOADS_CHANNEL_ID,
-                    "SONORA Music Downloads",
+                    "${domain.branding.AppBranding.APP_NAME} Music Downloads",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
                     description = "Shows background audio download progress and completion updates"
@@ -129,10 +130,10 @@ class SonoraApplication : Application(), ImageLoaderFactory {
                 }
                 val channelUploadsChannel = NotificationChannel(
                     CHANNEL_UPLOADS_CHANNEL_ID,
-                    "SONORA Followed Channel Uploads",
+                    "${domain.branding.AppBranding.APP_NAME} Followed Channel Uploads",
                     NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
-                    description = "Alerts when channels you follow in SONORA publish new videos"
+                    description = "Alerts when channels you follow in ${domain.branding.AppBranding.APP_NAME} publish new videos"
                     setShowBadge(true)
                 }
                 notificationManager.createNotificationChannel(playbackChannel)

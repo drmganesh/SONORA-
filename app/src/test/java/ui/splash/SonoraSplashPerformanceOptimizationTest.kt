@@ -140,7 +140,7 @@ class SonoraSplashPerformanceOptimizationTest {
         composeRule.waitForIdle()
         assertTrue("Battery Saver mode should prepare Home immediately", prepared)
         composeRule.onNodeWithTag("sonora_splash_overlay").assertIsDisplayed()
-        composeRule.onNodeWithText("SONORA").assertIsDisplayed()
+        composeRule.onNodeWithText("MAYUR").assertIsDisplayed()
         assertTrue(
             "Waveform must be disabled under Battery Saver reduced motion",
             composeRule.onAllNodesWithTag("sonora_splash_waveform").fetchSemanticsNodes().isEmpty()

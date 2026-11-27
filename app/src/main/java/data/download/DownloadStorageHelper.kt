@@ -181,7 +181,7 @@ class DownloadStorageHelper(private val context: Context) {
             .replace(Regex("\\s+"), " ")
             .trim()
             .take(64)
-            .ifBlank { "SONORA Track" }
+            .ifBlank { "${domain.branding.AppBranding.APP_NAME} Track" }
         val cleanArtist = artist.replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()

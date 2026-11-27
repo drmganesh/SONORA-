@@ -1,10 +1,16 @@
 package ui.queue
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,7 +28,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -63,31 +71,53 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import com.example.viewmodel.SonoraViewModel
 import data.queue.QueuedMusicItem
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import ui.components.CircularArtwork
+import ui.motion.LocalEffectiveMotionState
+import ui.motion.QueueDismissMath
+import ui.motion.SonoraTransitions
 import ui.theme.LocalEditorialColors
+import kotlin.math.abs
 
 /**
  * Editorial Unlimited Now Playing Queue Screen:
@@ -103,25 +133,101 @@ fun QueueScreen(
     viewModel: SonoraViewModel,
     onBack: () -> Unit,
     onOpenNowPlaying: () -> Unit,
+    listState: LazyListState = rememberLazyListState(),
     modifier: Modifier = Modifier
 ) {
     val colors = LocalEditorialColors.current
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
     val rowDragStepPx = with(density) { 64.dp.toPx() }
+    val dismissThresholdPx = with(density) { 92.dp.toPx() }
+    val dismissVelocityThresholdPx = with(density) { 620.dp.toPx() }
+    val maxDismissPullPx = with(density) { 260.dp.toPx() }
 
-    val queue by viewModel.queue.collectAsState()
-    val queuedItems by viewModel.queuedItems.collectAsState()
-    val queueIndex by viewModel.queueIndex.collectAsState()
-    val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
-    val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
-    val songRadioSession by viewModel.songRadioSession.collectAsState()
+    val queue by viewModel.queue.collectAsStateWithLifecycle()
+    val queuedItems by viewModel.queuedItems.collectAsStateWithLifecycle()
+    val queueIndex by viewModel.queueIndex.collectAsStateWithLifecycle()
+    val currentSong by viewModel.currentSong.collectAsStateWithLifecycle()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsStateWithLifecycle()
+    val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsStateWithLifecycle()
+    val songRadioSession by viewModel.songRadioSession.collectAsStateWithLifecycle()
+    val motionState = LocalEffectiveMotionState.current
+
+    val latestOnBack by rememberUpdatedState(onBack)
+    val latestMotionState by rememberUpdatedState(motionState)
 
     var showSaveDialog by remember { mutableStateOf(false) }
     var playlistNameInput by remember { mutableStateOf("") }
     var recentExpanded by remember { mutableStateOf(true) }
     var longPressTarget by remember { mutableStateOf<Pair<Int, QueuedMusicItem>?>(null) }
+    var lastRemovedTrack by remember { mutableStateOf<Pair<Int, Song>?>(null) }
+    var isReorderingItem by remember { mutableStateOf(false) }
+
+    val dismissOffsetY = remember { Animatable(0f) }
+
+    val queueDismissNestedScroll = remember(listState, dismissThresholdPx, dismissVelocityThresholdPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (isReorderingItem) return Offset.Zero
+                // If user already started pulling the queue downward and reverses upward, retract sheet first
+                if (dismissOffsetY.value > 0f && available.y < 0f) {
+                    val consumedY = available.y.coerceAtLeast(-dismissOffsetY.value)
+                    val target = (dismissOffsetY.value + consumedY).coerceAtLeast(0f)
+                    scope.launch { dismissOffsetY.snapTo(target) }
+                    return Offset(0f, consumedY)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (isReorderingItem || source != NestedScrollSource.UserInput) return Offset.Zero
+                val atListTop = listState.firstVisibleItemIndex == 0 &&
+                    listState.firstVisibleItemScrollOffset == 0
+                if (atListTop && available.y > 0f) {
+                    val nextOffset = (dismissOffsetY.value + available.y * 0.85f).coerceIn(0f, maxDismissPullPx)
+                    scope.launch { dismissOffsetY.snapTo(nextOffset) }
+                    return Offset(0f, available.y)
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (dismissOffsetY.value <= 0f) return Velocity.Zero
+                val shouldDismiss = QueueDismissMath.shouldDismissToPlayer(
+                    dragDownPx = dismissOffsetY.value,
+                    velocityYPxPerSec = available.y,
+                    distanceThresholdPx = dismissThresholdPx,
+                    velocityThresholdPxPerSec = dismissVelocityThresholdPx
+                )
+                if (shouldDismiss) {
+                    dismissOffsetY.snapTo(0f)
+                    latestOnBack()
+                } else {
+                    if (latestMotionState.animationsEnabled) {
+                        dismissOffsetY.animateTo(
+                            0f,
+                            spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMedium)
+                        )
+                    } else {
+                        dismissOffsetY.snapTo(0f)
+                    }
+                }
+                return Velocity(0f, available.y)
+            }
+        }
+    }
+
+    LaunchedEffect(lastRemovedTrack) {
+        if (lastRemovedTrack != null) {
+            delay(4500L)
+            lastRemovedTrack = null
+        }
+    }
 
     val effectiveItems = remember(queue, queuedItems) {
         if (queuedItems.size == queue.size && queuedItems.isNotEmpty()) {
@@ -137,12 +243,26 @@ fun QueueScreen(
         } else emptyList()
     }
 
+    val dismissProgress = (dismissOffsetY.value / dismissThresholdPx).coerceIn(0f, 1f)
+
     Box(
         modifier = modifier
             .fillMaxSize()
+            .graphicsLayer {
+                translationY = dismissOffsetY.value
+                alpha = (1f - dismissProgress * 0.14f).coerceIn(0.84f, 1f)
+            }
             .background(colors.backgroundBrush)
             .statusBarsPadding()
             .navigationBarsPadding()
+            .semantics {
+                customActions = listOf(
+                    CustomAccessibilityAction("Return to music player") {
+                        latestOnBack()
+                        true
+                    }
+                )
+            }
             .testTag("queue_screen"),
         contentAlignment = Alignment.TopCenter
     ) {
@@ -150,96 +270,198 @@ fun QueueScreen(
             modifier = Modifier
                 .widthIn(max = 760.dp)
                 .fillMaxSize()
+                .nestedScroll(queueDismissNestedScroll)
         ) {
-            // Header
-            Row(
+            // Swipe-down drag handle + Header zone (always returns cleanly to full music player)
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .pointerInput(dismissThresholdPx, dismissVelocityThresholdPx) {
+                        val touchSlop = viewConfiguration.touchSlop
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = true)
+                            var totalDx = 0f
+                            var totalDy = 0f
+                            var lockedDown = false
+                            var cancelled = false
+                            val velocityTracker = VelocityTracker()
+                            velocityTracker.addPosition(down.uptimeMillis, down.position)
+
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                if (event.changes.count { it.pressed } >= 2) {
+                                    cancelled = true
+                                    break
+                                }
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+
+                                val delta = change.positionChange()
+                                totalDx += delta.x
+                                totalDy += delta.y
+
+                                if (!lockedDown) {
+                                    val absX = abs(totalDx)
+                                    val absY = abs(totalDy)
+                                    if (absX > touchSlop && absX > absY) {
+                                        cancelled = true
+                                        break
+                                    }
+                                    if (totalDy > touchSlop && absY >= absX * 1.25f) {
+                                        lockedDown = true
+                                    }
+                                }
+
+                                if (lockedDown) {
+                                    change.consume()
+                                    velocityTracker.addPosition(change.uptimeMillis, change.position)
+                                    val clamped = totalDy.coerceIn(0f, maxDismissPullPx)
+                                    scope.launch { dismissOffsetY.snapTo(clamped) }
+                                }
+                            }
+
+                            if (!cancelled && lockedDown) {
+                                val velocityY = velocityTracker.calculateVelocity().y
+                                val shouldDismiss = QueueDismissMath.shouldDismissToPlayer(
+                                    dragDownPx = totalDy,
+                                    velocityYPxPerSec = velocityY,
+                                    distanceThresholdPx = dismissThresholdPx,
+                                    velocityThresholdPxPerSec = dismissVelocityThresholdPx
+                                )
+                                if (shouldDismiss) {
+                                    scope.launch { dismissOffsetY.snapTo(0f) }
+                                    latestOnBack()
+                                } else {
+                                    scope.launch {
+                                        if (latestMotionState.animationsEnabled) {
+                                            dismissOffsetY.animateTo(
+                                                0f,
+                                                spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMedium)
+                                            )
+                                        } else {
+                                            dismissOffsetY.snapTo(0f)
+                                        }
+                                    }
+                                }
+                            } else if (dismissOffsetY.value > 0f) {
+                                scope.launch {
+                                    dismissOffsetY.animateTo(
+                                        0f,
+                                        spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMedium)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    .testTag("queue_header_drag_area")
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    IconButton(
-                        onClick = onBack,
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 2.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
                         modifier = Modifier
-                            .size(48.dp)
-                            .testTag("queue_back_button")
-                    ) {
-                        Box(
+                            .width(42.dp)
+                            .height(4.dp)
+                            .clip(CircleShape)
+                            .background(colors.textMuted.copy(alpha = 0.42f))
+                            .testTag("queue_drag_handle")
+                    )
+                }
+
+                // Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        IconButton(
+                            onClick = onBack,
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(colors.surface)
-                                .border(0.75.dp, colors.cardBorder, CircleShape),
-                            contentAlignment = Alignment.Center
+                                .size(48.dp)
+                                .testTag("queue_back_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                contentDescription = "Back",
-                                tint = colors.textPrimary,
-                                modifier = Modifier.size(20.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.surface)
+                                    .border(0.75.dp, colors.cardBorder, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = colors.textPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Column {
+                            Text(
+                                text = "Up Next",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 26.sp,
+                                color = colors.textPrimary
+                            )
+                            Text(
+                                text = "${effectiveItems.size} tracks in unlimited queue",
+                                fontFamily = PlusJakartaFontFamily,
+                                fontSize = 12.sp,
+                                color = colors.textSecondary
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Column {
-                        Text(
-                            text = "Up Next",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 26.sp,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = "${effectiveItems.size} tracks in unlimited queue",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontSize = 12.sp,
-                            color = colors.textSecondary
-                        )
-                    }
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    IconButton(
-                        onClick = { viewModel.shuffleRemainingQueue() },
-                        enabled = upNext.size > 1,
-                        modifier = Modifier.size(48.dp).testTag("queue_shuffle_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Shuffle,
-                            contentDescription = "Shuffle Upcoming Queue",
-                            tint = colors.accentStrong
-                        )
-                    }
-                    IconButton(
-                        onClick = { showSaveDialog = true },
-                        enabled = effectiveItems.isNotEmpty(),
-                        modifier = Modifier.size(48.dp).testTag("queue_save_playlist_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.BookmarkAdd,
-                            contentDescription = "Save Queue as Playlist",
-                            tint = colors.textPrimary
-                        )
-                    }
-                    IconButton(
-                        onClick = { viewModel.clearQueue() },
-                        enabled = upNext.isNotEmpty(),
-                        modifier = Modifier.size(48.dp).testTag("queue_clear_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.DeleteSweep,
-                            contentDescription = "Clear Upcoming Queue",
-                            tint = colors.textSecondary
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        IconButton(
+                            onClick = { viewModel.shuffleRemainingQueue() },
+                            enabled = upNext.size > 1,
+                            modifier = Modifier.size(48.dp).testTag("queue_shuffle_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Shuffle,
+                                contentDescription = "Shuffle Upcoming Queue",
+                                tint = colors.accentStrong
+                            )
+                        }
+                        IconButton(
+                            onClick = { showSaveDialog = true },
+                            enabled = effectiveItems.isNotEmpty(),
+                            modifier = Modifier.size(48.dp).testTag("queue_save_playlist_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.BookmarkAdd,
+                                contentDescription = "Save Queue as Playlist",
+                                tint = colors.textPrimary
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.clearQueue() },
+                            enabled = upNext.isNotEmpty(),
+                            modifier = Modifier.size(48.dp).testTag("queue_clear_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.DeleteSweep,
+                                contentDescription = "Clear Upcoming Queue",
+                                tint = colors.textSecondary
+                            )
+                        }
                     }
                 }
             }
 
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("queue_lazy_column"),
@@ -248,7 +470,7 @@ fun QueueScreen(
             ) {
                 // Current Playing Section
                 currentSong?.let { active ->
-                    item(key = "now_playing_queue_header") {
+                    item(key = "now_playing_queue_header", contentType = "section_header") {
                         Text(
                             text = "CURRENT PLAYING",
                             fontFamily = PlusJakartaFontFamily,
@@ -259,7 +481,7 @@ fun QueueScreen(
                             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
                         )
                     }
-                    item(key = "now_playing_queue_card") {
+                    item(key = "now_playing_queue_card", contentType = "current_playing") {
                         Surface(
                             onClick = onOpenNowPlaying,
                             shape = RoundedCornerShape(22.dp),
@@ -359,7 +581,7 @@ fun QueueScreen(
                 }
 
                 // Up Next Section Header
-                item(key = "up_next_label") {
+                item(key = "up_next_label", contentType = "section_header") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -387,7 +609,7 @@ fun QueueScreen(
                 }
 
                 if (upNext.isEmpty()) {
-                    item(key = "empty_up_next") {
+                    item(key = "empty_up_next", contentType = "empty_state") {
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = colors.surfaceTinted,
@@ -430,7 +652,8 @@ fun QueueScreen(
                 } else {
                     itemsIndexed(
                         items = upNext,
-                        key = { _, item -> "q_${item.queueItemId}" }
+                        key = { _, item -> "q_${item.queueItemId}" },
+                        contentType = { _, _ -> "queue_track" }
                     ) { offsetIdx, queuedItem ->
                         val song = queuedItem.song
                         val actualQueueIndex = safeIndex + 1 + offsetIdx
@@ -439,6 +662,7 @@ fun QueueScreen(
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
                                 if (value == SwipeToDismissBoxValue.EndToStart || value == SwipeToDismissBoxValue.StartToEnd) {
+                                    lastRemovedTrack = actualQueueIndex to song
                                     viewModel.removeFromQueue(actualQueueIndex)
                                     true
                                 } else {
@@ -498,15 +722,18 @@ fun QueueScreen(
                                                 var accum = 0f
                                                 detectDragGesturesAfterLongPress(
                                                     onDragStart = {
+                                                        isReorderingItem = true
                                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                         accum = 0f
                                                         dragOffsetY = 0f
                                                     },
                                                     onDragEnd = {
+                                                        isReorderingItem = false
                                                         accum = 0f
                                                         dragOffsetY = 0f
                                                     },
                                                     onDragCancel = {
+                                                        isReorderingItem = false
                                                         accum = 0f
                                                         dragOffsetY = 0f
                                                     },
@@ -613,7 +840,10 @@ fun QueueScreen(
                                         }
                                     }
                                     IconButton(
-                                        onClick = { viewModel.removeFromQueue(actualQueueIndex) },
+                                        onClick = {
+                                            lastRemovedTrack = actualQueueIndex to song
+                                            viewModel.removeFromQueue(actualQueueIndex)
+                                        },
                                         modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
@@ -631,7 +861,7 @@ fun QueueScreen(
 
                 // Recently Played Section (Collapsible)
                 if (recentlyPlayed.isNotEmpty()) {
-                    item(key = "recent_history_header") {
+                    item(key = "recent_history_header", contentType = "section_header") {
                         Surface(
                             onClick = { recentExpanded = !recentExpanded },
                             shape = RoundedCornerShape(14.dp),
@@ -674,7 +904,11 @@ fun QueueScreen(
                     }
 
                     if (recentExpanded) {
-                        itemsIndexed(recentlyPlayed.take(15), key = { idx, song -> "hist_${song.id}_$idx" }) { _, song ->
+                        itemsIndexed(
+                            items = recentlyPlayed.take(15),
+                            key = { idx, song -> "hist_${song.id}_$idx" },
+                            contentType = { _, _ -> "recent_track" }
+                        ) { _, song ->
                             Surface(
                                 onClick = { viewModel.playSong(song, recentlyPlayed) },
                                 shape = RoundedCornerShape(18.dp),
@@ -728,7 +962,63 @@ fun QueueScreen(
                     }
                 }
 
-                item { Spacer(modifier = Modifier.height(24.dp)) }
+                item(key = "queue_bottom_spacer", contentType = "spacer") { Spacer(modifier = Modifier.height(72.dp)) }
+            }
+        }
+
+        // Undo banner for swipe-to-remove or quick remove actions
+        AnimatedVisibility(
+            visible = lastRemovedTrack != null,
+            enter = SonoraTransitions.toastEnter(motionState),
+            exit = SonoraTransitions.toastExit(motionState),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 20.dp, vertical = 14.dp)
+        ) {
+            val removed = lastRemovedTrack
+            if (removed != null) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = colors.surfaceElevated,
+                    shadowElevation = 6.dp,
+                    border = BorderStroke(1.dp, colors.accentStrong.copy(alpha = 0.45f)),
+                    modifier = Modifier
+                        .widthIn(max = 520.dp)
+                        .fillMaxWidth()
+                        .testTag("queue_undo_remove_banner")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Removed \"${removed.second.title}\"",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 12.5.sp,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = {
+                                viewModel.insertIntoQueueAt(removed.first, removed.second)
+                                lastRemovedTrack = null
+                            },
+                            modifier = Modifier.testTag("queue_undo_remove_button")
+                        ) {
+                            Text(
+                                text = "Undo",
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.accentStrong
+                            )
+                        }
+                    }
+                }
             }
         }
     }

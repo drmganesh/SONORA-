@@ -174,20 +174,17 @@ fun MusicTasteOnboardingScreen(
                 Spacer(modifier = Modifier.height(14.dp))
             }
 
+            val motionState = ui.motion.LocalEffectiveMotionState.current
             AnimatedContent(
                 targetState = currentStep,
                 transitionSpec = {
                     if (reduceAnimations) {
                         fadeIn(tween(0)) togetherWith fadeOut(tween(0))
                     } else {
-                        val forward = targetState.ordinal >= initialState.ordinal
-                        val enter = fadeIn(tween(220)) + slideInHorizontally(tween(240)) {
-                            if (forward) it / 8 else -it / 8
-                        }
-                        val exit = fadeOut(tween(180)) + slideOutHorizontally(tween(200)) {
-                            if (forward) -it / 8 else it / 8
-                        }
-                        enter togetherWith exit
+                        ui.motion.SonoraTransitions.onboardingStepTransition(
+                            forward = targetState.ordinal >= initialState.ordinal,
+                            motion = motionState
+                        )
                     }
                 },
                 label = "music_taste_step_transition",
@@ -322,14 +319,39 @@ private fun MusicTasteWelcomeFinishStep(
             contentAlignment = Alignment.Center
         ) {
             Image(
-                painter = painterResource(id = R.drawable.sonora_official_logo),
+                painter = painterResource(id = domain.branding.AppBranding.LOGO_DRAWABLE_RES),
                 contentDescription = stringResource(id = R.string.splash_logo_content_desc),
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = stringResource(id = R.string.app_name),
+            fontFamily = OutfitFontFamily,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 15.sp,
+            letterSpacing = 3.2.sp,
+            color = colors.accentStrong,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(3.dp))
+
+        Text(
+            text = stringResource(id = R.string.splash_brand_tagline),
+            fontFamily = PlusJakartaFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 12.5.sp,
+            letterSpacing = 0.4.sp,
+            color = colors.textSecondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.testTag("music_taste_welcome_tagline")
+        )
+
+        Spacer(modifier = Modifier.height(18.dp))
 
         Text(
             text = stringResource(id = R.string.music_taste_welcome_title),

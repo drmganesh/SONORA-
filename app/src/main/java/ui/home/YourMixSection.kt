@@ -1,15 +1,5 @@
 package ui.home
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,34 +10,26 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.Song
@@ -55,7 +37,6 @@ import com.example.ui.theme.OutfitFontFamily
 import com.example.ui.theme.PlusJakartaFontFamily
 import ui.components.CircularArtwork
 import ui.home.animations.HomeAnimationLevel
-import ui.home.animations.rememberShouldAnimateHomeMotion
 import ui.theme.EditorialColors
 
 data class MixArtistChip(
@@ -65,7 +46,7 @@ data class MixArtistChip(
 
 /**
  * Editorial Hero Section: Oversized responsive "Your" / "Mix" title (guaranteed never to wrap mid-word),
- * overlapping circular Play & Shuffle buttons, dynamic contributor subtitle, and animated artist label strip.
+ * responsive slot for the Mayur Virtual Pet, dynamic contributor subtitle, and artist label strip.
  */
 @Composable
 fun YourMixSection(
@@ -79,33 +60,10 @@ fun YourMixSection(
     onArtistChipClick: (MixArtistChip) -> Unit,
     animationLevel: HomeAnimationLevel = HomeAnimationLevel.BALANCED,
     screenVisible: Boolean = true,
+    petContent: (@Composable (Dp) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
-    val motionEnabled = rememberShouldAnimateHomeMotion(level = animationLevel, screenVisible = screenVisible)
-
-    val playClusterTargetScale = if (motionEnabled && isMixPlaying && animationLevel.amplitudeScale > 0f) {
-        val amp = (0.04f * animationLevel.amplitudeScale).coerceIn(0.015f, 0.06f)
-        val trans = rememberInfiniteTransition(label = "your_mix_play_breathe")
-        val s by trans.animateFloat(
-            initialValue = 1.0f,
-            targetValue = 1.0f + amp,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1500, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "your_mix_play_scale"
-        )
-        s
-    } else {
-        1.0f
-    }
-    val settledPlayScale by animateFloatAsState(
-        targetValue = playClusterTargetScale,
-        animationSpec = spring(),
-        label = "your_mix_play_settle"
-    )
-    val effectivePlayScale = if (motionEnabled && isMixPlaying) playClusterTargetScale else settledPlayScale
 
     Column(
         modifier = modifier
@@ -129,19 +87,33 @@ fun YourMixSection(
                 maxWidth < 410.dp -> 48.sp
                 else -> 52.sp
             }
-            val playClusterSize = if (maxWidth < 340.dp) 92.dp else 102.dp
-            val playButtonSize = if (maxWidth < 340.dp) 78.dp else 88.dp
+            val petSize = when {
+                maxWidth < 310.dp -> 104.dp
+                maxWidth < 360.dp -> 116.dp
+                maxWidth < 420.dp -> 126.dp
+                else -> 136.dp
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Left: Explicit two-line editorial headline so "Your" never splits mid-word
+                // Left: Explicit two-line editorial headline (clickable to play/pause Your Mix)
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(end = 10.dp)
+                        .padding(end = if (petContent != null) 8.dp else 0.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable(
+                            enabled = hasTracks,
+                            role = Role.Button,
+                            onClickLabel = if (isMixPlaying) "Pause Your Mix" else "Play Your Mix"
+                        ) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onPlayMix()
+                        }
+                        .padding(vertical = 2.dp)
                         .testTag("your_mix_heading")
                 ) {
                     Text(
@@ -168,71 +140,13 @@ fun YourMixSection(
                     )
                 }
 
-                // Right: Prominent circular Play button with overlapping Shuffle badge
-                Box(
-                    modifier = Modifier
-                        .size(playClusterSize)
-                        .padding(4.dp)
-                        .graphicsLayer {
-                            scaleX = effectivePlayScale
-                            scaleY = effectivePlayScale
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Surface(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onPlayMix()
-                        },
-                        enabled = hasTracks,
-                        shape = CircleShape,
-                        color = colors.accentPill,
-                        shadowElevation = 8.dp,
-                        modifier = Modifier
-                            .size(playButtonSize)
-                            .align(Alignment.CenterStart)
-                            .testTag("your_mix_play_button")
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = if (isMixPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (isMixPlaying) "Pause Your Mix" else "Play Your Mix",
-                                tint = colors.onAccentPill,
-                                modifier = Modifier.size(34.dp)
-                            )
-                        }
-                    }
-
-                    // Overlapping Shuffle badge button (min 48.dp touch wrapper)
+                // Right: Responsive Mayur Virtual Pet slot (collapses cleanly when disabled)
+                if (petContent != null) {
                     Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .offset(x = 2.dp, y = 2.dp)
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .clickable(enabled = hasTracks) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onShuffleMix()
-                            }
-                            .testTag("your_mix_shuffle_button"),
-                        contentAlignment = Alignment.Center
+                        modifier = Modifier.testTag("your_mix_pet_slot"),
+                        contentAlignment = Alignment.CenterEnd
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .shadow(6.dp, CircleShape, ambientColor = colors.shadowColor)
-                                .clip(CircleShape)
-                                .background(colors.accentStrong)
-                                .border(2.5.dp, colors.background, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Shuffle,
-                                contentDescription = "Shuffle Your Mix",
-                                tint = colors.onAccentStrong,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                        petContent(petSize)
                     }
                 }
             }

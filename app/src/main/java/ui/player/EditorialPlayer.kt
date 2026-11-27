@@ -115,7 +115,7 @@ fun EditorialPlayer(
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "SONORA GAZETTE • ISSUE 04",
+                            text = "${domain.branding.AppBranding.APP_NAME} GAZETTE • ISSUE 04",
                             fontFamily = OutfitFontFamily,
                             color = colors.accentStrong,
                             fontSize = 11.sp,

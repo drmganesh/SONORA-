@@ -208,7 +208,7 @@ fun StickerPlayer(
                         shadowElevation = 6.dp
                     ) {
                         Text(
-                            text = "★ SONORA SOUND",
+                            text = "★ ${domain.branding.AppBranding.APP_NAME} SOUND",
                             fontFamily = OutfitFontFamily,
                             color = colors.onAccentStrong,
                             fontSize = 10.sp,

@@ -5,6 +5,46 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
+ * User-facing motion preference surfaced under Settings -> Appearance -> Motion Effects.
+ *
+ * - [FULL_MOTION] (Default): Natural, crisp springs, screen transitions, subtle parallax & ambient effects.
+ * - [REDUCED_MOTION]: Shortened transitions; disables parallax, decorative loops, and large-scale movement.
+ * - [MINIMAL_MOTION]: Retains only essential state feedback (fast fades, progress indicators, touch feedback).
+ */
+enum class MotionEffectsLevel(
+    val label: String,
+    val subtitle: String,
+    val durationScale: Float,
+    val distanceScale: Float
+) {
+    FULL_MOTION(
+        label = "Full Motion",
+        subtitle = "Fluid transitions, tactile springs & subtle depth",
+        durationScale = 1.0f,
+        distanceScale = 1.0f
+    ),
+    REDUCED_MOTION(
+        label = "Reduced Motion",
+        subtitle = "Shorter transitions without parallax or large movement",
+        durationScale = 0.58f,
+        distanceScale = 0.25f
+    ),
+    MINIMAL_MOTION(
+        label = "Minimal Motion",
+        subtitle = "Essential state feedback & progress indicators only",
+        durationScale = 0.35f,
+        distanceScale = 0f
+    );
+
+    companion object {
+        val DEFAULT = FULL_MOTION
+
+        fun fromName(raw: String?): MotionEffectsLevel =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: DEFAULT
+    }
+}
+
+/**
  * Global motion intensity controlling timing, spring stiffness, parallax depth, and micro-motion.
  */
 enum class MotionIntensity(
@@ -73,7 +113,7 @@ enum class ScreenTransitionStyle(
 }
 
 /**
- * Global swipe sensitivity affecting track skip, mini-player, and navigation gestures.
+ * Global swipe sensitivity affecting track skip and navigation gestures.
  */
 enum class GestureSensitivityLevel(
     val label: String,
@@ -121,6 +161,7 @@ enum class GestureSensitivityLevel(
  */
 @Immutable
 data class GlobalMotionConfig(
+    val motionEffectsLevel: MotionEffectsLevel = MotionEffectsLevel.FULL_MOTION,
     val intensity: MotionIntensity = MotionIntensity.BALANCED,
     val transitionStyle: ScreenTransitionStyle = ScreenTransitionStyle.SMOOTH,
     val gestureSensitivity: GestureSensitivityLevel = GestureSensitivityLevel.MEDIUM,
@@ -136,14 +177,22 @@ data class GlobalMotionConfig(
 }
 
 /**
- * Resolved runtime motion parameters honoring both app preferences and Android system
- * ANIMATOR_DURATION_SCALE / Reduce Motion accessibility settings.
+ * Resolved runtime motion parameters honoring app preferences, Android system
+ * ANIMATOR_DURATION_SCALE, Battery Saver, low-RAM devices, and accessibility settings.
  */
 @Immutable
 data class EffectiveMotionState(
     val config: GlobalMotionConfig,
+    val effectiveEffectsLevel: MotionEffectsLevel,
     val systemAnimatorScale: Float,
+    val isPowerSaveMode: Boolean,
+    val isLowRamDevice: Boolean,
+    val isTouchExplorationEnabled: Boolean,
     val animationsEnabled: Boolean,
+    val essentialFeedbackEnabled: Boolean,
+    val decorativeMotionEnabled: Boolean,
+    val ambientEffectsEnabled: Boolean,
+    val allowLargeScaleMovement: Boolean,
     val durationScale: Float,
     val distanceScale: Float,
     val transitionStyle: ScreenTransitionStyle,
@@ -155,9 +204,22 @@ data class EffectiveMotionState(
     val swipeThresholdDp: Int,
     val velocityThresholdDpPerSec: Float
 ) {
-    fun durationMillis(baseMs: Int): Int {
-        if (!animationsEnabled || baseMs <= 0) return 0
-        return (baseMs * durationScale).roundToInt().coerceIn(75, 950)
+    /**
+     * Resolves a duration in milliseconds honoring the active motion level & system animator scale.
+     * For [essential] feedback (button press, toggle, progress), retains crisp non-zero feedback
+     * in Minimal Motion unless the Android OS has disabled animators globally (scale == 0).
+     */
+    fun durationMillis(baseMs: Int, essential: Boolean = false): Int {
+        if (baseMs <= 0 || systemAnimatorScale <= 0.01f) return 0
+        if (!animationsEnabled && !essential) return 0
+        if (effectiveEffectsLevel == MotionEffectsLevel.MINIMAL_MOTION) {
+            return if (essential) {
+                (baseMs * 0.45f * systemAnimatorScale).roundToInt().coerceIn(70, 140)
+            } else {
+                0
+            }
+        }
+        return (baseMs * durationScale).roundToInt().coerceIn(75, 420)
     }
 
     fun shouldTriggerSwipe(dragPx: Float, velocityPxPerSec: Float, thresholdPx: Float, velocityPxThreshold: Float): Boolean {
@@ -167,29 +229,83 @@ data class EffectiveMotionState(
 
 fun resolveEffectiveMotionState(
     config: GlobalMotionConfig,
-    systemAnimatorScale: Float = 1f
+    systemAnimatorScale: Float = 1f,
+    isPowerSaveMode: Boolean = false,
+    isLowRamDevice: Boolean = false,
+    isTouchExplorationEnabled: Boolean = false
 ): EffectiveMotionState {
     val sanitizedSystemScale = systemAnimatorScale.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 1f
-    val animationsEnabled = config.intensity != MotionIntensity.OFF && sanitizedSystemScale > 0.01f
+    val systemAnimatorsOff = sanitizedSystemScale <= 0.01f
+
+    // Downgrade effective level automatically under system Reduce Motion, Battery Saver, Low-RAM, or Intensity.OFF
+    val effectiveLevel = when {
+        systemAnimatorsOff || config.intensity == MotionIntensity.OFF -> MotionEffectsLevel.MINIMAL_MOTION
+        config.motionEffectsLevel == MotionEffectsLevel.MINIMAL_MOTION -> MotionEffectsLevel.MINIMAL_MOTION
+        config.motionEffectsLevel == MotionEffectsLevel.REDUCED_MOTION -> MotionEffectsLevel.REDUCED_MOTION
+        isPowerSaveMode || isLowRamDevice || isTouchExplorationEnabled -> MotionEffectsLevel.REDUCED_MOTION
+        else -> MotionEffectsLevel.FULL_MOTION
+    }
+
+    val animationsEnabled = !systemAnimatorsOff &&
+        config.intensity != MotionIntensity.OFF &&
+        effectiveLevel != MotionEffectsLevel.MINIMAL_MOTION
+
+    val essentialFeedbackEnabled = !systemAnimatorsOff
+
+    val allowLargeScaleMovement = animationsEnabled &&
+        effectiveLevel == MotionEffectsLevel.FULL_MOTION &&
+        !isPowerSaveMode
+
+    val decorativeMotionEnabled = allowLargeScaleMovement && !isLowRamDevice
+
+    val ambientEffectsEnabled = !systemAnimatorsOff &&
+        effectiveLevel != MotionEffectsLevel.MINIMAL_MOTION &&
+        config.intensity != MotionIntensity.OFF
+
+    val rawDurationScale = config.intensity.durationMultiplier *
+        effectiveLevel.durationScale *
+        sanitizedSystemScale
+
     val combinedDurationScale = if (!animationsEnabled) {
         0f
     } else {
-        (config.intensity.durationMultiplier * sanitizedSystemScale).coerceIn(0.35f, 1.5f)
+        rawDurationScale.coerceIn(0.35f, 1.25f)
     }
+
+    val effectiveDistanceScale = when {
+        !animationsEnabled -> 0f
+        !allowLargeScaleMovement -> (config.intensity.distanceScale * effectiveLevel.distanceScale).coerceIn(0f, 0.25f)
+        else -> (config.intensity.distanceScale * effectiveLevel.distanceScale).coerceIn(0f, 1.25f)
+    }
+
+    val effectiveStyle = if (!allowLargeScaleMovement && animationsEnabled) {
+        ScreenTransitionStyle.FADE
+    } else {
+        config.transitionStyle
+    }
+
     return EffectiveMotionState(
         config = config,
+        effectiveEffectsLevel = effectiveLevel,
         systemAnimatorScale = sanitizedSystemScale,
+        isPowerSaveMode = isPowerSaveMode,
+        isLowRamDevice = isLowRamDevice,
+        isTouchExplorationEnabled = isTouchExplorationEnabled,
         animationsEnabled = animationsEnabled,
+        essentialFeedbackEnabled = essentialFeedbackEnabled,
+        decorativeMotionEnabled = decorativeMotionEnabled,
+        ambientEffectsEnabled = ambientEffectsEnabled,
+        allowLargeScaleMovement = allowLargeScaleMovement,
         durationScale = combinedDurationScale,
-        distanceScale = if (animationsEnabled) config.intensity.distanceScale else 0f,
-        transitionStyle = config.transitionStyle,
-        swipeNavigationEnabled = config.swipeNavigationEnabled,
-        artworkTransitionsEnabled = animationsEnabled && config.artworkTransitionsEnabled,
+        distanceScale = effectiveDistanceScale,
+        transitionStyle = effectiveStyle,
+        swipeNavigationEnabled = config.swipeNavigationEnabled && !isTouchExplorationEnabled,
+        artworkTransitionsEnabled = (animationsEnabled || essentialFeedbackEnabled) && config.artworkTransitionsEnabled,
         hapticEnabled = config.hapticFeedbackEnabled,
-        parallaxAndScaleEnabled = animationsEnabled &&
-            config.parallaxEffectsEnabled &&
-            config.intensity != MotionIntensity.OFF,
-        animatedAlbumColorsEnabled = animationsEnabled && config.animatedAlbumColorsEnabled,
+        parallaxAndScaleEnabled = allowLargeScaleMovement &&
+            !isLowRamDevice &&
+            config.parallaxEffectsEnabled,
+        animatedAlbumColorsEnabled = animationsEnabled && config.animatedAlbumColorsEnabled && !isPowerSaveMode,
         swipeThresholdDp = config.gestureSensitivity.thresholdDp,
         velocityThresholdDpPerSec = config.gestureSensitivity.velocityThresholdDpPerSec
     )

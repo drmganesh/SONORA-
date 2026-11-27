@@ -338,7 +338,7 @@ object GitHubReleaseParser {
     }
 
     fun formatShortReleaseNotes(rawNotes: String, maxChars: Int = 600): String {
-        if (rawNotes.isBlank()) return "Bug fixes, stability improvements, and latest SONORA enhancements."
+        if (rawNotes.isBlank()) return "Bug fixes, stability improvements, and latest ${domain.branding.AppBranding.APP_NAME} enhancements."
         val cleaned = rawNotes
             .replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
             .lines()
@@ -350,7 +350,7 @@ object GitHubReleaseParser {
             .joinToString("\n")
             .replace(Regex("\\n{3,}"), "\n\n")
             .trim()
-        if (cleaned.isBlank()) return "Bug fixes, stability improvements, and latest SONORA enhancements."
+        if (cleaned.isBlank()) return "Bug fixes, stability improvements, and latest ${domain.branding.AppBranding.APP_NAME} enhancements."
         return if (cleaned.length > maxChars) {
             cleaned.take(maxChars).trimEnd() + "…"
         } else {

@@ -86,10 +86,10 @@ class FloatingVideoPipTest {
         )
     }
 
-    // 1. Pinching outward and inward MUST NOT change PiP size or position,
-    //    and single TextureView stays continuously attached with zero detach/recreation
+    // 1. Pinching outward enlarges PiP, pinching inward shrinks PiP, preserves 16:9 aspect ratio,
+    //    clamps inside safe bounds, and keeps single TextureView continuously attached with zero detach/recreation
     @Test
-    fun `two finger pinch outward and inward do not change PiP size or position and keep TextureView attached`() {
+    fun `two finger pinch outward enlarges and inward shrinks PiP while preserving aspect ratio and TextureView`() {
         val colors = EditorialColors.default()
         val attachedViews = mutableListOf<TextureView>()
         var detachCount = 0
@@ -127,31 +127,35 @@ class FloatingVideoPipTest {
         assertEquals(1, attachedViews.size)
         val firstTextureView = attachedViews.first()
 
-        // Attempt pinch OUTWARD -> size & position must remain unchanged
+        // Pinch OUTWARD -> enlarges PiP smoothly while preserving 16:9 aspect ratio & safe bounds
         composeRule.onNodeWithTag("floating_pip_video_surface").performTouchInput {
             pinch(
-                start0 = Offset(centerX - 20f, centerY),
-                end0 = Offset(centerX - 65f, centerY),
-                start1 = Offset(centerX + 20f, centerY),
-                end1 = Offset(centerX + 65f, centerY),
+                start0 = Offset(centerX - 18f, centerY),
+                end0 = Offset(centerX - 62f, centerY),
+                start1 = Offset(centerX + 18f, centerY),
+                end1 = Offset(centerX + 62f, centerY),
                 durationMillis = 250L
             )
         }
         composeRule.waitForIdle()
 
         val afterPinchOut = composeRule.onNodeWithTag("floating_video_mini_player").getUnclippedBoundsInRoot()
-        assertEquals(initialBounds.width.value, afterPinchOut.width.value, 0.5f)
-        assertEquals(initialBounds.height.value, afterPinchOut.height.value, 0.5f)
-        assertEquals(initialBounds.left.value, afterPinchOut.left.value, 0.5f)
-        assertEquals(initialBounds.top.value, afterPinchOut.top.value, 0.5f)
-        composeRule.onNodeWithTag("floating_pip_resize_badge").assertDoesNotExist()
+        assertTrue(
+            "Pinch outward should enlarge PiP (initial=${initialBounds.width}, after=${afterPinchOut.width})",
+            afterPinchOut.width.value > initialBounds.width.value + 16f
+        )
+        assertTrue("PiP must not exceed 85% viewport width", afterPinchOut.width.value <= 345f)
+        assertEquals(16f / 9f, afterPinchOut.width.value / afterPinchOut.height.value, 0.06f)
+        assertTrue("PiP left bound must stay inside safe screen edge", afterPinchOut.left >= 10.dp)
+        assertTrue("PiP right bound must stay inside safe screen edge", afterPinchOut.right <= 390.dp)
+        assertTrue("PiP bottom bound must stay above bottom chrome", afterPinchOut.bottom <= 716.dp)
 
-        // Attempt pinch INWARD -> size & position must remain unchanged
+        // Pinch INWARD -> shrinks PiP smoothly down toward minimum 20% screen width
         composeRule.onNodeWithTag("floating_pip_video_surface").performTouchInput {
             pinch(
-                start0 = Offset(centerX - 65f, centerY),
+                start0 = Offset(centerX - 68f, centerY),
                 end0 = Offset(centerX - 10f, centerY),
-                start1 = Offset(centerX + 65f, centerY),
+                start1 = Offset(centerX + 68f, centerY),
                 end1 = Offset(centerX + 10f, centerY),
                 durationMillis = 250L
             )
@@ -159,10 +163,12 @@ class FloatingVideoPipTest {
         composeRule.waitForIdle()
 
         val afterPinchIn = composeRule.onNodeWithTag("floating_video_mini_player").getUnclippedBoundsInRoot()
-        assertEquals(initialBounds.width.value, afterPinchIn.width.value, 0.5f)
-        assertEquals(initialBounds.height.value, afterPinchIn.height.value, 0.5f)
-        assertEquals(initialBounds.left.value, afterPinchIn.left.value, 0.5f)
-        assertEquals(initialBounds.top.value, afterPinchIn.top.value, 0.5f)
+        assertTrue(
+            "Pinch inward should shrink PiP (enlarged=${afterPinchOut.width}, shrunk=${afterPinchIn.width})",
+            afterPinchIn.width.value < afterPinchOut.width.value - 20f
+        )
+        assertTrue("PiP must not shrink below 20% viewport width", afterPinchIn.width.value >= 78f)
+        assertEquals(16f / 9f, afterPinchIn.width.value / afterPinchIn.height.value, 0.06f)
 
         // Single TextureView remains continuously attached with zero detach/recreation
         assertEquals(1, attachedViews.size)

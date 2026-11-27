@@ -438,7 +438,7 @@ private fun AnalyticsEmptyState(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-            text = "Play your offline or online tracks and SONORA will build real listening charts and rankings for $rangeLabel.",
+            text = "Play your offline or online tracks and ${domain.branding.AppBranding.APP_NAME} will build real listening charts and rankings for $rangeLabel.",
             fontFamily = PlusJakartaFontFamily,
             fontSize = 13.sp,
             color = colors.textSecondary,

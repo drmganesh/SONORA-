@@ -199,14 +199,14 @@ class ApkPackageVerifier(
         if (archiveIdentity.packageName != expectedPackageName) {
             return ApkVerificationResult.Invalid(
                 UpdateErrorKind.PACKAGE_MISMATCH,
-                "Update package ID does not match SONORA. Installation blocked."
+                "Update package ID does not match ${domain.branding.AppBranding.APP_NAME}. Installation blocked."
             )
         }
 
         if (archiveIdentity.versionCode <= installedVersionCode) {
             return ApkVerificationResult.Invalid(
                 UpdateErrorKind.DOWNGRADE_REJECTED,
-                "This APK is not newer than your installed version of SONORA."
+                "This APK is not newer than your installed version of ${domain.branding.AppBranding.APP_NAME}."
             )
         }
 
@@ -222,7 +222,7 @@ class ApkPackageVerifier(
         if (installedCerts.isNotEmpty() && installedCerts.intersect(archiveCerts).isEmpty()) {
             return ApkVerificationResult.Invalid(
                 UpdateErrorKind.SIGNATURE_MISMATCH,
-                "Update signing certificate does not match the installed SONORA app."
+                "Update signing certificate does not match the installed ${domain.branding.AppBranding.APP_NAME} app."
             )
         }
 

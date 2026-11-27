@@ -168,7 +168,7 @@ fun HomeScreen(
     val motionState = LocalEffectiveMotionState.current
     val allSongs by viewModel.allSongs.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
     val favorites by viewModel.favoriteSongs.collectAsState()
     val mostPlayed by viewModel.mostPlayedSongs.collectAsState()
     val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
@@ -193,6 +193,7 @@ fun HomeScreen(
     val weatherFetchState by viewModel.weatherFetchState.collectAsState()
     val festivalAtmosphereSettings by viewModel.festivalAtmosphereSettings.collectAsState()
     val activeFestivalResolution by viewModel.activeFestivalResolution.collectAsState()
+    val virtualPetSettings by viewModel.virtualPetSettings.collectAsState()
     val appearanceMode by viewModel.dynamicAppearanceMode.collectAsState()
     val colorIntensity by viewModel.dynamicColorIntensity.collectAsState()
     val playerStyle by viewModel.playerStyle.collectAsState()
@@ -324,6 +325,26 @@ fun HomeScreen(
             isLowRamDevice = isLowRamDevice,
             globalReduceAnimations = reduceAnimations
         )
+    }
+
+    val mayurPetSlot: (@Composable (androidx.compose.ui.unit.Dp) -> Unit)? = if (virtualPetSettings.enabled) {
+        { petSize ->
+            ui.pet.MayurVirtualPet(
+                settings = virtualPetSettings,
+                currentSong = currentSong,
+                isPlaying = playbackInfo.isPlaying,
+                visualizerFrequenciesFlow = viewModel.visualizerFrequencies,
+                waveformSamplesFlow = viewModel.waveformSamples,
+                weatherPlan = coordinatedAmbient.weatherPlan,
+                weatherSnapshot = latestWeatherSnapshot,
+                activeFestival = activeFestivalResolution,
+                reduceAnimations = reduceAnimations,
+                screenVisible = screenVisible,
+                size = petSize
+            )
+        }
+    } else {
+        null
     }
 
     Box(
@@ -500,6 +521,7 @@ fun HomeScreen(
                                                 colors = colors,
                                                 animationLevel = homeAnimationLevel,
                                                 screenVisible = screenVisible,
+                                                petContent = mayurPetSlot,
                                                 onPlayMix = {
                                                     if (isMixActivelyPlaying) {
                                                         viewModel.togglePlayPause()
@@ -838,7 +860,8 @@ fun HomeScreen(
                                     onDislikeRecommended = { viewModel.dislikeRecommendedTrack(it) },
                                     onOpenRecommendedArtist = { viewModel.openRecommendedArtist(it) },
                                     onOpenRecommendedAlbum = { viewModel.openRecommendedAlbum(it) },
-                                    hasMusicMiniPlayer = currentSong != null
+                                    hasMusicMiniPlayer = currentSong != null,
+                                    petContent = mayurPetSlot
                                 )
                             }
                         }
@@ -1895,7 +1918,7 @@ private fun DiscoveryAndThemeSheet(
             }
 
             Text(
-                text = "SONORA AESTHETIC THEMES",
+                text = "${domain.branding.AppBranding.APP_NAME} AESTHETIC THEMES",
                 fontFamily = PlusJakartaFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,

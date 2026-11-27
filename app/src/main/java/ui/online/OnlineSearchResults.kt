@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -164,11 +166,12 @@ fun OnlineProviderPillBar(
                     color = if (selected) colors.accentStrong else colors.cardBorder
                 ),
                 modifier = Modifier
-                    .height(42.dp)
+                    .heightIn(min = 42.dp)
+                    .wrapContentWidth()
                     .testTag("online_provider_${provider.key}")
             ) {
                 Box(
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -176,7 +179,10 @@ fun OnlineProviderPillBar(
                         fontFamily = PlusJakartaFontFamily,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                         fontSize = 13.sp,
-                        color = if (selected) colors.onAccentStrong else colors.textSecondary
+                        color = if (selected) colors.onAccentStrong else colors.textSecondary,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

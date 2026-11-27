@@ -179,7 +179,7 @@ fun SonoraLogoAnimation(
                 )
             } else {
                 Image(
-                    painter = painterResource(id = R.drawable.sonora_official_logo),
+                    painter = painterResource(id = domain.branding.AppBranding.LOGO_DRAWABLE_RES),
                     contentDescription = stringResource(id = R.string.splash_logo_content_desc),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()

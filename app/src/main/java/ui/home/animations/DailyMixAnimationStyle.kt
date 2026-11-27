@@ -118,6 +118,7 @@ fun rememberShouldAnimateHomeMotion(
     ignoreVisibilityForPreview: Boolean = false
 ): Boolean {
     val reduceAnimations = LocalReduceAnimations.current
+    val effectiveMotion = ui.motion.LocalEffectiveMotionState.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -149,7 +150,11 @@ fun rememberShouldAnimateHomeMotion(
         animatorFlag && scale > 0f
     }
 
-    if (level == HomeAnimationLevel.OFF || reduceAnimations || !systemAnimatorsEnabled) {
+    if (level == HomeAnimationLevel.OFF ||
+        reduceAnimations ||
+        !effectiveMotion.decorativeMotionEnabled ||
+        !systemAnimatorsEnabled
+    ) {
         return false
     }
     if (!isLifecycleStarted) return false

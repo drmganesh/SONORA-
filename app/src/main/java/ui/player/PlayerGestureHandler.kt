@@ -57,9 +57,20 @@ class PlayerGestureController(
     var controlsVisible by mutableStateOf(true)
         private set
 
+    @Volatile
+    var isMultiTouchPinchActive: Boolean = false
+        private set
+
     private var clearHudJob: Job? = null
     private var accumulatedVolumeDelta = 0f
     private var activeBrightness = -1f
+
+    internal fun setMultiTouchPinchActive(active: Boolean) {
+        isMultiTouchPinchActive = active
+        if (active) {
+            artworkDragOffsetX = 0f
+        }
+    }
 
     fun showHud(state: GestureHudState, durationMs: Long = 1200L) {
         clearHudJob?.cancel()
@@ -358,38 +369,49 @@ fun Modifier.playerArtworkGestures(
                 return@pointerInput
             }
             var dragX = 0f
+            var cancelledByPinch = false
             var tracker: VelocityTracker? = null
             detectHorizontalDragGestures(
                 onDragStart = {
                     dragX = 0f
+                    cancelledByPinch = controller.isMultiTouchPinchActive
                     tracker = VelocityTracker()
                     controller.resetArtworkDragOffset()
                 },
                 onDragCancel = {
                     dragX = 0f
+                    cancelledByPinch = false
                     tracker = null
                     controller.resetArtworkDragOffset()
                 },
                 onDragEnd = {
-                    val velocityX = tracker?.calculateVelocity()?.x ?: 0f
-                    val triggered = latestMotionState.shouldTriggerSwipe(
-                        dragPx = dragX,
-                        velocityPxPerSec = velocityX,
-                        thresholdPx = effectiveHorizontalThreshold,
-                        velocityPxThreshold = velocityThresholdPx
-                    )
-                    if (triggered) {
-                        val isLeftSwipe = if (abs(dragX) > effectiveHorizontalThreshold * 0.45f) dragX < 0f else velocityX < 0f
-                        dispatchSwipe(
-                            action = if (isLeftSwipe) latestConfig.swipeLeftAction else latestConfig.swipeRightAction,
-                            isLeftSwipe = isLeftSwipe
+                    if (!cancelledByPinch && !controller.isMultiTouchPinchActive) {
+                        val velocityX = tracker?.calculateVelocity()?.x ?: 0f
+                        val triggered = latestMotionState.shouldTriggerSwipe(
+                            dragPx = dragX,
+                            velocityPxPerSec = velocityX,
+                            thresholdPx = effectiveHorizontalThreshold,
+                            velocityPxThreshold = velocityThresholdPx
                         )
+                        if (triggered) {
+                            val isLeftSwipe = if (abs(dragX) > effectiveHorizontalThreshold * 0.45f) dragX < 0f else velocityX < 0f
+                            dispatchSwipe(
+                                action = if (isLeftSwipe) latestConfig.swipeLeftAction else latestConfig.swipeRightAction,
+                                isLeftSwipe = isLeftSwipe
+                            )
+                        }
                     }
                     dragX = 0f
+                    cancelledByPinch = false
                     tracker = null
                     controller.resetArtworkDragOffset()
                 },
                 onHorizontalDrag = { change, dragAmount ->
+                    if (controller.isMultiTouchPinchActive) {
+                        cancelledByPinch = true
+                        controller.resetArtworkDragOffset()
+                        return@detectHorizontalDragGestures
+                    }
                     change.consume()
                     dragX += dragAmount
                     tracker?.addPosition(change.uptimeMillis, change.position)
@@ -407,33 +429,43 @@ fun Modifier.playerArtworkGestures(
             if (!config.gesturesEnabled) return@pointerInput
             if (!config.swipeDownToMinimizeEnabled && !config.swipeUpToOpenQueueEnabled) return@pointerInput
             var dragY = 0f
+            var cancelledByPinch = false
             var tracker: VelocityTracker? = null
             detectVerticalDragGestures(
                 onDragStart = {
                     dragY = 0f
+                    cancelledByPinch = controller.isMultiTouchPinchActive
                     tracker = VelocityTracker()
                 },
                 onDragCancel = {
                     dragY = 0f
+                    cancelledByPinch = false
                     tracker = null
                 },
                 onDragEnd = {
-                    val velocityY = tracker?.calculateVelocity()?.y ?: 0f
-                    val downTriggered = latestConfig.swipeDownToMinimizeEnabled &&
-                        (dragY > effectiveVerticalThreshold || velocityY > velocityThresholdPx)
-                    val upTriggered = latestConfig.swipeUpToOpenQueueEnabled &&
-                        (dragY < -effectiveVerticalThreshold || velocityY < -velocityThresholdPx)
-                    if (downTriggered) {
-                        triggerHaptic()
-                        latestClose()
-                    } else if (upTriggered) {
-                        triggerHaptic()
-                        latestOpenQueue()
+                    if (!cancelledByPinch && !controller.isMultiTouchPinchActive) {
+                        val velocityY = tracker?.calculateVelocity()?.y ?: 0f
+                        val downTriggered = latestConfig.swipeDownToMinimizeEnabled &&
+                            (dragY > effectiveVerticalThreshold || velocityY > velocityThresholdPx)
+                        val upTriggered = latestConfig.swipeUpToOpenQueueEnabled &&
+                            (dragY < -effectiveVerticalThreshold || velocityY < -velocityThresholdPx)
+                        if (downTriggered) {
+                            triggerHaptic()
+                            latestClose()
+                        } else if (upTriggered) {
+                            triggerHaptic()
+                            latestOpenQueue()
+                        }
                     }
                     dragY = 0f
+                    cancelledByPinch = false
                     tracker = null
                 },
                 onVerticalDrag = { change, dragAmount ->
+                    if (controller.isMultiTouchPinchActive) {
+                        cancelledByPinch = true
+                        return@detectVerticalDragGestures
+                    }
                     change.consume()
                     dragY += dragAmount
                     tracker?.addPosition(change.uptimeMillis, change.position)
@@ -444,16 +476,22 @@ fun Modifier.playerArtworkGestures(
             if (!config.gesturesEnabled || !config.pinchZoomArtworkEnabled) return@pointerInput
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false)
-                do {
-                    val event = awaitPointerEvent()
-                    if (event.changes.size >= 2) {
-                        val zoomChange = event.calculateZoom()
-                        if (abs(zoomChange - 1f) > 0.01f) {
-                            controller.updateZoomScale(zoomChange)
-                            event.changes.forEach { it.consume() }
+                try {
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressedCount = event.changes.count { it.pressed }
+                        if (pressedCount >= 2) {
+                            controller.setMultiTouchPinchActive(true)
+                            val zoomChange = event.calculateZoom()
+                            if (abs(zoomChange - 1f) > 0.01f) {
+                                controller.updateZoomScale(zoomChange)
+                                event.changes.forEach { it.consume() }
+                            }
                         }
-                    }
-                } while (event.changes.any { it.pressed })
+                    } while (event.changes.any { it.pressed })
+                } finally {
+                    controller.setMultiTouchPinchActive(false)
+                }
             }
         }
 }

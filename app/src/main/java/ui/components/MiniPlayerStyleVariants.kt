@@ -16,6 +16,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -968,41 +970,51 @@ private fun ExpandableCardMiniContent(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(
+                        onClick = onPlayPrevious,
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.surface,
+                        border = BorderStroke(0.75.dp, colors.cardBorder)
+                    ) {
+                        Text(
+                            text = "Previous",
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                    if (onOpenLyrics != null) {
                         Surface(
-                            onClick = onPlayPrevious,
+                            onClick = onOpenLyrics,
                             shape = RoundedCornerShape(10.dp),
-                            color = colors.surface,
-                            border = BorderStroke(0.75.dp, colors.cardBorder)
+                            color = colors.accentPill
                         ) {
-                            Text(
-                                text = "Previous",
-                                fontFamily = PlusJakartaFontFamily,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = colors.textPrimary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
-                        }
-                        if (onOpenLyrics != null) {
-                            Surface(
-                                onClick = onOpenLyrics,
-                                shape = RoundedCornerShape(10.dp),
-                                color = colors.accentPill
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Rounded.Lyrics, contentDescription = null, tint = colors.onAccentPill, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Lyrics", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.onAccentPill)
-                                }
+                                Icon(Icons.Rounded.Lyrics, contentDescription = null, tint = colors.onAccentPill, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Lyrics",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.onAccentPill,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -1011,7 +1023,10 @@ private fun ExpandableCardMiniContent(
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = colors.accentStrong
+                        color = colors.accentStrong,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 InteractiveMiniSeekbar(

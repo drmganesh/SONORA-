@@ -204,7 +204,7 @@ fun OnlineVideoLibraryContent(
                             VideoLibraryEmptyCard(
                                 icon = Icons.Rounded.ThumbUp,
                                 title = "No Liked Videos yet",
-                                subtitle = "Tap SONORA Like while watching any video to build your personal Liked Videos collection.",
+                                subtitle = "Tap ${domain.branding.AppBranding.APP_NAME} Like while watching any video to build your personal Liked Videos collection.",
                                 actionLabel = "Browse Online Videos",
                                 colors = colors,
                                 onAction = onExploreOnlineVideos
@@ -230,7 +230,7 @@ fun OnlineVideoLibraryContent(
                                             color = colors.textPrimary
                                         )
                                         Text(
-                                            text = "Saved locally in SONORA",
+                                            text = "Saved locally in ${domain.branding.AppBranding.APP_NAME}",
                                             fontFamily = PlusJakartaFontFamily,
                                             fontSize = 11.5.sp,
                                             color = colors.textMuted
@@ -431,7 +431,7 @@ fun OnlineVideoLibraryContent(
                             VideoLibraryEmptyCard(
                                 icon = Icons.Rounded.History,
                                 title = "No Video History yet",
-                                subtitle = "Videos you watch in SONORA appear here with automatic resume progress.",
+                                subtitle = "Videos you watch in ${domain.branding.AppBranding.APP_NAME} appear here with automatic resume progress.",
                                 actionLabel = "Explore Online Videos",
                                 colors = colors,
                                 onAction = onExploreOnlineVideos
@@ -487,7 +487,7 @@ fun OnlineVideoLibraryContent(
                             VideoLibraryEmptyCard(
                                 icon = Icons.Rounded.Subscriptions,
                                 title = "No Followed Channels",
-                                subtitle = "Follow channels locally in SONORA or connect an authorized YouTube account to keep track of creators here.",
+                                subtitle = "Follow channels locally in ${domain.branding.AppBranding.APP_NAME} or connect an authorized YouTube account to keep track of creators here.",
                                 actionLabel = "Find Channels",
                                 colors = colors,
                                 onAction = onExploreOnlineVideos
@@ -527,9 +527,9 @@ fun OnlineVideoLibraryContent(
                                         )
                                         val alertsOn = channel.notificationPreference == ChannelNotificationPreference.ALL
                                         val statusLabel = if (alertsOn) {
-                                            "Subscribed in SONORA • Alerts On"
+                                            "Subscribed in ${domain.branding.AppBranding.APP_NAME} • Alerts On"
                                         } else {
-                                            "Subscribed in SONORA"
+                                            "Subscribed in ${domain.branding.AppBranding.APP_NAME}"
                                         }
                                         val detail = listOfNotNull(
                                             channel.formattedSubscribers(),
@@ -866,7 +866,7 @@ fun OnlineVideoLibraryContent(
             },
             text = {
                 Text(
-                    text = "This removes all ${likedVideos.size} locally liked videos from your SONORA library and clears their Like states.",
+                    text = "This removes all ${likedVideos.size} locally liked videos from your ${domain.branding.AppBranding.APP_NAME} library and clears their Like states.",
                     fontFamily = PlusJakartaFontFamily,
                     color = colors.textSecondary
                 )

@@ -286,7 +286,7 @@ fun LibraryDownloadsSection(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Download permitted online videos to watch them offline in SONORA.",
+                            text = "Download permitted online videos to watch them offline in ${domain.branding.AppBranding.APP_NAME}.",
                             fontFamily = PlusJakartaFontFamily,
                             fontSize = 12.5.sp,
                             color = colors.textSecondary

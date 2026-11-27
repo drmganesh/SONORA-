@@ -88,7 +88,7 @@ fun HomeAnimationSettingsScreen(
     val appliedMixStyle by viewModel.dailyMixAnimationStyle.collectAsState()
     val dailyMixes by viewModel.dailyMixes.collectAsState()
     val allSongs by viewModel.allSongs.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
 
     var draftLevel by remember(appliedLevel) { mutableStateOf(appliedLevel) }
     var draftMixStyle by remember(appliedMixStyle) { mutableStateOf(appliedMixStyle) }

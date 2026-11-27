@@ -204,8 +204,10 @@ fun SettingsScreen(
     val cacheStorageSnapshot by viewModel.cacheStorageSnapshot.collectAsState()
 
     val motionConfig by viewModel.motionConfig.collectAsState()
+    val virtualPetSettings by viewModel.virtualPetSettings.collectAsState()
 
     var showMotionGesturesSettings by remember { mutableStateOf(false) }
+    var showVirtualPetSettings by remember { mutableStateOf(false) }
     var showProfileSettings by remember { mutableStateOf(false) }
     var showOnlineVideoPlayerGestures by remember { mutableStateOf(false) }
     var showVideoExperienceSettings by remember { mutableStateOf(false) }
@@ -231,6 +233,7 @@ fun SettingsScreen(
     var rescanRequested by remember { mutableStateOf(false) }
 
     var appearanceExpanded by remember { mutableStateOf(true) }
+    var virtualPetExpanded by remember { mutableStateOf(true) }
     var playbackExpanded by remember { mutableStateOf(true) }
     var audioExpanded by remember { mutableStateOf(true) }
     var libraryExpanded by remember { mutableStateOf(true) }
@@ -297,7 +300,7 @@ fun SettingsScreen(
                         color = colors.textPrimary
                     )
                     Text(
-                        text = "SONORA Aesthetic UI • Audio & Library",
+                        text = "${domain.branding.AppBranding.APP_NAME} Aesthetic UI • Audio & Library",
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
                         color = colors.textSecondary
@@ -506,6 +509,73 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
                         HorizontalDivider(color = colors.cardBorder)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Settings -> Appearance -> Motion Effects (Full / Reduced / Minimal Motion)
+                        Text(
+                            text = "Motion Effects",
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = colors.textPrimary,
+                            modifier = Modifier.testTag("settings_motion_effects_header")
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        val motionHint = when {
+                            motionState.systemAnimatorScale <= 0.01f ->
+                                "System Remove Animations is active — ${domain.branding.AppBranding.APP_NAME} keeps transitions instant."
+                            motionState.isPowerSaveMode ->
+                                "Battery Saver is active — parallax & heavy ambient motion automatically paused."
+                            else -> motionConfig.motionEffectsLevel.subtitle
+                        }
+                        Text(
+                            text = motionHint,
+                            fontFamily = PlusJakartaFontFamily,
+                            fontSize = 11.5.sp,
+                            color = colors.textSecondary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("settings_motion_effects_group"),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            domain.motion.MotionEffectsLevel.entries.forEach { level ->
+                                val isSelected = motionConfig.motionEffectsLevel == level
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (isSelected) colors.accentStrong else colors.surfaceTinted,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .border(
+                                            width = if (isSelected) 1.5.dp else 0.75.dp,
+                                            color = if (isSelected) colors.accentStrong else colors.cardBorder,
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .clickable { viewModel.setMotionEffectsLevel(level) }
+                                        .testTag("settings_motion_effects_${level.name.lowercase()}")
+                                ) {
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier.padding(horizontal = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = level.label,
+                                            fontFamily = OutfitFontFamily,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                            fontSize = 12.sp,
+                                            color = if (isSelected) colors.onAccentStrong else colors.textPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingsSwitchRow(
@@ -537,7 +607,7 @@ fun SettingsScreen(
                         SettingsLinkRow(
                             icon = Icons.Rounded.AutoAwesome,
                             title = "Motion & Gestures",
-                            subtitle = "${motionConfig.intensity.label} • ${motionConfig.transitionStyle.label} • ${motionConfig.gestureSensitivity.label} sensitivity",
+                            subtitle = "${motionConfig.motionEffectsLevel.label} • ${motionConfig.transitionStyle.label} • ${motionConfig.gestureSensitivity.label} sensitivity",
                             colors = colors,
                             modifier = Modifier.testTag("settings_motion_gestures_row"),
                             onClick = { showMotionGesturesSettings = true }
@@ -840,6 +910,26 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    }
+                }
+
+                // VIRTUAL PET
+                item(key = "settings_virtual_pet_section") {
+                    ExpandableSettingsSection(
+                        title = "VIRTUAL PET",
+                        subtitle = virtualPetSettings.summarySubtitle(),
+                        expanded = virtualPetExpanded,
+                        onToggle = { virtualPetExpanded = !virtualPetExpanded },
+                        colors = colors
+                    ) {
+                        SettingsLinkRow(
+                            icon = Icons.Rounded.AutoAwesome,
+                            title = "Mayur",
+                            subtitle = virtualPetSettings.summarySubtitle(),
+                            colors = colors,
+                            modifier = Modifier.testTag("settings_virtual_pet_mayur_row"),
+                            onClick = { showVirtualPetSettings = true }
+                        )
                     }
                 }
 
@@ -1416,7 +1506,7 @@ fun SettingsScreen(
             },
             text = {
                 Text(
-                    text = "SONORA collects zero telemetry, uses no advertising or tracking SDKs, never accesses GPS or device identifiers, and stores your profile name, avatar, library, playlists, listening analytics, and equalizer settings locally on your device only.\n\n" +
+                    text = "${domain.branding.AppBranding.APP_NAME} collects zero telemetry, uses no advertising or tracking SDKs, never accesses GPS or device identifiers, and stores your profile name, avatar, library, playlists, listening analytics, and equalizer settings locally on your device only.\n\n" +
                         "Optional third-party network requests occur only when you use online features:\n" +
                         "• Online Music, Video & Shorts: Direct HTTPS queries via NewPipe Extractor to YouTube / SoundCloud.\n" +
                         "• Synced Lyrics: Track title & artist lookup via LRCLIB (lrclib.net).\n" +
@@ -1580,6 +1670,17 @@ fun SettingsScreen(
             ui.settings.AmbientEffectsSettingsScreen(
                 viewModel = viewModel,
                 onBack = { showAmbientEffectsSettings = false }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showVirtualPetSettings,
+            enter = pushEnter,
+            exit = pushExit
+        ) {
+            ui.settings.MayurVirtualPetSettingsScreen(
+                viewModel = viewModel,
+                onBack = { showVirtualPetSettings = false }
             )
         }
 

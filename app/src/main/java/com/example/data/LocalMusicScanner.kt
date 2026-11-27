@@ -163,7 +163,7 @@ class LocalMusicScanner(
             DemoTrackConfig(
                 id = -101L,
                 title = "Starlight Odyssey (360° Spatial)",
-                artist = "Sonora Sound Lab",
+                artist = domain.branding.AppBranding.SOUND_LAB_NAME,
                 album = "Acoustic Dimensions",
                 year = 2026,
                 genre = "Hi-Res Electronic / Synth",
@@ -194,7 +194,7 @@ class LocalMusicScanner(
 [00:18.00] Ten band equalizer fine tuned
 [00:28.00] Under the amber silver moon
 [00:38.00] Pristine harmonics, analog warmth
-[00:46.00] Sonora audio streaming forth"""
+[00:46.00] MAYUR audio streaming forth"""
             ),
             DemoTrackConfig(
                 id = -103L,

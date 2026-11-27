@@ -36,7 +36,8 @@ object OnlineRecommendationEngine {
         "youtube music",
         "soundcloud",
         "bandcamp",
-        "sonora"
+        "sonora",
+        "gita"
     )
 
     fun currentDayKey(nowMs: Long = System.currentTimeMillis()): String {

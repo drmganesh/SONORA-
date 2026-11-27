@@ -220,7 +220,7 @@ class MotionAndSwipeSystemTest {
     }
 
     @Test
-    fun `FloatingMiniPlayer ignores swipe gestures while tap and playback buttons remain functional`() {
+    fun `FloatingMiniPlayer supports swipe skip and expand while tap and playback buttons remain functional`() {
         val colors = editorialColorsFor(
             mode = HomeThemeMode.WARM_CREAM,
             customAccentArgb = null,
@@ -252,14 +252,16 @@ class MotionAndSwipeSystemTest {
         }
         composeRule.waitForIdle()
 
-        // Horizontal and vertical swipes on mini player must NOT trigger skip or expand
+        // Horizontal left/right swipes skip tracks and vertical swipe up expands full player
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeLeft() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeRight() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeUp() }
         composeRule.waitForIdle()
-        assertEquals(0, nextCount)
-        assertEquals(0, prevCount)
-        assertEquals(0, clickCount)
+        assertEquals(1, nextCount)
+        assertEquals(1, prevCount)
+        assertEquals(1, clickCount)
 
         // Normal tap-to-open and explicit Play/Pause + Next buttons must work
         composeRule.onNodeWithTag("mini_play_pause_button").performClick()
@@ -267,8 +269,8 @@ class MotionAndSwipeSystemTest {
         composeRule.onNodeWithTag("mini_player").performClick()
         composeRule.waitForIdle()
         assertEquals(1, playPauseCount)
-        assertEquals(1, nextCount)
-        assertEquals(1, clickCount)
+        assertEquals(2, nextCount)
+        assertEquals(2, clickCount)
     }
 
     @Test

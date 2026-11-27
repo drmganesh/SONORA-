@@ -1215,7 +1215,7 @@ private fun WeatherAttributionPrivacyCard(colors: EditorialColors) {
                 )
             }
             Text(
-                text = "SONORA never uses GPS, never detects your device location, and never requests location permissions. Only your chosen Odisha town coordinates are sent to fetch public weather.",
+                text = "${domain.branding.AppBranding.APP_NAME} never uses GPS, never detects your device location, and never requests location permissions. Only your chosen Odisha town coordinates are sent to fetch public weather.",
                 fontFamily = PlusJakartaFontFamily,
                 fontSize = 11.5.sp,
                 lineHeight = 16.sp,

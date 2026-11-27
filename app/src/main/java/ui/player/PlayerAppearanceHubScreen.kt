@@ -104,7 +104,7 @@ enum class PlayerAppearanceSection(val id: String, val label: String) {
 private val SAMPLE_PREVIEW_SONG = Song(
     id = -9001L,
     title = "Midnight Resonance",
-    artist = "SONORA Studio Ensemble",
+    artist = "${domain.branding.AppBranding.STUDIO_NAME} Ensemble",
     album = "Velvet Horizons (Preview)",
     albumId = -1L,
     durationMs = 234_000L,
@@ -120,15 +120,15 @@ private val SAMPLE_PREVIEW_SONG = Song(
         [00:00.00]Soft neon glowing through the midnight glass
         [00:14.00]Every chord echoing across the room
         [00:30.00]Feel the bassline breathing in slow motion
-        [00:48.00]SONORA live preview — real playback stays uninterrupted
+        [00:48.00]MAYUR live preview — real playback stays uninterrupted
         [01:08.00]Tap Apply to make this your Now Playing player
     """.trimIndent()
 )
 
 private val SAMPLE_PREVIEW_QUEUE = listOf(
-    SAMPLE_PREVIEW_SONG.copy(id = -9000L, title = "Velvet Overture", artist = "SONORA Studio"),
+    SAMPLE_PREVIEW_SONG.copy(id = -9000L, title = "Velvet Overture", artist = domain.branding.AppBranding.STUDIO_NAME),
     SAMPLE_PREVIEW_SONG,
-    SAMPLE_PREVIEW_SONG.copy(id = -9002L, title = "Aurora Drift", artist = "SONORA Studio")
+    SAMPLE_PREVIEW_SONG.copy(id = -9002L, title = "Aurora Drift", artist = domain.branding.AppBranding.STUDIO_NAME)
 )
 
 /**
@@ -454,7 +454,7 @@ fun PlayerAppearanceHubScreen(
                         // Toggle for preserved Legacy SONORA Styles
                         item {
                             HubToggleCard(
-                                title = "Show Legacy SONORA Styles (+10)",
+                                title = "Show Legacy ${domain.branding.AppBranding.APP_NAME} Styles (+10)",
                                 subtitle = "Includes Bento, Dial, Morph, Sticker, Orbit, Hero, Neon, Poster & Gesture",
                                 checked = showLegacyStyles,
                                 onCheckedChange = { showLegacyStyles = it },
@@ -820,7 +820,7 @@ fun PlayerAppearanceHubScreen(
                         item {
                             HubChipGroupCard(
                                 title = "Progress Bar Style",
-                                subtitle = "Choose from SONORA's custom interactive seekbar designs",
+                                subtitle = "Choose from ${domain.branding.AppBranding.APP_NAME}'s custom interactive seekbar designs",
                                 options = SeekbarStyle.entries.map { it to it.displayName },
                                 selected = seekbarStyle,
                                 onSelect = { viewModel.setSeekbarStyle(it) }

@@ -406,7 +406,7 @@ fun TypographyPlayer(
                 Spacer(modifier = Modifier.height(18.dp))
 
                 Text(
-                    text = song?.title ?: "SONORA",
+                    text = song?.title ?: domain.branding.AppBranding.APP_NAME,
                     fontFamily = titleFont,
                     fontWeight = FontWeight.Black,
                     fontSize = (40f * scale).sp,

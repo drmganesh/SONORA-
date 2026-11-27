@@ -290,6 +290,7 @@ fun FestivalAnimationRenderer(
 ) {
     if (!plan.isActive || plan.effectId == FestivalEffectId.NONE) return
 
+    val motionState = ui.motion.LocalEffectiveMotionState.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var isLifecycleStarted by remember(lifecycleOwner) {
         mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
@@ -306,13 +307,23 @@ fun FestivalAnimationRenderer(
     val pool = remember { FestivalParticlePool(capacity = 40) }
     pool.configureIfNeeded(plan.effectId)
 
+    val throttleAmbient = motionState.isPowerSaveMode ||
+        motionState.isLowRamDevice ||
+        motionState.effectiveEffectsLevel == domain.motion.MotionEffectsLevel.REDUCED_MOTION
+    val effectiveMinFrameIntervalNs = if (throttleAmbient) {
+        maxOf(plan.minFrameIntervalNanos, 33_333_333L) // cap to <= 30fps under Battery Saver / Reduced Motion
+    } else {
+        plan.minFrameIntervalNanos
+    }
+
     var frameTick by remember { mutableLongStateOf(0L) }
     val shouldRunFrameLoop = screenVisible &&
         isLifecycleStarted &&
+        motionState.ambientEffectsEnabled &&
         !plan.isStaticReducedMotion &&
-        plan.minFrameIntervalNanos != Long.MAX_VALUE
+        effectiveMinFrameIntervalNs != Long.MAX_VALUE
 
-    LaunchedEffect(shouldRunFrameLoop, plan.effectId, plan.minFrameIntervalNanos, plan.speedMultiplier, plan.particleLimit) {
+    LaunchedEffect(shouldRunFrameLoop, plan.effectId, effectiveMinFrameIntervalNs, plan.speedMultiplier, plan.particleLimit) {
         if (!shouldRunFrameLoop) return@LaunchedEffect
         var lastFrameNanos = 0L
         while (true) {
@@ -321,7 +332,7 @@ fun FestivalAnimationRenderer(
                     lastFrameNanos = nowNanos
                 } else {
                     val elapsedNanos = nowNanos - lastFrameNanos
-                    if (elapsedNanos >= plan.minFrameIntervalNanos) {
+                    if (elapsedNanos >= effectiveMinFrameIntervalNs) {
                         val dtSec = (elapsedNanos / 1_000_000_000f).coerceIn(0f, 0.06f)
                         pool.step(dtSec, plan)
                         lastFrameNanos = nowNanos

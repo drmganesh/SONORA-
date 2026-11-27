@@ -270,7 +270,7 @@ fun LazyListScope.onlineSearchLazyContent(
     selectedFilter: OnlineSearchFilter,
     query: String,
     currentSong: Song?,
-    playbackInfo: PlaybackInfo,
+    playbackInfo: com.example.model.PlaybackStatusSummary,
     savedIds: Set<Long>,
     downloadedKeys: Set<String> = emptySet(),
     canonicalKeyForTrack: (OnlineTrack) -> String = { "${it.providerKey}|${it.contentUrl}" },

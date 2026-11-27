@@ -179,7 +179,7 @@ fun WhitelistSettingsScreen(
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "When enabled, SONORA displays audio files exclusively from the allowed directories below and their subfolders.",
+                                text = "When enabled, ${domain.branding.AppBranding.APP_NAME} displays audio files exclusively from the allowed directories below and their subfolders.",
                                 fontFamily = PlusJakartaFontFamily,
                                 fontSize = 12.sp,
                                 color = colors.textSecondary

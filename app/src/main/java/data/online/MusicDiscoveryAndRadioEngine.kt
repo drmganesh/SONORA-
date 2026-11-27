@@ -51,7 +51,7 @@ enum class IndiaMusicCategory(
 }
 
 enum class MusicDiscoveryBadge(val label: String) {
-    SONORA_GENERATED("SONORA Mix"),
+    SONORA_GENERATED(domain.branding.AppBranding.MIX_NAME),
     PROVIDER_CURATED("Provider Playlist")
 }
 
@@ -75,7 +75,7 @@ data class SongRadioSession(
     val currentQueryHint: String = ""
 ) {
     val seedLabel: String
-        get() = seedSong?.let { "Radio • ${it.title}" } ?: "SONORA Radio"
+        get() = seedSong?.let { "Radio • ${it.title}" } ?: domain.branding.AppBranding.RADIO_NAME
 }
 
 /**
@@ -377,7 +377,7 @@ object MusicDiscoveryAndRadioEngine {
         if (clean.length < 2) return false
         return clean.lowercase(Locale.US) !in setOf(
             "unknown", "<unknown>", "unknown artist", "various artists",
-            "youtube", "youtube music", "yt music", "soundcloud", "sonora"
+            "youtube", "youtube music", "yt music", "soundcloud", "sonora", "gita"
         )
     }
 }

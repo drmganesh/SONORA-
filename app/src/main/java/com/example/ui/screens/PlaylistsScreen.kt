@@ -118,7 +118,7 @@ fun PlaylistsScreen(
     val mostPlayed by viewModel.mostPlayedSongs.collectAsState()
     val recentlyPlayed by viewModel.recentlyPlayedSongs.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var playlistToEdit by remember { mutableStateOf<Playlist?>(null) }

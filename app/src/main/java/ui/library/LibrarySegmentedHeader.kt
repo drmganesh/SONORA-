@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -69,6 +70,9 @@ fun LibraryModeSegmentedSelector(
     val pillShape = RoundedCornerShape(22.dp)
     val modes = LibrarySectionMode.entries
 
+    val fontScale = LocalDensity.current.fontScale
+    val selectorHeight = (52f * fontScale.coerceIn(1f, 1.35f)).dp
+
     Surface(
         shape = outerShape,
         color = colors.surfaceTinted,
@@ -76,7 +80,7 @@ fun LibraryModeSegmentedSelector(
         shadowElevation = if (colors.isDark) 2.dp else 1.dp,
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp)
+            .height(selectorHeight)
             .testTag("library_mode_segmented_selector")
     ) {
         BoxWithConstraints(
@@ -210,6 +214,7 @@ private fun LibrarySegmentItem(
             fontSize = 12.5.sp,
             color = contentColor,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis
         )
     }

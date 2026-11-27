@@ -226,7 +226,7 @@ class YouTubeAccountActionClient(
         val token = extractValidToken(authState)
             ?: return@withContext VideoAccountActionResult.RequiresAuthorization(
                 actionTitle = if (subscribe) "Subscribe to Channel" else "Unsubscribe from Channel",
-                explanation = "Account subscriptions require official YouTube Data API v3 OAuth authorization. You can bookmark this channel locally in SONORA or open it in YouTube to manage your account subscription.",
+                explanation = "Account subscriptions require official YouTube Data API v3 OAuth authorization. You can bookmark this channel locally in ${domain.branding.AppBranding.APP_NAME} or open it in YouTube to manage your account subscription.",
                 officialWebUrl = webUrl,
                 canStartOAuthFlow = oauthClientConfigured
             )

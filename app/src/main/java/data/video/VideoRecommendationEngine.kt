@@ -196,7 +196,7 @@ object VideoRecommendationEngine {
                 PersonalizedVideoShelf(
                     id = "continue_watching",
                     title = "Continue Watching",
-                    subtitle = "Pick up where you left off in SONORA",
+                    subtitle = "Pick up where you left off in ${domain.branding.AppBranding.APP_NAME}",
                     items = continueWatching,
                     isCarousel = true
                 )
@@ -208,8 +208,8 @@ object VideoRecommendationEngine {
         val recommendedRanked = rankVideos(allPool, signals, excludeVideoIds = emptySet()).take(14)
         if (recommendedRanked.isNotEmpty()) {
             val subtitle = when {
-                signals.watchHistory.isNotEmpty() -> "Personalized by SONORA from your watch history & interests"
-                signals.subscribedChannels.isNotEmpty() -> "Based on channels you follow in SONORA"
+                signals.watchHistory.isNotEmpty() -> "Personalized by ${domain.branding.AppBranding.APP_NAME} from your watch history & interests"
+                signals.subscribedChannels.isNotEmpty() -> "Based on channels you follow in ${domain.branding.AppBranding.APP_NAME}"
                 else -> "Popular in ${if (signals.countryCode == "IN") "India" else signals.countryCode} • Watch videos to personalize"
             }
             shelves.add(

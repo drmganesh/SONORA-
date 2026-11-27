@@ -82,7 +82,7 @@ fun LazyListScope.localSearchLazyContent(
     matchedPlaylists: List<Playlist>,
     matchedFolders: List<MusicFolder>,
     currentSong: Song?,
-    playbackInfo: PlaybackInfo,
+    playbackInfo: com.example.model.PlaybackStatusSummary,
     colors: EditorialColors,
     haptic: HapticFeedback,
     viewModel: SonoraViewModel,

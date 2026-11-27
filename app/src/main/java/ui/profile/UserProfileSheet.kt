@@ -143,7 +143,7 @@ fun UserProfileSheet(
                         color = colors.textPrimary
                     )
                     Text(
-                        text = "Personal identity & SONORA appearance",
+                        text = "Personal identity & ${domain.branding.AppBranding.APP_NAME} appearance",
                         fontFamily = PlusJakartaFontFamily,
                         fontSize = 12.sp,
                         color = colors.textSecondary

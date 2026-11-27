@@ -6,7 +6,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
@@ -26,8 +25,11 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -43,12 +45,13 @@ import androidx.compose.ui.unit.sp
 import com.example.model.Song
 import com.example.ui.theme.OutfitFontFamily
 import com.example.util.AlbumArtHelper
+import ui.motion.SonoraMotionSpecs
 
 /**
  * Renders cached/async local album artwork with:
  * - Smooth crossfade + subtle scale transition when [song] changes
- * - Bounded internal Slow Zoom (contained strictly inside parent clip)
- * - Optional gentle decorative rotation ONLY for selected circular playing medallions
+ * - Draw-phase-only Slow Zoom and decorative rotation (zero per-frame recompositions)
+ * - Remembered ImageBitmap & synchronous LruCache seeding (zero frame allocations or flicker)
  */
 @Composable
 fun ArtworkTransition(
@@ -68,11 +71,11 @@ fun ArtworkTransition(
 ) {
     val context = LocalContext.current
 
-    // Slow Zoom scale stays strictly inside parent clipping boundary
-    val targetZoom = if (motionEnabled && enableSlowZoom && level.amplitudeScale > 0f) {
+    // Slow Zoom scale stays strictly inside parent clipping boundary and is read only in graphicsLayer
+    val zoomState: State<Float> = if (motionEnabled && enableSlowZoom && level.amplitudeScale > 0f) {
         val zoomDelta = (zoomRange * level.amplitudeScale).coerceIn(0f, 0.075f)
         val transition = rememberInfiniteTransition(label = "slow_zoom_${song?.id ?: 0L}")
-        val scale by transition.animateFloat(
+        transition.animateFloat(
             initialValue = 1.0f,
             targetValue = 1.0f + zoomDelta,
             animationSpec = infiniteRepeatable(
@@ -81,22 +84,14 @@ fun ArtworkTransition(
             ),
             label = "slow_zoom_scale"
         )
-        scale
     } else {
-        1.0f
+        remember { mutableFloatStateOf(1.0f) }
     }
 
-    val settledZoom by animateFloatAsState(
-        targetValue = targetZoom,
-        animationSpec = tween(320),
-        label = "slow_zoom_settle"
-    )
-    val effectiveZoom = if (motionEnabled && enableSlowZoom) targetZoom else settledZoom
-
-    // Optional gentle decorative rotation for active selected circular artwork
-    val rotationDeg = if (motionEnabled && decorativeRotationActive) {
+    // Optional gentle decorative rotation for active selected circular artwork (read only in graphicsLayer)
+    val rotationState: State<Float> = if (motionEnabled && decorativeRotationActive) {
         val rotTransition = rememberInfiniteTransition(label = "decor_rot")
-        val deg by rotTransition.animateFloat(
+        rotTransition.animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(
@@ -105,9 +100,8 @@ fun ArtworkTransition(
             ),
             label = "decor_rot_deg"
         )
-        deg
     } else {
-        0f
+        remember { mutableFloatStateOf(0f) }
     }
 
     AnimatedContent(
@@ -116,17 +110,19 @@ fun ArtworkTransition(
             if (!motionEnabled) {
                 fadeIn(snap()) togetherWith fadeOut(snap())
             } else {
-                (fadeIn(tween(420, easing = FastOutSlowInEasing)) +
-                    scaleIn(initialScale = 0.94f, animationSpec = tween(420, easing = FastOutSlowInEasing))) togetherWith
-                    (fadeOut(tween(300, easing = FastOutSlowInEasing)) +
-                        scaleOut(targetScale = 1.03f, animationSpec = tween(300)))
+                (fadeIn(tween(SonoraMotionSpecs.CARD_CONTENT_MS, easing = SonoraMotionSpecs.EmphasizedDecelerate)) +
+                    scaleIn(initialScale = 0.96f, animationSpec = tween(SonoraMotionSpecs.CARD_CONTENT_MS, easing = SonoraMotionSpecs.EmphasizedDecelerate))) togetherWith
+                    (fadeOut(tween(SonoraMotionSpecs.SMALL_UI_MS, easing = SonoraMotionSpecs.EmphasizedAccelerate)) +
+                        scaleOut(targetScale = 1.02f, animationSpec = tween(SonoraMotionSpecs.SMALL_UI_MS, easing = SonoraMotionSpecs.EmphasizedAccelerate)))
             }
         },
         contentKey = { target -> "${target?.id ?: -1L}_${target?.albumId ?: -1L}_${target?.artworkUrl.orEmpty()}" },
         label = "album_art_crossfade",
         modifier = modifier
     ) { targetSong ->
-        val cached = AlbumArtHelper.getCachedBitmap(targetSong)
+        val cached = remember(targetSong?.id, targetSong?.albumId, targetSong?.artworkUrl) {
+            AlbumArtHelper.getCachedBitmap(targetSong)
+        }
         val bitmap by produceState<Bitmap?>(
             initialValue = cached,
             key1 = targetSong?.id,
@@ -137,6 +133,7 @@ fun ArtworkTransition(
                 value = AlbumArtHelper.loadAlbumArt(context, targetSong)
             }
         }
+        val imageBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
 
         Box(
             modifier = Modifier
@@ -147,16 +144,16 @@ fun ArtworkTransition(
                     )
                 )
                 .graphicsLayer {
-                    scaleX = effectiveZoom
-                    scaleY = effectiveZoom
-                    rotationZ = rotationDeg
+                    val z = zoomState.value
+                    scaleX = z
+                    scaleY = z
+                    rotationZ = rotationState.value
                 },
             contentAlignment = Alignment.Center
         ) {
-            val loadedBitmap = bitmap
-            if (loadedBitmap != null) {
+            if (imageBitmap != null) {
                 Image(
-                    bitmap = loadedBitmap.asImageBitmap(),
+                    bitmap = imageBitmap,
                     contentDescription = contentDescription,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

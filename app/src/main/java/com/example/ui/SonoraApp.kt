@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BookmarkAdded
@@ -54,11 +55,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,7 +86,9 @@ import com.example.viewmodel.SonoraViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ui.audiostudio.AudioEffectsStudioScreen
+import ui.components.CircularFloatingMiniPlayer
 import ui.components.FloatingMiniPlayer
+import ui.components.MiniPlayerRestorePill
 import ui.downloads.ChooseDownloadLocationDialog
 import ui.downloads.DownloadManagerScreen
 import ui.downloads.DownloadQualitySelectorSheet
@@ -90,11 +96,14 @@ import ui.home.FloatingBottomNavigation
 import ui.home.HomeScreen
 import ui.home.SearchScreen
 import ui.lyrics.FullScreenLyricsScreen
+import ui.motion.FloatingPipLayoutMath
 import ui.motion.LocalEffectiveMotionState
 import ui.motion.LocalSonoraMotionConfig
+import ui.motion.SonoraMotionSpecs
 import ui.motion.SonoraTransitions
 import ui.motion.horizontalSwipeNavigation
 import ui.motion.rememberEffectiveMotionState
+import ui.motion.rememberNavigationDebounce
 import domain.home.HomeMusicMode
 import domain.video.ChannelDetailUtils
 import domain.video.OnlineVideoChannel
@@ -121,24 +130,22 @@ fun SonoraApp(
     isIntroOverlayActive: Boolean = false,
     onVideoViewportBoundsChanged: ((android.graphics.Rect?) -> Unit)? = null
 ) {
-    val themeMode by viewModel.themeMode.collectAsState()
-    val dynamicPalette by viewModel.dynamicPalette.collectAsState()
-    val homeThemeMode by viewModel.homeThemeMode.collectAsState()
-    val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsState()
-    val reduceAnimations by viewModel.reduceAnimations.collectAsState()
-    val motionConfig by viewModel.motionConfig.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val dynamicPalette by viewModel.dynamicPalette.collectAsStateWithLifecycle()
+    val homeThemeMode by viewModel.homeThemeMode.collectAsStateWithLifecycle()
+    val customAccentArgb by viewModel.homeCustomAccentArgb.collectAsStateWithLifecycle()
+    val reduceAnimations by viewModel.reduceAnimations.collectAsStateWithLifecycle()
+    val motionConfig by viewModel.motionConfig.collectAsStateWithLifecycle()
     val motionState = rememberEffectiveMotionState(motionConfig)
     val effectiveReduceAnimations = reduceAnimations || !motionState.animationsEnabled
-    val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
-    val trackDirection by viewModel.trackTransitionDirection.collectAsState()
-    val profileOnboardingState by viewModel.profileOnboardingState.collectAsState()
-    val musicTasteOnboardingState by viewModel.musicTasteOnboardingState.collectAsState()
-    val musicTasteProfile by viewModel.musicTasteProfile.collectAsState()
-    val musicTasteArtistState by viewModel.musicTasteArtistState.collectAsState()
-    val musicTasteDiscoveryState by viewModel.musicTasteDiscoveryState.collectAsState()
-    val musicTastePreviewState by viewModel.musicTastePreviewState.collectAsState()
+    val currentSong by viewModel.currentSong.collectAsStateWithLifecycle()
+    val trackDirection by viewModel.trackTransitionDirection.collectAsStateWithLifecycle()
+    val profileOnboardingState by viewModel.profileOnboardingState.collectAsStateWithLifecycle()
+    val musicTasteOnboardingState by viewModel.musicTasteOnboardingState.collectAsStateWithLifecycle()
+    val musicTasteProfile by viewModel.musicTasteProfile.collectAsStateWithLifecycle()
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val tabStateHolder = rememberSaveableStateHolder()
+    val navDebounce = rememberNavigationDebounce()
 
     LaunchedEffect(systemDark) {
         viewModel.updateSystemDarkTheme(systemDark)
@@ -161,6 +168,32 @@ fun SonoraApp(
     var showMusicTasteScreen by remember { mutableStateOf(false) }
     var musicTasteEditMode by remember { mutableStateOf<domain.onboarding.MusicTasteEditLaunchMode?>(null) }
     var openLibraryDownloadsTrigger by remember { mutableIntStateOf(0) }
+
+    // Two-stage mini-player visual state (Stage 1: circular, Stage 2: dismissed while playback stays active)
+    var isMiniPlayerCircular by rememberSaveable { mutableStateOf(false) }
+    var isMiniPlayerDismissed by rememberSaveable { mutableStateOf(false) }
+    var hadSongBefore by remember { mutableStateOf(currentSong != null) }
+    LaunchedEffect(currentSong != null) {
+        val hasSongNow = currentSong != null
+        if (!hadSongBefore && hasSongNow) {
+            isMiniPlayerCircular = false
+            isMiniPlayerDismissed = false
+        } else if (!hasSongNow) {
+            isMiniPlayerCircular = false
+            isMiniPlayerDismissed = false
+        }
+        hadSongBefore = hasSongNow
+    }
+
+    // Hoisted Queue LazyListState so returning to the player and reopening Queue preserves scroll position
+    val queueListState = rememberLazyListState()
+
+    // Session-persistent in-app floating video PiP size and safe-area anchor
+    var floatingPipWidthFraction by rememberSaveable {
+        mutableFloatStateOf(FloatingPipLayoutMath.DEFAULT_WIDTH_FRACTION)
+    }
+    var floatingPipNormalizedX by rememberSaveable { mutableFloatStateOf(1f) }
+    var floatingPipNormalizedY by rememberSaveable { mutableFloatStateOf(1f) }
 
     val downloadFlowState by viewModel.downloadFlowState.collectAsState()
     val downloadFeedbackMessage by viewModel.downloadFeedbackMessage.collectAsState()
@@ -301,7 +334,7 @@ fun SonoraApp(
         dynamicPalette = dynamicPalette,
         reduceAnimations = effectiveReduceAnimations,
         animatedColorsEnabled = motionState.animatedAlbumColorsEnabled,
-        colorDurationMs = motionState.durationMillis(600)
+        colorDurationMs = motionState.durationMillis(SonoraMotionSpecs.COLOR_TRANSITION_MS, essential = true)
     )
 
     CompositionLocalProvider(
@@ -363,6 +396,9 @@ fun SonoraApp(
                     return@SonoraTheme
                 }
                 domain.onboarding.MusicTasteOnboardingState.REQUIRED -> {
+                    val musicTasteArtistState by viewModel.musicTasteArtistState.collectAsStateWithLifecycle()
+                    val musicTasteDiscoveryState by viewModel.musicTasteDiscoveryState.collectAsStateWithLifecycle()
+                    val musicTastePreviewState by viewModel.musicTastePreviewState.collectAsStateWithLifecycle()
                     ui.onboarding.MusicTasteOnboardingScreen(
                         colors = editorialColors,
                         reduceAnimations = effectiveReduceAnimations,
@@ -489,69 +525,67 @@ fun SonoraApp(
                             enabled = showBottomChrome && currentTab != 0,
                             motion = motionState,
                             onSwipeLeft = {
-                                if (currentTab < 3) currentTab += 1
+                                if (currentTab < 3) navDebounce.tryNavigate { currentTab += 1 }
                             },
                             onSwipeRight = {
-                                if (currentTab > 0) currentTab -= 1
+                                if (currentTab > 0) navDebounce.tryNavigate { currentTab -= 1 }
                             }
                         )
                 ) { tab ->
-                    when (tab) {
-                        0 -> HomeScreen(
-                            viewModel = viewModel,
-                            colors = editorialColors,
-                            screenVisible = !isIntroOverlayActive && showBottomChrome && currentTab == 0,
-                            onOpenSettings = { showSettingsScreen = true },
-                            onNavigateToSearch = { currentTab = 1 },
-                            onOpenMusicAnalytics = { showMusicAnalyticsScreen = true },
-                            onOpenMusicTaste = { showMusicTasteScreen = true },
-                            onNavigateToLibrary = { currentTab = 2 },
-                            onOpenOnlineMusic = { currentTab = 3 },
-                            onOpenNowPlaying = {
-                                isNowPlayingExpanded = true
-                            },
-                            onOpenEqualizer = { showEqualizerScreen = true },
-                            onOpenAudioStudio = { showAudioStudioScreen = true },
-                            onOpenPlaylists = { showPlaylistsScreen = true },
-                            onOpenQueue = { showQueueScreen = true },
-                            onOpenDynamicColors = { showDynamicThemeScreen = true },
-                            onOpenPlayerStyles = { showMusicPlayerHubScreen = true }
-                        )
-                        1 -> SearchScreen(
-                            viewModel = viewModel,
-                            colors = editorialColors,
-                            onOpenSettings = { showSettingsScreen = true },
-                            onSearchOnline = { queryText ->
-                                viewModel.updateOnlineSearchQuery(queryText)
-                                if (queryText.isNotBlank()) {
-                                    viewModel.executeOnlineSearch(queryText)
+                    tabStateHolder.SaveableStateProvider(key = "primary_tab_$tab") {
+                        when (tab) {
+                            0 -> HomeScreen(
+                                viewModel = viewModel,
+                                colors = editorialColors,
+                                screenVisible = !isIntroOverlayActive && showBottomChrome && currentTab == 0,
+                                onOpenSettings = { navDebounce.tryNavigate { showSettingsScreen = true } },
+                                onNavigateToSearch = { navDebounce.tryNavigate { currentTab = 1 } },
+                                onOpenMusicAnalytics = { navDebounce.tryNavigate { showMusicAnalyticsScreen = true } },
+                                onOpenMusicTaste = { navDebounce.tryNavigate { showMusicTasteScreen = true } },
+                                onNavigateToLibrary = { navDebounce.tryNavigate { currentTab = 2 } },
+                                onOpenOnlineMusic = { navDebounce.tryNavigate { currentTab = 3 } },
+                                onOpenNowPlaying = { navDebounce.tryNavigate { isNowPlayingExpanded = true } },
+                                onOpenEqualizer = { navDebounce.tryNavigate { showEqualizerScreen = true } },
+                                onOpenAudioStudio = { navDebounce.tryNavigate { showAudioStudioScreen = true } },
+                                onOpenPlaylists = { navDebounce.tryNavigate { showPlaylistsScreen = true } },
+                                onOpenQueue = { navDebounce.tryNavigate { showQueueScreen = true } },
+                                onOpenDynamicColors = { navDebounce.tryNavigate { showDynamicThemeScreen = true } },
+                                onOpenPlayerStyles = { navDebounce.tryNavigate { showMusicPlayerHubScreen = true } }
+                            )
+                            1 -> SearchScreen(
+                                viewModel = viewModel,
+                                colors = editorialColors,
+                                onOpenSettings = { navDebounce.tryNavigate { showSettingsScreen = true } },
+                                onSearchOnline = { queryText ->
+                                    viewModel.updateOnlineSearchQuery(queryText)
+                                    if (queryText.isNotBlank()) {
+                                        viewModel.executeOnlineSearch(queryText)
+                                    }
+                                    launchOnlineSearch = true
+                                    currentTab = 3
                                 }
-                                launchOnlineSearch = true
-                                currentTab = 3
-                            }
-                        )
-                        2 -> LibraryScreen(
-                            viewModel = viewModel,
-                            onOpenFolderManagement = { showFolderManagementScreen = true },
-                            onOpenPlaylists = { showPlaylistsScreen = true },
-                            onOpenDownloadManager = { showDownloadManagerScreen = true },
-                            onOpenOnlineMusic = { currentTab = 3 },
-                            onOpenOnlineVideo = {
-                                viewModel.setHomeMusicMode(HomeMusicMode.ONLINE_VIDEO)
-                                currentTab = 0
-                            },
-                            openDownloadsTrigger = openLibraryDownloadsTrigger
-                        )
-                        3 -> OnlineMusicScreen(
-                            viewModel = viewModel,
-                            colors = editorialColors,
-                            initialSearchOpen = launchOnlineSearch,
-                            onInitialSearchConsumed = { launchOnlineSearch = false },
-                            onOpenSettings = { showSettingsScreen = true },
-                            onOpenNowPlaying = {
-                                isNowPlayingExpanded = true
-                            }
-                        )
+                            )
+                            2 -> LibraryScreen(
+                                viewModel = viewModel,
+                                onOpenFolderManagement = { navDebounce.tryNavigate { showFolderManagementScreen = true } },
+                                onOpenPlaylists = { navDebounce.tryNavigate { showPlaylistsScreen = true } },
+                                onOpenDownloadManager = { navDebounce.tryNavigate { showDownloadManagerScreen = true } },
+                                onOpenOnlineMusic = { navDebounce.tryNavigate { currentTab = 3 } },
+                                onOpenOnlineVideo = {
+                                    viewModel.setHomeMusicMode(HomeMusicMode.ONLINE_VIDEO)
+                                    currentTab = 0
+                                },
+                                openDownloadsTrigger = openLibraryDownloadsTrigger
+                            )
+                            3 -> OnlineMusicScreen(
+                                viewModel = viewModel,
+                                colors = editorialColors,
+                                initialSearchOpen = launchOnlineSearch,
+                                onInitialSearchConsumed = { launchOnlineSearch = false },
+                                onOpenSettings = { navDebounce.tryNavigate { showSettingsScreen = true } },
+                                onOpenNowPlaying = { navDebounce.tryNavigate { isNowPlayingExpanded = true } }
+                            )
+                        }
                     }
                 }
 
@@ -565,14 +599,17 @@ fun SonoraApp(
                     isVideoMiniPlayerVisible = showVideoMiniPlayer,
                     isChannelDetailOpen = isChannelDetailOpen
                 )
-                val showMusicMiniPlayer = domain.player.MusicMiniPlayerVisibilityPolicy.shouldShowMusicMiniPlayer(
+                val miniPlayerVisualState = domain.player.MusicMiniPlayerVisibilityPolicy.resolveVisualState(
                     hasCurrentSong = currentSong != null,
-                    isInOnlineVideoExperience = isInOnlineVideoExperience
+                    isInOnlineVideoExperience = isInOnlineVideoExperience,
+                    isCircularCollapsed = isMiniPlayerCircular,
+                    isDismissedByUser = isMiniPlayerDismissed
                 )
+                val showMusicMiniPlayer = miniPlayerVisualState == domain.player.MiniPlayerVisualState.EXPANDED_BAR
 
                 // 2. Persistent Floating Audio Mini-Player + Floating Pill Bottom Navigation
-                // (In-app floating video PiP is mounted in a dedicated safe-area overlay layer
-                // so playback and its live TextureView persist across tab & channel navigation.)
+                // (In-app floating video PiP and circular floating mini-player are mounted in dedicated
+                // safe-area overlay layers so playback and gestures work cleanly across tabs.)
                 if (showBottomChrome) {
                     Column(
                         modifier = Modifier
@@ -584,42 +621,18 @@ fun SonoraApp(
                         if (!showVideoMiniPlayer) {
                             AnimatedVisibility(
                                 visible = showMusicMiniPlayer && currentSong != null,
-                                enter = if (motionState.animationsEnabled) {
-                                    fadeIn(tween(durationMillis = 200, easing = FastOutSlowInEasing)) +
-                                        slideInVertically(
-                                            animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            ),
-                                            initialOffsetY = { it / 2 }
-                                        ) +
-                                        scaleIn(
-                                            initialScale = 0.92f,
-                                            animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-                                        )
-                                } else {
-                                    fadeIn(snap())
-                                },
-                                exit = if (motionState.animationsEnabled) {
-                                    fadeOut(tween(durationMillis = 170, easing = FastOutSlowInEasing)) +
-                                        slideOutVertically(
-                                            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-                                            targetOffsetY = { it / 2 }
-                                        ) +
-                                        scaleOut(
-                                            targetScale = 0.86f,
-                                            animationSpec = tween(durationMillis = 170, easing = FastOutSlowInEasing)
-                                        )
-                                } else {
-                                    fadeOut(snap())
-                                }
+                                enter = SonoraTransitions.miniPlayerEnter(motionState),
+                                exit = SonoraTransitions.miniPlayerExit(motionState)
                             ) {
-                                val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsState()
-                                val miniQueue by viewModel.queue.collectAsState()
-                                val miniQueueIndex by viewModel.queueIndex.collectAsState()
-                                val miniFreqs by viewModel.visualizerFrequencies.collectAsState()
-                                val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsState()
-                                val weatherFetchState by viewModel.weatherFetchState.collectAsState()
+                                // Collect high-frequency playback progress strictly inside the mini-player scope
+                                // so root SonoraApp and inactive tabs do not recompose on progress ticks.
+                                val miniPlaybackInfo by viewModel.playbackInfo.collectAsStateWithLifecycle()
+                                val miniPlayerStyle by viewModel.miniPlayerStyle.collectAsStateWithLifecycle()
+                                val miniQueue by viewModel.queue.collectAsStateWithLifecycle()
+                                val miniQueueIndex by viewModel.queueIndex.collectAsStateWithLifecycle()
+                                val miniFreqs by viewModel.visualizerFrequencies.collectAsStateWithLifecycle()
+                                val weatherAmbientSettings by viewModel.weatherAmbientSettings.collectAsStateWithLifecycle()
+                                val weatherFetchState by viewModel.weatherFetchState.collectAsStateWithLifecycle()
                                 val miniWeatherPlan = remember(
                                     weatherAmbientSettings,
                                     weatherFetchState.latestSnapshot,
@@ -638,16 +651,19 @@ fun SonoraApp(
                                 }
                                 FloatingMiniPlayer(
                                     song = currentSong,
-                                    playbackInfo = playbackInfo,
+                                    playbackInfo = miniPlaybackInfo,
                                     colors = editorialColors,
                                     onTogglePlayPause = { viewModel.togglePlayPause() },
                                     onPlayNext = { viewModel.playNext() },
                                     onPlayPrevious = { viewModel.playPrevious() },
                                     onSeekTo = { viewModel.seekTo(it) },
-                                    onClick = {
-                                        isNowPlayingExpanded = true
+                                    onClick = { navDebounce.tryNavigate { isNowPlayingExpanded = true } },
+                                    onOpenLyrics = { navDebounce.tryNavigate { showLyricsScreen = true } },
+                                    onSwipeUpExpand = { navDebounce.tryNavigate { isNowPlayingExpanded = true } },
+                                    onSwipeDownCollapse = {
+                                        isMiniPlayerCircular = true
+                                        isMiniPlayerDismissed = false
                                     },
-                                    onOpenLyrics = { showLyricsScreen = true },
                                     miniPlayerStyle = miniPlayerStyle,
                                     trackDirection = trackDirection,
                                     frequencies = miniFreqs,
@@ -657,14 +673,74 @@ fun SonoraApp(
                                     weatherSettings = weatherAmbientSettings
                                 )
                             }
+
+                            // Compact persistent restore chip when mini-player UI is dismissed (Stage 2)
+                            AnimatedVisibility(
+                                visible = miniPlayerVisualState == domain.player.MiniPlayerVisualState.DISMISSED && currentSong != null,
+                                enter = SonoraTransitions.miniPlayerEnter(motionState),
+                                exit = SonoraTransitions.miniPlayerExit(motionState),
+                                modifier = Modifier
+                                    .align(Alignment.End)
+                                    .padding(end = 16.dp)
+                            ) {
+                                val restorePlaybackSummary by viewModel.playbackStatusSummary.collectAsStateWithLifecycle()
+                                MiniPlayerRestorePill(
+                                    song = currentSong,
+                                    isPlaying = restorePlaybackSummary.isPlaying,
+                                    colors = editorialColors,
+                                    onRestoreMiniPlayer = {
+                                        isMiniPlayerDismissed = false
+                                        isMiniPlayerCircular = false
+                                    },
+                                    onOpenFullPlayer = {
+                                        navDebounce.tryNavigate { isNowPlayingExpanded = true }
+                                    }
+                                )
+                            }
                         }
 
                         FloatingBottomNavigation(
                             selectedIndex = currentTab,
                             colors = editorialColors,
-                            onSelectTab = { currentTab = it }
+                            onSelectTab = { targetTab ->
+                                if (targetTab != currentTab) {
+                                    navDebounce.tryNavigate { currentTab = targetTab }
+                                }
+                            }
                         )
                     }
+                }
+
+                // 2b. Stage 1 Circular Floating Mini-Player overlay (smooth drag inside safe bounds + Stage 2 swipe-down dismiss)
+                if (
+                    showBottomChrome &&
+                    !showVideoMiniPlayer &&
+                    miniPlayerVisualState == domain.player.MiniPlayerVisualState.CIRCULAR_FLOATING &&
+                    currentSong != null
+                ) {
+                    val circularPlaybackInfo by viewModel.playbackInfo.collectAsStateWithLifecycle()
+                    CircularFloatingMiniPlayer(
+                        song = currentSong,
+                        playbackInfo = circularPlaybackInfo,
+                        colors = editorialColors,
+                        onTapExpand = {
+                            navDebounce.tryNavigate { isNowPlayingExpanded = true }
+                        },
+                        onRestoreBar = {
+                            isMiniPlayerCircular = false
+                            isMiniPlayerDismissed = false
+                        },
+                        onDismiss = {
+                            isMiniPlayerCircular = false
+                            isMiniPlayerDismissed = true
+                        },
+                        onTogglePlayPause = { viewModel.togglePlayPause() },
+                        bottomInsetClearance = 92.dp,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                    )
                 }
 
                 // 3. Settings Overlay (Forward/Back Horizontal Push)
@@ -761,7 +837,7 @@ fun SonoraApp(
                     )
                 }
 
-                // 9. Playing Queue & Recently Played Screen Overlay (Modal Up/Down)
+                // 9. Playing Queue & Recently Played Screen Overlay (Modal Up/Down with swipe-down return)
                 AnimatedVisibility(
                     visible = showQueueScreen,
                     enter = modalEnter,
@@ -773,7 +849,8 @@ fun SonoraApp(
                         onOpenNowPlaying = {
                             showQueueScreen = false
                             isNowPlayingExpanded = true
-                        }
+                        },
+                        listState = queueListState
                     )
                 }
 
@@ -886,6 +963,9 @@ fun SonoraApp(
                 ) {
                     val activeEditMode = musicTasteEditMode
                     if (activeEditMode != null) {
+                        val musicTasteArtistState by viewModel.musicTasteArtistState.collectAsStateWithLifecycle()
+                        val musicTasteDiscoveryState by viewModel.musicTasteDiscoveryState.collectAsStateWithLifecycle()
+                        val musicTastePreviewState by viewModel.musicTastePreviewState.collectAsStateWithLifecycle()
                         ui.onboarding.MusicTasteOnboardingScreen(
                             colors = editorialColors,
                             reduceAnimations = effectiveReduceAnimations,
@@ -981,11 +1061,24 @@ fun SonoraApp(
                         onExpand = { viewModel.videoController.expandVideoPlayer() },
                         onTogglePlayPause = { viewModel.videoController.toggleVideoPlayPause() },
                         onPlayNext = { viewModel.videoController.playNextInQueue() },
-                        onClose = { viewModel.videoController.closeVideoPlayer() },
+                        onClose = {
+                            floatingPipWidthFraction = FloatingPipLayoutMath.DEFAULT_WIDTH_FRACTION
+                            floatingPipNormalizedX = 1f
+                            floatingPipNormalizedY = 1f
+                            viewModel.videoController.closeVideoPlayer()
+                        },
                         playbackProgressFlow = viewModel.videoController.playbackProgress,
                         onAttachTextureView = { viewModel.videoController.attachVideoSurface(it) },
                         onDetachTextureView = { viewModel.videoController.detachVideoSurface(it) },
                         bottomInsetClearance = if (showBottomChrome && !isChannelDetailOpen) 86.dp else 12.dp,
+                        initialWidthFraction = floatingPipWidthFraction,
+                        initialNormalizedX = floatingPipNormalizedX,
+                        initialNormalizedY = floatingPipNormalizedY,
+                        onPipLayoutChanged = { wf, nx, ny ->
+                            floatingPipWidthFraction = wf
+                            floatingPipNormalizedX = nx
+                            floatingPipNormalizedY = ny
+                        },
                         onVideoViewportBoundsChanged = onVideoViewportBoundsChanged,
                         modifier = Modifier
                             .fillMaxSize()
@@ -1058,8 +1151,8 @@ fun SonoraApp(
                 // 13. Floating Download Feedback Toast Banner
                 AnimatedVisibility(
                     visible = downloadFeedbackMessage != null,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = SonoraTransitions.toastEnter(motionState),
+                    exit = SonoraTransitions.toastExit(motionState),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
@@ -1140,8 +1233,8 @@ fun SonoraApp(
                 // 14. Floating Library Feedback Toast Banner (Save/Follow/Playlist/Delete confirmation)
                 AnimatedVisibility(
                     visible = libraryFeedbackMessage != null && downloadFeedbackMessage == null,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = SonoraTransitions.toastEnter(motionState),
+                    exit = SonoraTransitions.toastExit(motionState),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
@@ -1203,8 +1296,8 @@ fun SonoraApp(
                 // 15. Floating Online Video Feedback Toast Banner
                 AnimatedVisibility(
                     visible = videoFeedbackMessage != null && downloadFeedbackMessage == null && libraryFeedbackMessage == null,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = SonoraTransitions.toastEnter(motionState),
+                    exit = SonoraTransitions.toastExit(motionState),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
@@ -1266,8 +1359,8 @@ fun SonoraApp(
                 // 16. Graceful Session Restore Notice Banner (e.g., unavailable restored track while queue is preserved)
                 AnimatedVisibility(
                     visible = sessionRestoreNotice != null && videoFeedbackMessage == null && downloadFeedbackMessage == null && libraryFeedbackMessage == null,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = SonoraTransitions.toastEnter(motionState),
+                    exit = SonoraTransitions.toastExit(motionState),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()

@@ -96,9 +96,9 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
 
     @Test
     fun developerCredit_preserved_andRemovedMiniPlayerSwipeAndUpdateStringsAbsent() {
-        assertEquals("SONORA", context.getString(R.string.app_name))
+        assertEquals("MAYUR", context.getString(R.string.app_name))
         assertEquals(
-            "A Music Experience Beyond Listening",
+            "Where Sound Becomes Art.",
             context.getString(R.string.splash_brand_tagline)
         )
         assertEquals("Developed by", context.getString(R.string.developer_credit_label))
@@ -124,16 +124,18 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
     }
 
     // =========================================================================
-    // PART 2: MINI-PLAYER SWIPES REMOVED; TAP-TO-OPEN & BUTTONS PRESERVED
+    // PART 2: MINI-PLAYER SWIPES RESTORED; TAP-TO-OPEN & BUTTONS PRESERVED
     // =========================================================================
 
     @Test
-    fun floatingMiniPlayer_swipesDoNothing_whileTapAndExplicitButtonsWork() {
+    fun floatingMiniPlayer_swipesTriggerSkipExpandCollapse_whileTapAndButtonsWork() {
         val song = sampleSong(101L, "Kun Faya Kun", isOnline = false)
         var playPauseClicks = 0
         var nextClicks = 0
         var prevClicks = 0
         var openFullPlayerClicks = 0
+        var swipeUpExpands = 0
+        var swipeDownCollapses = 0
         var activeStyle by mutableStateOf(MiniPlayerStyle.FLOATING_PILL)
 
         composeRule.setContent {
@@ -155,6 +157,8 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
                     onPlayNext = { nextClicks++ },
                     onPlayPrevious = { prevClicks++ },
                     onClick = { openFullPlayerClicks++ },
+                    onSwipeUpExpand = { swipeUpExpands++ },
+                    onSwipeDownCollapse = { swipeDownCollapses++ },
                     miniPlayerStyle = activeStyle,
                     queue = listOf(song),
                     queueIndex = 0
@@ -162,18 +166,21 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
             }
         }
 
-        // Swiping left, right, up, or down on FloatingMiniPlayer must NOT skip, expand, collapse, or dismiss
+        // Swiping left -> next, right -> prev, up -> expand, down -> collapse Stage 1
         composeRule.onNodeWithTag("mini_player").assertIsDisplayed()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeLeft() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeRight() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeUp() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeDown() }
         composeRule.waitForIdle()
 
-        assertEquals("Horizontal swipe left must NOT trigger next", 0, nextClicks)
-        assertEquals("Horizontal swipe right must NOT trigger previous", 0, prevClicks)
-        assertEquals("Vertical swipe up/down must NOT open full player", 0, openFullPlayerClicks)
-        composeRule.onNodeWithTag("mini_player").assertIsDisplayed()
+        assertEquals("Horizontal swipe left must trigger next once", 1, nextClicks)
+        assertEquals("Horizontal swipe right must trigger previous once", 1, prevClicks)
+        assertEquals("Vertical swipe up must expand full player once", 1, swipeUpExpands)
+        assertEquals("Vertical swipe down must collapse to circular player once", 1, swipeDownCollapses)
 
         // Explicit buttons and normal tap-to-open must still work
         composeRule.onNodeWithTag("mini_play_pause_button").performClick()
@@ -182,7 +189,7 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
         composeRule.waitForIdle()
 
         assertEquals(1, playPauseClicks)
-        assertEquals(1, nextClicks)
+        assertEquals(2, nextClicks)
         assertEquals(1, openFullPlayerClicks)
 
         // Verify Previous button works on a style that exposes explicit Previous button
@@ -190,16 +197,18 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_skip_prev_button").performClick()
         composeRule.waitForIdle()
-        assertEquals(1, prevClicks)
+        assertEquals(2, prevClicks)
     }
 
     @Test
-    fun legacyMiniPlayerView_swipesDoNothing_whileTapAndButtonsWork() {
+    fun legacyMiniPlayerView_swipesTriggerSkipExpandDismiss_whileTapAndButtonsWork() {
         val song = sampleSong(202L, "Agar Tum Saath Ho", isOnline = true)
         var playPauseClicks = 0
         var nextClicks = 0
         var prevClicks = 0
         var openFullPlayerClicks = 0
+        var swipeUpExpands = 0
+        var swipeDownDismisses = 0
 
         composeRule.setContent {
             CompositionLocalProvider(
@@ -211,20 +220,26 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
                     onTogglePlayPause = { playPauseClicks++ },
                     onPlayNext = { nextClicks++ },
                     onPlayPrevious = { prevClicks++ },
-                    onClick = { openFullPlayerClicks++ }
+                    onClick = { openFullPlayerClicks++ },
+                    onSwipeUpExpand = { swipeUpExpands++ },
+                    onSwipeDownDismiss = { swipeDownDismisses++ }
                 )
             }
         }
 
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeLeft() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeRight() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeUp() }
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("mini_player").performTouchInput { swipeDown() }
         composeRule.waitForIdle()
 
-        assertEquals(0, nextClicks)
-        assertEquals(0, prevClicks)
-        assertEquals(0, openFullPlayerClicks)
+        assertEquals(1, nextClicks)
+        assertEquals(1, prevClicks)
+        assertEquals(1, swipeUpExpands)
+        assertEquals(1, swipeDownDismisses)
 
         composeRule.onNodeWithTag("mini_play_pause_button").performClick()
         composeRule.onNodeWithTag("mini_skip_next_button").performClick()
@@ -232,18 +247,23 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
         composeRule.waitForIdle()
 
         assertEquals(1, playPauseClicks)
-        assertEquals(1, nextClicks)
+        assertEquals(2, nextClicks)
         assertEquals(1, openFullPlayerClicks)
     }
 
     // =========================================================================
-    // PART 3: NORMAL VISIBILITY, ONLINE VIDEO ISOLATION & PLAYBACK SERVICE
+    // PART 3: TWO-STAGE VISIBILITY, ONLINE VIDEO ISOLATION & PLAYBACK SERVICE
     // =========================================================================
 
     @Test
-    fun visibilityPolicy_preservesNormalVisibilityAndOnlineVideoIsolation_withNoCircularState() {
+    fun visibilityPolicy_preservesOnlineVideoIsolation_andSupportsTwoStageCircularAndDismissedStates() {
         assertEquals(
-            setOf(MiniPlayerVisualState.EXPANDED_BAR, MiniPlayerVisualState.HIDDEN),
+            setOf(
+                MiniPlayerVisualState.EXPANDED_BAR,
+                MiniPlayerVisualState.CIRCULAR_FLOATING,
+                MiniPlayerVisualState.DISMISSED,
+                MiniPlayerVisualState.HIDDEN
+            ),
             MiniPlayerVisualState.entries.toSet()
         )
         assertEquals(20, MiniPlayerStyle.entries.size)
@@ -276,6 +296,22 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
             )
         )
         assertEquals(
+            MiniPlayerVisualState.CIRCULAR_FLOATING,
+            MusicMiniPlayerVisibilityPolicy.resolveVisualState(
+                hasCurrentSong = true,
+                isInOnlineVideoExperience = inOfflineMusic,
+                isCircularCollapsed = true
+            )
+        )
+        assertEquals(
+            MiniPlayerVisualState.DISMISSED,
+            MusicMiniPlayerVisibilityPolicy.resolveVisualState(
+                hasCurrentSong = true,
+                isInOnlineVideoExperience = inOfflineMusic,
+                isDismissedByUser = true
+            )
+        )
+        assertEquals(
             MiniPlayerVisualState.HIDDEN,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
                 hasCurrentSong = false,
@@ -286,7 +322,8 @@ class SonoraUniversalMiniPlayerGestureAndCreditTest {
             MiniPlayerVisualState.HIDDEN,
             MusicMiniPlayerVisibilityPolicy.resolveVisualState(
                 hasCurrentSong = true,
-                isInOnlineVideoExperience = inOnlineVideo
+                isInOnlineVideoExperience = inOnlineVideo,
+                isCircularCollapsed = true
             )
         )
         assertEquals(

@@ -251,7 +251,7 @@ class SonoraPersonalizedRecommendSectionTest {
             .performScrollToNode(hasTestTag("sonora_recommend_section"))
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("sonora_recommend_section").assertIsDisplayed()
-        composeRule.onNodeWithText("Sonora Recommend").assertIsDisplayed()
+        composeRule.onNodeWithText("MAYUR Recommendations").assertIsDisplayed()
 
         // Scroll to Trending Music in India and verify exactly ONE Trending Music section exists
         composeRule.onNodeWithTag("home_lazy_column")
@@ -659,7 +659,6 @@ class SonoraPersonalizedRecommendSectionTest {
             artist = "Arijit Singh",
             album = "Bhediya"
         )
-        var refreshClicks = 0
         var playClicks = 0
         var likeClicks = 0
         var playNextClicks = 0
@@ -690,7 +689,7 @@ class SonoraPersonalizedRecommendSectionTest {
                     animationLevel = HomeAnimationLevel.OFF,
                     screenVisible = true,
                     reduceAnimations = true,
-                    onRefresh = { refreshClicks++ },
+                    onRefresh = {},
                     onPlayTrack = { _, _ -> playClicks++ },
                     onAddToQueue = { addQueueClicks++ },
                     onPlayNext = { playNextClicks++ },
@@ -705,19 +704,23 @@ class SonoraPersonalizedRecommendSectionTest {
         composeRule.waitForIdle()
 
         // Title, cold-start subtitle, offline badge, song title, artist, optional album
-        composeRule.onNodeWithText("Sonora Recommend").assertIsDisplayed()
+        composeRule.onNodeWithText("MAYUR Recommendations").assertIsDisplayed()
         composeRule.onNodeWithText("Your music journey starts here 🎵").assertIsDisplayed()
         composeRule.onNodeWithTag("sonora_recommend_offline_badge").assertIsDisplayed()
         composeRule.onNodeWithText("Apna Bana Le").assertIsDisplayed()
         composeRule.onNodeWithText("Arijit Singh").assertIsDisplayed()
         composeRule.onNodeWithText("Bhediya").assertIsDisplayed()
 
-        // Refresh, Play, Quick Like
-        composeRule.onNodeWithTag("sonora_recommend_refresh_button").performClick()
+        // Header Refresh button is completely removed
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithTag("sonora_recommend_refresh_button").fetchSemanticsNodes().size
+        )
+
+        // Play & Quick Like
         composeRule.onNodeWithTag("sonora_recommend_play_501").performClick()
         composeRule.onNodeWithTag("sonora_recommend_like_501").performClick()
         composeRule.waitForIdle()
-        assertEquals(1, refreshClicks)
         assertEquals(1, playClicks)
         assertEquals(1, likeClicks)
 

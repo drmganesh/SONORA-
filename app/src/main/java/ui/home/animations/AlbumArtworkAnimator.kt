@@ -75,6 +75,7 @@ fun AlbumArtworkAnimator(
     onLongClick: (() -> Unit)? = null,
     overlayContent: @Composable BoxScope.() -> Unit = {}
 ) {
+    val motionState = ui.motion.LocalEffectiveMotionState.current
     val motionEnabled = rememberShouldAnimateHomeMotion(
         level = level,
         screenVisible = screenVisible,
@@ -84,43 +85,30 @@ fun AlbumArtworkAnimator(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
-    val pressScale by animateFloatAsState(
-        targetValue = if (isPressed && motionEnabled) 0.965f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
+    val pressScale = animateFloatAsState(
+        targetValue = if (isPressed && motionState.essentialFeedbackEnabled) 0.965f else 1f,
+        animationSpec = ui.motion.SonoraMotionSpecs.buttonScaleSpec(motionState),
         label = "artwork_press_scale"
     )
 
-    // Smooth organic corner morphing when requested on RoundedCornerShape cards
-    val morphedCornerDp = if (cornerMorphBaseDp != null) {
+    // Tactile press-only corner morphing (avoids continuous 60-120fps shadow/clip outline rebuilds while idle)
+    val effectiveShape = if (cornerMorphBaseDp != null) {
         val delta = cornerMorphDeltaDp * level.amplitudeScale.coerceIn(0f, 1.35f)
-        val targetCorner = if (motionEnabled && delta > 0.5.dp) {
-            if (isPressed) {
-                (cornerMorphBaseDp + delta * 1.4f).coerceAtLeast(4.dp)
-            } else {
-                val morphTrans = rememberInfiniteTransition(label = "corner_morph_$floatingPhaseMs")
-                val frac by morphTrans.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(cornerMorphDurationMs, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "corner_morph_frac"
-                )
-                (cornerMorphBaseDp + (delta * frac)).coerceAtLeast(4.dp)
-            }
+        val targetCorner = if (isPressed && motionEnabled && delta > 0.5.dp) {
+            (cornerMorphBaseDp + delta * 1.4f).coerceAtLeast(4.dp)
         } else {
             cornerMorphBaseDp
         }
-        val animDp by animateDpAsState(targetValue = targetCorner, animationSpec = spring(), label = "morph_dp")
-        animDp
-    } else null
-
-    val effectiveShape = if (morphedCornerDp != null) {
-        RoundedCornerShape(morphedCornerDp)
+        val animDp by animateDpAsState(
+            targetValue = targetCorner,
+            animationSpec = if (motionState.essentialFeedbackEnabled) {
+                spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+            } else {
+                androidx.compose.animation.core.snap()
+            },
+            label = "morph_dp"
+        )
+        remember(animDp) { RoundedCornerShape(animDp) }
     } else {
         shape
     }
@@ -162,8 +150,9 @@ fun AlbumArtworkAnimator(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        scaleX = pressScale
-                        scaleY = pressScale
+                        val s = pressScale.value
+                        scaleX = s
+                        scaleY = s
                     }
                     .shadow(
                         elevation = shadowElevation,

@@ -11,7 +11,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -41,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,13 +56,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,19 +83,23 @@ import domain.video.VideoPlaybackProgress
 import domain.video.VideoPlayerUiState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import ui.motion.FloatingPipLayoutMath
+import ui.motion.FloatingPipRectPx
 import ui.theme.EditorialColors
+import kotlin.math.hypot
 import kotlin.math.roundToInt
-
-private const val DEFAULT_FLOATING_PIP_WIDTH_FRACTION = 0.40f
-private const val MAX_FLOATING_PIP_HEIGHT_FRACTION = 0.72f
 
 /**
  * In-app floating PiP video player for SONORA Online Video mode.
- * Renders the active video at its natural aspect ratio (16:9, 9:16, 4:3, 1:1, etc.)
- * using the existing single Media3 ExoPlayer TextureView, docked cleanly inside safe screen bounds.
+ * Renders the active video at its natural aspect ratio (16:9, 9:16, 4:3, 1:1, rotated, etc.)
+ * using the existing single Media3 ExoPlayer TextureView, cleanly clamped inside safe screen bounds.
  *
+ * Gesture model (in-app floating PiP only; native Android system PiP remains OS-managed):
  * - One-finger tap on the video surface shows or hides compact playback controls.
- * - Native Android system PiP continues to be managed by Android OS via MainActivity.
+ * - One-finger drag moves the floating PiP smoothly anywhere inside safe screen boundaries.
+ * - Two-finger pinch outward/inward smoothly enlarges/shrinks the floating PiP within adaptive
+ *   limits (20%–85% screen width) while preserving exact video aspect ratio and keeping the
+ *   single TextureView continuously attached with zero playback restart.
  */
 @Composable
 fun FloatingVideoMiniPlayer(
@@ -101,16 +113,24 @@ fun FloatingVideoMiniPlayer(
     onAttachTextureView: ((TextureView) -> Unit)? = null,
     onDetachTextureView: ((TextureView) -> Unit)? = null,
     bottomInsetClearance: Dp = 12.dp,
+    initialWidthFraction: Float = FloatingPipLayoutMath.DEFAULT_WIDTH_FRACTION,
+    initialNormalizedX: Float = 1f,
+    initialNormalizedY: Float = 1f,
+    onPipLayoutChanged: ((widthFraction: Float, normalizedX: Float, normalizedY: Float) -> Unit)? = null,
     onVideoViewportBoundsChanged: ((Rect?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val video = playerState.activeVideo ?: return
     val latestOnVideoViewportBoundsChanged by rememberUpdatedState(onVideoViewportBoundsChanged)
+    val latestOnPipLayoutChanged by rememberUpdatedState(onPipLayoutChanged)
+    val latestOnExpand by rememberUpdatedState(onExpand)
+
     DisposableEffect(Unit) {
         onDispose {
             latestOnVideoViewportBoundsChanged?.invoke(null)
         }
     }
+
     val context = LocalContext.current
     val density = LocalDensity.current
 
@@ -138,15 +158,38 @@ fun FloatingVideoMiniPlayer(
     var controlsVisible by rememberSaveable { mutableStateOf(true) }
     var controlsInteractionNonce by remember { mutableIntStateOf(0) }
 
-    // Auto-hide controls shortly after inactivity while playing smoothly
+    // Persist interactive size & normalized anchor across recompositions and orientation changes
+    var widthFraction by rememberSaveable {
+        mutableFloatStateOf(
+            initialWidthFraction.coerceIn(
+                FloatingPipLayoutMath.MIN_WIDTH_FRACTION,
+                FloatingPipLayoutMath.MAX_WIDTH_FRACTION
+            )
+        )
+    }
+    var normalizedX by rememberSaveable { mutableFloatStateOf(initialNormalizedX.coerceIn(0f, 1f)) }
+    var normalizedY by rememberSaveable { mutableFloatStateOf(initialNormalizedY.coerceIn(0f, 1f)) }
+    var isPinching by remember { mutableStateOf(false) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    // Auto-hide controls shortly after inactivity while playing smoothly (pause timer while dragging/pinching)
     LaunchedEffect(
         controlsVisible,
         playerState.isPlaying,
         playerState.isResolving,
         playerState.isBuffering,
+        isPinching,
+        isDragging,
         controlsInteractionNonce
     ) {
-        if (controlsVisible && playerState.isPlaying && !playerState.isResolving && !playerState.isBuffering) {
+        if (
+            controlsVisible &&
+            playerState.isPlaying &&
+            !playerState.isResolving &&
+            !playerState.isBuffering &&
+            !isPinching &&
+            !isDragging
+        ) {
             delay(3_500L)
             controlsVisible = false
         }
@@ -164,24 +207,48 @@ fun FloatingVideoMiniPlayer(
         val topMarginPx = if (hasBoundedHeight) with(density) { 10.dp.toPx() } else edgeMarginPx
         val bottomMarginPx = if (hasBoundedHeight) with(density) { bottomInsetClearance.toPx() } else edgeMarginPx
 
-        // Fixed configured floating PiP size (~40% of viewport width) preserving exact video aspect ratio
-        val safeInnerW = (viewportWidthPx - (edgeMarginPx * 2f)).coerceAtLeast(1f)
-        val safeInnerH = (viewportHeightPx - topMarginPx - bottomMarginPx).coerceAtLeast(1f)
-        val maxHeightAllowed = (viewportHeightPx * MAX_FLOATING_PIP_HEIGHT_FRACTION).coerceAtMost(safeInnerH)
-        val maxWidthForHeight = (maxHeightAllowed * videoAspectRatio).coerceAtMost(safeInnerW)
-        val targetWidthPx = (viewportWidthPx * DEFAULT_FLOATING_PIP_WIDTH_FRACTION)
-            .coerceAtMost(safeInnerW)
-            .coerceAtMost(maxWidthForHeight)
-            .coerceAtLeast(1f)
-        val pipHeightPx = (targetWidthPx / videoAspectRatio).coerceAtMost(safeInnerH).coerceAtLeast(1f)
-        val pipWidthPx = (pipHeightPx * videoAspectRatio).coerceAtMost(safeInnerW).coerceAtLeast(1f)
+        // Resolve aspect-ratio-preserving adaptive PiP size & safe clamped offset
+        val resolvedSize = FloatingPipLayoutMath.resolveSizePx(
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+            edgeMarginPx = edgeMarginPx,
+            topMarginPx = topMarginPx,
+            bottomMarginPx = bottomMarginPx,
+            videoAspectRatio = videoAspectRatio,
+            requestedWidthFraction = widthFraction
+        )
+        val pipWidthPx = resolvedSize.widthPx
+        val pipHeightPx = resolvedSize.heightPx
 
-        val pipOffsetX = (viewportWidthPx - edgeMarginPx - pipWidthPx).coerceAtLeast(edgeMarginPx)
-        val pipOffsetY = if (hasBoundedHeight) {
-            (viewportHeightPx - bottomMarginPx - pipHeightPx).coerceAtLeast(topMarginPx)
+        val (resolvedOffsetX, resolvedOffsetY) = if (hasBoundedHeight) {
+            FloatingPipLayoutMath.fromNormalizedPosition(
+                normalizedX = normalizedX,
+                normalizedY = normalizedY,
+                widthPx = pipWidthPx,
+                heightPx = pipHeightPx,
+                viewportWidthPx = viewportWidthPx,
+                viewportHeightPx = viewportHeightPx,
+                edgeMarginPx = edgeMarginPx,
+                topMarginPx = topMarginPx,
+                bottomMarginPx = bottomMarginPx
+            )
         } else {
-            edgeMarginPx
+            val x = (viewportWidthPx - edgeMarginPx - pipWidthPx).coerceAtLeast(edgeMarginPx)
+            x to edgeMarginPx
         }
+
+        // Latest layout geometry exposed to long-lived pointerInput without restarting active gestures
+        val latestViewportW by rememberUpdatedState(viewportWidthPx)
+        val latestViewportH by rememberUpdatedState(viewportHeightPx)
+        val latestEdgeMargin by rememberUpdatedState(edgeMarginPx)
+        val latestTopMargin by rememberUpdatedState(topMarginPx)
+        val latestBottomMargin by rememberUpdatedState(bottomMarginPx)
+        val latestAspectRatio by rememberUpdatedState(videoAspectRatio)
+        val latestPipWidth by rememberUpdatedState(pipWidthPx)
+        val latestPipHeight by rememberUpdatedState(pipHeightPx)
+        val latestOffsetX by rememberUpdatedState(resolvedOffsetX)
+        val latestOffsetY by rememberUpdatedState(resolvedOffsetY)
+        val latestHasBoundedHeight by rememberUpdatedState(hasBoundedHeight)
 
         val pipWidthDp = with(density) { pipWidthPx.toDp() }
         val pipHeightDp = with(density) { pipHeightPx.toDp() }
@@ -199,8 +266,8 @@ fun FloatingVideoMiniPlayer(
                 modifier = Modifier
                     .offset {
                         IntOffset(
-                            x = pipOffsetX.roundToInt(),
-                            y = pipOffsetY.roundToInt()
+                            x = resolvedOffsetX.roundToInt(),
+                            y = resolvedOffsetY.roundToInt()
                         )
                     }
                     .size(width = pipWidthDp, height = pipHeightDp)
@@ -218,15 +285,195 @@ fun FloatingVideoMiniPlayer(
                     .testTag("floating_pip_video_surface")
                     .semantics {
                         contentDescription =
-                            "Floating video player: ${video.title}. Tap to toggle controls."
-                    }
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = {
+                            "Floating video player: ${video.title}. Tap to toggle controls, drag with one finger to move, pinch with two fingers to resize."
+                        customActions = listOf(
+                            CustomAccessibilityAction("Enlarge floating video") {
+                                val enlarged = (widthFraction + 0.15f).coerceIn(
+                                    FloatingPipLayoutMath.MIN_WIDTH_FRACTION,
+                                    FloatingPipLayoutMath.MAX_WIDTH_FRACTION
+                                )
+                                widthFraction = enlarged
+                                latestOnPipLayoutChanged?.invoke(enlarged, normalizedX, normalizedY)
+                                true
+                            },
+                            CustomAccessibilityAction("Shrink floating video") {
+                                val shrunk = (widthFraction - 0.15f).coerceIn(
+                                    FloatingPipLayoutMath.MIN_WIDTH_FRACTION,
+                                    FloatingPipLayoutMath.MAX_WIDTH_FRACTION
+                                )
+                                widthFraction = shrunk
+                                latestOnPipLayoutChanged?.invoke(shrunk, normalizedX, normalizedY)
+                                true
+                            },
+                            CustomAccessibilityAction("Toggle controls") {
                                 controlsVisible = !controlsVisible
                                 controlsInteractionNonce++
+                                true
+                            },
+                            CustomAccessibilityAction("Expand video player") {
+                                latestOnExpand()
+                                true
                             }
                         )
+                    }
+                    .pointerInput(video.videoId) {
+                        val touchSlop = viewConfiguration.touchSlop
+
+                        awaitEachGesture {
+                            val firstDown = awaitFirstDown(requireUnconsumed = false)
+                            val firstDownConsumedByChild = firstDown.isConsumed
+                            var mode = 0 // 0=undecided/tap, 1=oneFingerDrag, 2=twoFingerPinch
+                            var accumDx = 0f
+                            var accumDy = 0f
+
+                            // Live working coordinates for smooth multi-frame drag/pinch without drift
+                            var workingX = latestOffsetX
+                            var workingY = latestOffsetY
+                            var workingW = latestPipWidth
+                            var workingH = latestPipHeight
+                            var workingFraction = widthFraction
+
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                val activeChanges = event.changes.filter { it.pressed }
+                                if (activeChanges.isEmpty()) break
+
+                                if (activeChanges.size >= 2) {
+                                    // Two-finger pinch-to-resize ALWAYS takes precedence over 1-finger drag/tap
+                                    if (mode != 2) {
+                                        mode = 2
+                                        isDragging = false
+                                        isPinching = true
+                                        workingX = latestOffsetX
+                                        workingY = latestOffsetY
+                                        workingW = latestPipWidth
+                                        workingH = latestPipHeight
+                                        workingFraction = widthFraction
+                                    }
+
+                                    val zoom = event.calculateZoom()
+                                    val pan = event.calculatePan()
+                                    if (zoom != 1f || pan.x != 0f || pan.y != 0f) {
+                                        val updated = FloatingPipLayoutMath.applyPinchZoom(
+                                            currentRect = FloatingPipRectPx(
+                                                x = workingX,
+                                                y = workingY,
+                                                width = workingW,
+                                                height = workingH,
+                                                widthFraction = workingFraction
+                                            ),
+                                            zoomFactor = zoom,
+                                            panDx = pan.x,
+                                            panDy = if (latestHasBoundedHeight) pan.y else 0f,
+                                            viewportWidthPx = latestViewportW,
+                                            viewportHeightPx = latestViewportH,
+                                            edgeMarginPx = latestEdgeMargin,
+                                            topMarginPx = latestTopMargin,
+                                            bottomMarginPx = latestBottomMargin,
+                                            videoAspectRatio = latestAspectRatio
+                                        )
+                                        workingX = updated.x
+                                        workingY = updated.y
+                                        workingW = updated.width
+                                        workingH = updated.height
+                                        workingFraction = updated.widthFraction
+
+                                        widthFraction = workingFraction
+                                        if (latestHasBoundedHeight) {
+                                            val (nx, ny) = FloatingPipLayoutMath.toNormalizedPosition(
+                                                x = workingX,
+                                                y = workingY,
+                                                widthPx = workingW,
+                                                heightPx = workingH,
+                                                viewportWidthPx = latestViewportW,
+                                                viewportHeightPx = latestViewportH,
+                                                edgeMarginPx = latestEdgeMargin,
+                                                topMarginPx = latestTopMargin,
+                                                bottomMarginPx = latestBottomMargin
+                                            )
+                                            normalizedX = nx
+                                            normalizedY = ny
+                                        }
+                                    }
+                                    event.changes.forEach { it.consume() }
+                                } else {
+                                    // Single active finger
+                                    if (mode == 2) {
+                                        // Stay locked out of 1-finger drag until all fingers lift after a pinch
+                                        event.changes.forEach { it.consume() }
+                                        continue
+                                    }
+
+                                    val change = event.changes.firstOrNull { it.id == firstDown.id }
+                                        ?: activeChanges.first()
+                                    val delta = change.positionChange()
+                                    accumDx += delta.x
+                                    accumDy += delta.y
+
+                                    if (mode == 0) {
+                                        val moved = hypot(accumDx.toDouble(), accumDy.toDouble()).toFloat()
+                                        if (moved > touchSlop) {
+                                            mode = 1
+                                            isDragging = true
+                                            workingX = latestOffsetX
+                                            workingY = latestOffsetY
+                                            workingW = latestPipWidth
+                                            workingH = latestPipHeight
+                                        }
+                                    }
+
+                                    if (mode == 1) {
+                                        change.consume()
+                                        val (clampedX, clampedY) = FloatingPipLayoutMath.clampOffsetPx(
+                                            x = workingX + delta.x,
+                                            y = if (latestHasBoundedHeight) workingY + delta.y else workingY,
+                                            widthPx = workingW,
+                                            heightPx = workingH,
+                                            viewportWidthPx = latestViewportW,
+                                            viewportHeightPx = latestViewportH,
+                                            edgeMarginPx = latestEdgeMargin,
+                                            topMarginPx = latestTopMargin,
+                                            bottomMarginPx = latestBottomMargin
+                                        )
+                                        workingX = clampedX
+                                        workingY = clampedY
+
+                                        if (latestHasBoundedHeight) {
+                                            val (nx, ny) = FloatingPipLayoutMath.toNormalizedPosition(
+                                                x = workingX,
+                                                y = workingY,
+                                                widthPx = workingW,
+                                                heightPx = workingH,
+                                                viewportWidthPx = latestViewportW,
+                                                viewportHeightPx = latestViewportH,
+                                                edgeMarginPx = latestEdgeMargin,
+                                                topMarginPx = latestTopMargin,
+                                                bottomMarginPx = latestBottomMargin
+                                            )
+                                            normalizedX = nx
+                                            normalizedY = ny
+                                        }
+                                    }
+                                }
+                            }
+
+                            val finishedMode = mode
+                            isPinching = false
+                            isDragging = false
+
+                            when (finishedMode) {
+                                0 -> {
+                                    // Tap on video surface (not on a child IconButton) toggles controls
+                                    if (!firstDownConsumedByChild) {
+                                        controlsVisible = !controlsVisible
+                                        controlsInteractionNonce++
+                                    }
+                                }
+                                1, 2 -> {
+                                    latestOnPipLayoutChanged?.invoke(widthFraction, normalizedX, normalizedY)
+                                }
+                            }
+                        }
                     }
             ) {
                 val cornerShape = RoundedCornerShape(16.dp)
@@ -236,8 +483,8 @@ fun FloatingVideoMiniPlayer(
                     shape = cornerShape,
                     color = Color.Black,
                     border = BorderStroke(
-                        width = 1.dp,
-                        color = colors.accentStrong.copy(alpha = 0.50f)
+                        width = if (isPinching || isDragging) 1.5.dp else 1.dp,
+                        color = colors.accentStrong.copy(alpha = if (isPinching || isDragging) 0.85f else 0.50f)
                     ),
                     shadowElevation = elevation,
                     modifier = Modifier
@@ -269,9 +516,9 @@ fun FloatingVideoMiniPlayer(
                             )
                         }
 
-                        // 3. Compact playback controls (toggled via one-finger tap)
+                        // 3. Compact playback controls (toggled via one-finger tap; hidden while pinching)
                         AnimatedVisibility(
-                            visible = controlsVisible,
+                            visible = controlsVisible && !isPinching,
                             enter = fadeIn(tween(durationMillis = 140)),
                             exit = fadeOut(tween(durationMillis = 140)),
                             modifier = Modifier.fillMaxSize()
@@ -301,6 +548,30 @@ fun FloatingVideoMiniPlayer(
                             )
                         }
 
+                        // 3b. Subtle live scale badge visible only while two-finger pinching
+                        AnimatedVisibility(
+                            visible = isPinching,
+                            enter = fadeIn(tween(durationMillis = 90)),
+                            exit = fadeOut(tween(durationMillis = 110)),
+                            modifier = Modifier.align(Alignment.Center)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = Color.Black.copy(alpha = 0.72f),
+                                border = BorderStroke(0.75.dp, colors.accentStrong.copy(alpha = 0.75f)),
+                                modifier = Modifier.testTag("floating_pip_resize_badge")
+                            ) {
+                                Text(
+                                    text = "${(resolvedSize.effectiveWidthFraction * 100f).roundToInt()}%",
+                                    fontFamily = PlusJakartaFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = Color.White,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
                         // 4. Isolated live progress strip (collects 500ms ticks without recomposing TextureView)
                         Box(
                             modifier = Modifier
@@ -322,8 +593,8 @@ fun FloatingVideoMiniPlayer(
 }
 
 /**
- * Isolated TextureView holder so control state recompositions never recreate the view
- * or detach/reattach the active ExoPlayer video surface.
+ * Isolated TextureView holder so control state, drag, or pinch recompositions never recreate
+ * the view or detach/reattach the active ExoPlayer video surface.
  */
 @Composable
 private fun FloatingPipLiveVideoSurface(

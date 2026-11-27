@@ -245,7 +245,7 @@ fun LibraryScreen(
 
     // Shared single-engine playback state
     val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
 
     var selectedCategory by remember { mutableStateOf(OfflineLibraryCategory.ALL_SONGS) }
     LaunchedEffect(openDownloadsTrigger) {
@@ -1405,7 +1405,7 @@ fun LibraryScreen(
                                                                     color = colors.textPrimary
                                                                 )
                                                                 Text(
-                                                                    text = "Control which storage folders appear in SONORA",
+                                                                    text = "Control which storage folders appear in ${domain.branding.AppBranding.APP_NAME}",
                                                                     fontFamily = PlusJakartaFontFamily,
                                                                     fontSize = 12.sp,
                                                                     color = colors.textSecondary
@@ -1721,7 +1721,7 @@ fun LibraryScreen(
             },
             text = {
                 Text(
-                    text = "Remove \"${song.title}\" from your downloads folder and Offline Library? Original local device files outside SONORA downloads are never touched.",
+                    text = "Remove \"${song.title}\" from your downloads folder and Offline Library? Original local device files outside ${domain.branding.AppBranding.APP_NAME} downloads are never touched.",
                     fontFamily = PlusJakartaFontFamily,
                     fontSize = 13.sp,
                     color = colors.textSecondary

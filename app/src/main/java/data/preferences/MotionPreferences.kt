@@ -13,6 +13,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.SonoraPreferences
 import domain.motion.GestureSensitivityLevel
 import domain.motion.GlobalMotionConfig
+import domain.motion.MotionEffectsLevel
 import domain.motion.MotionIntensity
 import domain.motion.ScreenTransitionStyle
 import kotlinx.coroutines.flow.Flow
@@ -34,7 +35,7 @@ private val Context.sonoraMotionDataStore: DataStore<Preferences> by preferences
 )
 
 /**
- * DataStore-backed persistence for SONORA global motion, transitions, and gesture settings.
+ * DataStore-backed persistence for SONORA global motion, Motion Effects level, transitions, and gesture settings.
  * Mirrors lightweight synchronous cache for flicker-free initial composition.
  */
 class MotionPreferences(private val context: Context) {
@@ -43,6 +44,7 @@ class MotionPreferences(private val context: Context) {
     private val writeMutex = Mutex()
 
     companion object {
+        val KEY_EFFECTS_LEVEL = stringPreferencesKey("motion_effects_level")
         val KEY_INTENSITY = stringPreferencesKey("motion_intensity")
         val KEY_TRANSITION_STYLE = stringPreferencesKey("motion_transition_style")
         val KEY_GESTURE_SENSITIVITY = stringPreferencesKey("motion_gesture_sensitivity")
@@ -53,6 +55,7 @@ class MotionPreferences(private val context: Context) {
         val KEY_ANIMATED_COLORS = booleanPreferencesKey("motion_animated_album_colors")
 
         private const val CACHE_KEY_INITIALIZED = "cache_initialized"
+        private const val CACHE_KEY_EFFECTS_LEVEL = "effects_level"
         private const val CACHE_KEY_INTENSITY = "intensity"
         private const val CACHE_KEY_TRANSITION = "transition"
         private const val CACHE_KEY_SENSITIVITY = "sensitivity"
@@ -74,8 +77,12 @@ class MotionPreferences(private val context: Context) {
 
     val motionConfigFlow: Flow<GlobalMotionConfig> = safeData.map { prefs ->
         val fallback = getInitialConfig()
+        val intensity = prefs[KEY_INTENSITY]?.let { MotionIntensity.fromName(it) } ?: fallback.intensity
+        val effectsLevel = prefs[KEY_EFFECTS_LEVEL]?.let { MotionEffectsLevel.fromName(it) }
+            ?: inferEffectsLevel(intensity, fallback.motionEffectsLevel)
         GlobalMotionConfig(
-            intensity = prefs[KEY_INTENSITY]?.let { MotionIntensity.fromName(it) } ?: fallback.intensity,
+            motionEffectsLevel = effectsLevel,
+            intensity = intensity,
             transitionStyle = prefs[KEY_TRANSITION_STYLE]?.let { ScreenTransitionStyle.fromName(it) } ?: fallback.transitionStyle,
             gestureSensitivity = prefs[KEY_GESTURE_SENSITIVITY]?.let { GestureSensitivityLevel.fromName(it) } ?: fallback.gestureSensitivity,
             swipeNavigationEnabled = prefs[KEY_SWIPE_NAV] ?: fallback.swipeNavigationEnabled,
@@ -86,10 +93,28 @@ class MotionPreferences(private val context: Context) {
         )
     }
 
+    private fun inferEffectsLevel(
+        intensity: MotionIntensity,
+        fallbackLevel: MotionEffectsLevel
+    ): MotionEffectsLevel = when (intensity) {
+        MotionIntensity.OFF -> MotionEffectsLevel.MINIMAL_MOTION
+        MotionIntensity.SUBTLE -> if (fallbackLevel == MotionEffectsLevel.REDUCED_MOTION) {
+            MotionEffectsLevel.REDUCED_MOTION
+        } else {
+            fallbackLevel
+        }
+        else -> fallbackLevel
+    }
+
     fun getInitialConfig(): GlobalMotionConfig {
         if (!cachePrefs.getBoolean(CACHE_KEY_INITIALIZED, false)) {
             val existingGesture = legacyPrefs.playerGestureConfig
             return GlobalMotionConfig(
+                motionEffectsLevel = if (legacyPrefs.reduceAnimations) {
+                    MotionEffectsLevel.MINIMAL_MOTION
+                } else {
+                    MotionEffectsLevel.FULL_MOTION
+                },
                 intensity = if (legacyPrefs.reduceAnimations) MotionIntensity.OFF else MotionIntensity.BALANCED,
                 transitionStyle = ScreenTransitionStyle.SMOOTH,
                 gestureSensitivity = GestureSensitivityLevel.fromPlayerConfig(
@@ -103,8 +128,18 @@ class MotionPreferences(private val context: Context) {
                 animatedAlbumColorsEnabled = !legacyPrefs.reduceAnimations
             )
         }
+        val intensity = MotionIntensity.fromName(cachePrefs.getString(CACHE_KEY_INTENSITY, null))
+        val cachedLevelRaw = cachePrefs.getString(CACHE_KEY_EFFECTS_LEVEL, null)
+        val effectsLevel = if (cachedLevelRaw != null) {
+            MotionEffectsLevel.fromName(cachedLevelRaw)
+        } else if (intensity == MotionIntensity.OFF) {
+            MotionEffectsLevel.MINIMAL_MOTION
+        } else {
+            MotionEffectsLevel.FULL_MOTION
+        }
         return GlobalMotionConfig(
-            intensity = MotionIntensity.fromName(cachePrefs.getString(CACHE_KEY_INTENSITY, null)),
+            motionEffectsLevel = effectsLevel,
+            intensity = intensity,
             transitionStyle = ScreenTransitionStyle.fromName(cachePrefs.getString(CACHE_KEY_TRANSITION, null)),
             gestureSensitivity = GestureSensitivityLevel.fromName(cachePrefs.getString(CACHE_KEY_SENSITIVITY, null)),
             swipeNavigationEnabled = cachePrefs.getBoolean(CACHE_KEY_SWIPE_NAV, true),
@@ -120,6 +155,7 @@ class MotionPreferences(private val context: Context) {
             writeCache(config)
             try {
                 context.sonoraMotionDataStore.edit { prefs ->
+                    prefs[KEY_EFFECTS_LEVEL] = config.motionEffectsLevel.name
                     prefs[KEY_INTENSITY] = config.intensity.name
                     prefs[KEY_TRANSITION_STYLE] = config.transitionStyle.name
                     prefs[KEY_GESTURE_SENSITIVITY] = config.gestureSensitivity.name
@@ -144,6 +180,7 @@ class MotionPreferences(private val context: Context) {
     private fun writeCache(config: GlobalMotionConfig) {
         cachePrefs.edit()
             .putBoolean(CACHE_KEY_INITIALIZED, true)
+            .putString(CACHE_KEY_EFFECTS_LEVEL, config.motionEffectsLevel.name)
             .putString(CACHE_KEY_INTENSITY, config.intensity.name)
             .putString(CACHE_KEY_TRANSITION, config.transitionStyle.name)
             .putString(CACHE_KEY_SENSITIVITY, config.gestureSensitivity.name)

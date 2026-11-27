@@ -48,14 +48,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -468,8 +471,10 @@ private fun SwipeableDiscoverySongCard(
     val scope = rememberCoroutineScope()
     val offsetX = remember(track.normalizedUrl) { Animatable(0f) }
     val offsetY = remember(track.normalizedUrl) { Animatable(0f) }
+    var isCommittingDecision by remember(track.normalizedUrl) { mutableStateOf(false) }
 
     LaunchedEffect(track.normalizedUrl) {
+        isCommittingDecision = false
         offsetX.snapTo(0f)
         offsetY.snapTo(0f)
     }
@@ -477,18 +482,24 @@ private fun SwipeableDiscoverySongCard(
     val isActivePreview = previewState.activeTrackUrl == track.normalizedUrl
     val isPlayingPreview = isActivePreview && previewState.isPlaying
     val isLoadingPreview = isActivePreview && previewState.isLoading
-    val rotationDeg = if (reduceAnimations) 0f else (offsetX.value / 32f).coerceIn(-12f, 12f)
 
-    val swipeBadgeLabel = when {
-        offsetY.value < -90f && abs(offsetY.value) > abs(offsetX.value) -> "ADD TO LIKED SONGS"
-        offsetX.value > 85f -> "KEEP"
-        offsetX.value < -85f -> "PASS"
-        else -> null
+    // Derive badge state so dragging doesn't recompose the entire card on every 1px delta
+    val swipeBadgeLabel by remember(track.normalizedUrl) {
+        androidx.compose.runtime.derivedStateOf {
+            val x = offsetX.value
+            val y = offsetY.value
+            when {
+                y < -90f && abs(y) > abs(x) -> "ADD TO LIKED SONGS"
+                x > 85f -> "KEEP"
+                x < -85f -> "PASS"
+                else -> null
+            }
+        }
     }
-    val swipeBadgeColor = when {
-        offsetY.value < -90f && abs(offsetY.value) > abs(offsetX.value) -> colors.accentStrong
-        offsetX.value > 85f -> Color(0xFF2ECC71)
-        offsetX.value < -85f -> Color(0xFFE05263)
+    val swipeBadgeColor = when (swipeBadgeLabel) {
+        "ADD TO LIKED SONGS" -> colors.accentStrong
+        "KEEP" -> Color(0xFF2ECC71)
+        "PASS" -> Color(0xFFE05263)
         else -> Color.Transparent
     }
 
@@ -498,28 +509,37 @@ private fun SwipeableDiscoverySongCard(
         border = BorderStroke(1.25.dp, colors.cardBorder),
         shadowElevation = 8.dp,
         modifier = modifier
-            .offset { IntOffset(offsetX.value.roundToInt(), offsetY.value.roundToInt()) }
-            .rotate(rotationDeg)
+            .graphicsLayer {
+                val x = offsetX.value
+                val y = offsetY.value
+                translationX = x
+                translationY = y
+                rotationZ = if (reduceAnimations) 0f else (x / 32f).coerceIn(-12f, 12f)
+            }
             .pointerInput(track.normalizedUrl) {
                 detectDragGestures(
                     onDragEnd = {
+                        if (isCommittingDecision) return@detectDragGestures
                         scope.launch {
                             val x = offsetX.value
                             val y = offsetY.value
                             when {
                                 y <= SWIPE_UP_THRESHOLD_PX && abs(y) > abs(x) -> {
+                                    isCommittingDecision = true
                                     if (!reduceAnimations) {
                                         offsetY.animateTo(-700f, tween(180))
                                     }
                                     onSwipeDecision(MusicTasteSwipeDecision.ADD_TO_LIKED_SONGS)
                                 }
                                 x >= SWIPE_HORIZONTAL_THRESHOLD_PX -> {
+                                    isCommittingDecision = true
                                     if (!reduceAnimations) {
                                         offsetX.animateTo(800f, tween(180))
                                     }
                                     onSwipeDecision(MusicTasteSwipeDecision.LIKE)
                                 }
                                 x <= -SWIPE_HORIZONTAL_THRESHOLD_PX -> {
+                                    isCommittingDecision = true
                                     if (!reduceAnimations) {
                                         offsetX.animateTo(-800f, tween(180))
                                     }
@@ -530,20 +550,22 @@ private fun SwipeableDiscoverySongCard(
                                         offsetX.snapTo(0f)
                                         offsetY.snapTo(0f)
                                     } else {
-                                        launch { offsetX.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
-                                        launch { offsetY.animateTo(0f, spring(stiffness = Spring.StiffnessMedium)) }
+                                        launch { offsetX.animateTo(0f, spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium)) }
+                                        launch { offsetY.animateTo(0f, spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium)) }
                                     }
                                 }
                             }
                         }
                     },
                     onDragCancel = {
+                        if (isCommittingDecision) return@detectDragGestures
                         scope.launch {
                             offsetX.snapTo(0f)
                             offsetY.snapTo(0f)
                         }
                     },
                     onDrag = { change, dragAmount ->
+                        if (isCommittingDecision) return@detectDragGestures
                         change.consume()
                         scope.launch {
                             offsetX.snapTo(offsetX.value + dragAmount.x)
@@ -645,7 +667,8 @@ private fun SwipeableDiscoverySongCard(
                 }
 
                 // Swipe directional badge
-                if (swipeBadgeLabel != null) {
+                val activeBadgeLabel = swipeBadgeLabel
+                if (activeBadgeLabel != null) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = swipeBadgeColor,
@@ -654,7 +677,7 @@ private fun SwipeableDiscoverySongCard(
                             .padding(top = 14.dp)
                     ) {
                         Text(
-                            text = swipeBadgeLabel,
+                            text = activeBadgeLabel,
                             fontFamily = OutfitFontFamily,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 13.sp,
@@ -779,7 +802,7 @@ private fun DiscoverySessionDoneCard(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "You rated $ratedCount songs. SONORA will tune your recommendations right away.",
+                text = "You rated $ratedCount songs. ${domain.branding.AppBranding.APP_NAME} will tune your recommendations right away.",
                 fontFamily = PlusJakartaFontFamily,
                 fontSize = 14.sp,
                 lineHeight = 20.sp,

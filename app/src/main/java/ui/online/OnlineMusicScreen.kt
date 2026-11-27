@@ -6,18 +6,24 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -77,6 +83,7 @@ import ui.motion.LocalEffectiveMotionState
 import ui.motion.SonoraTransitions
 import ui.theme.EditorialColors
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OnlineMusicScreen(
     viewModel: SonoraViewModel,
@@ -98,7 +105,7 @@ fun OnlineMusicScreen(
     val qualityPreference by viewModel.onlineQualityPreference.collectAsState()
     val currentResolvedStream by viewModel.currentResolvedStream.collectAsState()
     val currentSong by viewModel.currentSong.collectAsState()
-    val playbackInfo by viewModel.playbackInfo.collectAsState()
+    val playbackInfo by viewModel.playbackStatusSummary.collectAsState()
     val collectionState by viewModel.onlineCollectionState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val onlinePlaylists by viewModel.onlinePlaylists.collectAsState()
@@ -164,103 +171,149 @@ fun OnlineMusicScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            // Editorial Header
+            // Editorial Header — responsive across narrow phones, large font scales, and wide screens
             item(key = "online_header") {
-                Row(
+                val fontScale = LocalDensity.current.fontScale
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 22.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 20.dp, vertical = 6.dp)
+                        .testTag("online_music_header")
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Online Music",
-                            fontFamily = OutfitFontFamily,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 32.sp,
-                            letterSpacing = (-0.6).sp,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = "Powered by NewPipe Extractor • Unified Audio Studio",
-                            fontFamily = PlusJakartaFontFamily,
-                            fontSize = 12.sp,
-                            color = colors.textSecondary
-                        )
-                    }
+                    val useWideInlineHeader = maxWidth >= 560.dp && fontScale <= 1.15f
+                    val titleFontSize = if (maxWidth < 340.dp) 26.sp else 30.sp
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            onClick = { showRegionSheet = true },
-                            shape = RoundedCornerShape(18.dp),
-                            color = colors.surfaceTinted,
-                            border = BorderStroke(0.75.dp, colors.cardBorder),
-                            modifier = Modifier
-                                .height(42.dp)
-                                .testTag("online_region_button")
+                    if (useWideInlineHeader) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 12.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Public,
-                                    contentDescription = "Online Region and Language",
-                                    tint = colors.accentStrong,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "${onlineCountryCode.uppercase()}•${onlineLanguageCode.uppercase()}",
-                                    fontFamily = PlusJakartaFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    color = colors.textPrimary
+                                    text = "Online Music",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = titleFontSize,
+                                    letterSpacing = (-0.6).sp,
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("online_music_title")
                                 )
-                            }
-                        }
-
-                        Surface(
-                            onClick = { showQualitySheet = true },
-                            shape = RoundedCornerShape(18.dp),
-                            color = colors.accentPill,
-                            modifier = Modifier
-                                .height(42.dp)
-                                .testTag("online_quality_button")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.HighQuality,
-                                    contentDescription = "Stream Quality",
-                                    tint = colors.onAccentPill,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
                                 Text(
-                                    text = qualityPreference.title,
+                                    text = "Powered by NewPipe Extractor • Unified Audio Studio",
                                     fontFamily = PlusJakartaFontFamily,
-                                    fontWeight = FontWeight.Bold,
                                     fontSize = 12.sp,
-                                    color = colors.onAccentPill
+                                    color = colors.textSecondary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("online_music_subtitle")
                                 )
                             }
-                        }
 
-                        IconButton(
-                            onClick = { viewModel.refreshOnlineDiscovery(forceRefresh = true) },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("online_refresh_discovery_button")
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OnlineHeaderRegionChip(
+                                    countryCode = onlineCountryCode,
+                                    languageCode = onlineLanguageCode,
+                                    colors = colors,
+                                    onClick = { showRegionSheet = true }
+                                )
+                                OnlineHeaderQualityChip(
+                                    title = qualityPreference.title,
+                                    colors = colors,
+                                    onClick = { showQualitySheet = true }
+                                )
+                                IconButton(
+                                    onClick = { viewModel.refreshOnlineDiscovery(forceRefresh = true) },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .testTag("online_refresh_discovery_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = "Refresh online music",
+                                        tint = colors.textPrimary
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "Refresh online music",
-                                tint = colors.textPrimary
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Online Music",
+                                    fontFamily = OutfitFontFamily,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = titleFontSize,
+                                    letterSpacing = (-0.6).sp,
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp)
+                                        .testTag("online_music_title")
+                                )
+                                IconButton(
+                                    onClick = { viewModel.refreshOnlineDiscovery(forceRefresh = true) },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .testTag("online_refresh_discovery_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = "Refresh online music",
+                                        tint = colors.textPrimary
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "Powered by NewPipe Extractor • Unified Audio Studio",
+                                fontFamily = PlusJakartaFontFamily,
+                                fontSize = 12.sp,
+                                color = colors.textSecondary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("online_music_subtitle")
                             )
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OnlineHeaderRegionChip(
+                                    countryCode = onlineCountryCode,
+                                    languageCode = onlineLanguageCode,
+                                    colors = colors,
+                                    onClick = { showRegionSheet = true }
+                                )
+                                OnlineHeaderQualityChip(
+                                    title = qualityPreference.title,
+                                    colors = colors,
+                                    onClick = { showQualitySheet = true }
+                                )
+                            }
                         }
                     }
                 }
@@ -277,13 +330,13 @@ fun OnlineMusicScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
-                        .height(54.dp)
+                        .heightIn(min = 52.dp)
                         .testTag("open_online_search_button")
                 ) {
                     Row(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 18.dp),
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
@@ -412,19 +465,23 @@ fun OnlineMusicScreen(
                                     color = if (selected) colors.accentStrong else colors.cardBorder
                                 ),
                                 modifier = Modifier
-                                    .height(38.dp)
+                                    .heightIn(min = 38.dp)
+                                    .wrapContentWidth()
                                     .testTag("discover_lang_${lang.id}")
                             ) {
                                 Box(
                                     contentAlignment = Alignment.Center,
-                                    modifier = Modifier.padding(horizontal = 14.dp)
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                                 ) {
                                     Text(
                                         text = lang.label,
                                         fontFamily = PlusJakartaFontFamily,
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                         fontSize = 12.sp,
-                                        color = if (selected) colors.onAccentStrong else colors.textPrimary
+                                        color = if (selected) colors.onAccentStrong else colors.textPrimary,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -438,7 +495,7 @@ fun OnlineMusicScreen(
                 item(key = "online_made_for_you_section") {
                     PersonalizedMixCardShelf(
                         title = "Made For You",
-                        subtitle = "Transparent SONORA Mixes tailored to your local listening profile",
+                        subtitle = "Transparent ${domain.branding.AppBranding.APP_NAME} Mixes tailored to your local listening profile",
                         cards = madeForYouCards,
                         colors = colors,
                         testTagPrefix = "made_for_you",
@@ -1149,19 +1206,23 @@ private fun MoodAndActivityDiscoverySection(
                         color = if (selected) colors.accentStrong else colors.cardBorder
                     ),
                     modifier = Modifier
-                        .height(40.dp)
+                        .heightIn(min = 40.dp)
+                        .wrapContentWidth()
                         .testTag("mood_chip_${mood.id}")
                 ) {
                     Box(
                         contentAlignment = Alignment.Center,
-                        modifier = Modifier.padding(horizontal = 14.dp)
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                     ) {
                         Text(
                             text = mood.label,
                             fontFamily = PlusJakartaFontFamily,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                             fontSize = 12.5.sp,
-                            color = if (selected) colors.onAccentStrong else colors.textPrimary
+                            color = if (selected) colors.onAccentStrong else colors.textPrimary,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -1291,19 +1352,23 @@ private fun IndiaMusicDiscoverySection(
                         color = if (selected) colors.accentStrong else colors.cardBorder
                     ),
                     modifier = Modifier
-                        .height(40.dp)
+                        .heightIn(min = 40.dp)
+                        .wrapContentWidth()
                         .testTag("india_chip_${cat.id}")
                 ) {
                     Box(
                         contentAlignment = Alignment.Center,
-                        modifier = Modifier.padding(horizontal = 14.dp)
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                     ) {
                         Text(
                             text = cat.label,
                             fontFamily = PlusJakartaFontFamily,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                             fontSize = 12.5.sp,
-                            color = if (selected) colors.onAccentStrong else colors.textPrimary
+                            color = if (selected) colors.onAccentStrong else colors.textPrimary,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -1365,6 +1430,88 @@ private fun IndiaMusicDiscoverySection(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun OnlineHeaderRegionChip(
+    countryCode: String,
+    languageCode: String,
+    colors: EditorialColors,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = colors.surfaceTinted,
+        border = BorderStroke(0.75.dp, colors.cardBorder),
+        modifier = Modifier
+            .heightIn(min = 40.dp)
+            .wrapContentWidth()
+            .testTag("online_region_button")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Public,
+                contentDescription = "Online Region and Language",
+                tint = colors.accentStrong,
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = "${countryCode.uppercase()}•${languageCode.uppercase()}",
+                fontFamily = PlusJakartaFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.5.sp,
+                color = colors.textPrimary,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun OnlineHeaderQualityChip(
+    title: String,
+    colors: EditorialColors,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = colors.accentPill,
+        modifier = Modifier
+            .heightIn(min = 40.dp)
+            .wrapContentWidth()
+            .testTag("online_quality_button")
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.HighQuality,
+                contentDescription = "Stream Quality",
+                tint = colors.onAccentPill,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = title,
+                fontFamily = PlusJakartaFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = colors.onAccentPill,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

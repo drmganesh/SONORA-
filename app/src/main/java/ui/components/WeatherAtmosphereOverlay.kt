@@ -246,16 +246,25 @@ fun WeatherAtmosphereOverlay(
 ) {
     val context = LocalContext.current
     val globalReduceAnimations = LocalReduceAnimations.current
+    val motionState = ui.motion.LocalEffectiveMotionState.current
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val isLowRamDevice = remember(context) {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         am?.isLowRamDevice == true
-    }
+    } || motionState.isLowRamDevice
+    val effectiveReduceForAmbient = globalReduceAnimations ||
+        !motionState.ambientEffectsEnabled ||
+        motionState.effectiveEffectsLevel != domain.motion.MotionEffectsLevel.FULL_MOTION ||
+        motionState.isPowerSaveMode
 
     val effectiveActive = isActive && plan.isActive
     val visibilityAlpha by animateFloatAsState(
         targetValue = if (effectiveActive) 1f else 0f,
-        animationSpec = tween(durationMillis = if (effectiveActive) 560 else 420),
+        animationSpec = if (!motionState.essentialFeedbackEnabled) {
+            androidx.compose.animation.core.snap()
+        } else {
+            tween(durationMillis = motionState.durationMillis(if (effectiveActive) 360 else 280))
+        },
         label = "weather_atmosphere_visibility"
     )
 
@@ -278,20 +287,20 @@ fun WeatherAtmosphereOverlay(
         settings.clampedParticleDensity,
         settings.batterySaverMode,
         isLowRamDevice,
-        globalReduceAnimations
+        effectiveReduceForAmbient
     ) {
         settings.effectiveParticleBudget(
             baseCount = baseCapacity,
             isLowRamDevice = isLowRamDevice,
-            globalReduceAnimations = globalReduceAnimations
+            globalReduceAnimations = effectiveReduceForAmbient
         )
     }
 
     val pool = remember(particleBudget) { WeatherParticleSimulationPool(capacity = particleBudget) }
-    val speedMultiplier = settings.effectiveSpeedMultiplier(globalReduceAnimations)
+    val speedMultiplier = settings.effectiveSpeedMultiplier(effectiveReduceForAmbient)
     val minFrameIntervalNs = settings.minFrameIntervalNanos(
         isLowRamDevice = isLowRamDevice,
-        globalReduceAnimations = globalReduceAnimations
+        globalReduceAnimations = effectiveReduceForAmbient
     )
 
     val needsContinuousFrames = plan.rainDensityFactor > 0.02f ||
@@ -306,6 +315,7 @@ fun WeatherAtmosphereOverlay(
 
     val shouldAnimate = screenVisible &&
         needsContinuousFrames &&
+        motionState.ambientEffectsEnabled &&
         lifecycleState.isAtLeast(Lifecycle.State.STARTED) &&
         (effectiveActive || visibilityAlpha > 0.01f)
 
